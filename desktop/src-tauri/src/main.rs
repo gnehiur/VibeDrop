@@ -2927,6 +2927,9 @@ const TRAY_FRAMES: [&[u8]; 3] = [
 
 // 动画代数：新动画开始时旧动画自动作废，避免帧序交错
 static TRAY_FX_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+// 标题所有权代数：与动画代数解耦。"已同步 ✓"的清除只看标题是否仍归自己所有，
+// 否则动画被新特效作废时清除线程一并夭折，标题会永远残留在菜单栏。
+static TRAY_TITLE_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static TRAY_CONNECTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static TRAY_LAST_TEXT: Mutex<String> = Mutex::new(String::new());
 
@@ -2965,28 +2968,49 @@ fn tray_set_base_icon(app: &AppHandle) {
 fn tray_play_fx(app: &AppHandle, fx: TrayFx) {
     use std::sync::atomic::Ordering;
     let gen = TRAY_FX_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let title_gen = TRAY_TITLE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
     std::thread::spawn(move || {
+        // 标题先行且无条件设置：不塞进动画帧循环里，动画被新特效作废也不影响标题状态
+        {
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(tray) = app2.tray_by_id(TRAY_ID) {
+                    let _ = tray.set_title(if fx == TrayFx::ClipboardSync {
+                        Some("已同步 ✓")
+                    } else {
+                        None
+                    });
+                }
+            });
+        }
+
+        // "已同步 ✓"的定时清除走独立线程，只看标题所有权（TRAY_TITLE_GEN），
+        // 与动画代数（TRAY_FX_GEN）解耦——否则清除会随动画一起被作废，标题永久残留
+        if fx == TrayFx::ClipboardSync {
+            let app_for_clear = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                if TRAY_TITLE_GEN.load(Ordering::SeqCst) != title_gen {
+                    return; // 更新的特效已接管标题，由它负责后续
+                }
+                let app2 = app_for_clear.clone();
+                let _ = app_for_clear.run_on_main_thread(move || {
+                    if let Some(tray) = app2.tray_by_id(TRAY_ID) {
+                        let _ = tray.set_title(None::<&str>);
+                    }
+                });
+            });
+        }
+
         let steps: [(usize, u64); 3] = [(0, 120), (1, 120), (2, 140)];
-        for (i, &(frame_idx, delay_ms)) in steps.iter().enumerate() {
+        for &(frame_idx, delay_ms) in steps.iter() {
             if TRAY_FX_GEN.load(Ordering::SeqCst) != gen {
                 return;
             }
             let app2 = app.clone();
             let frame: &'static [u8] = TRAY_FRAMES[frame_idx];
-            let set_title = i == 0;
-            let _ = app.run_on_main_thread(move || {
-                tray_set_frame(&app2, frame);
-                if set_title {
-                    if let Some(tray) = app2.tray_by_id(TRAY_ID) {
-                        let _ = tray.set_title(if fx == TrayFx::ClipboardSync {
-                            Some("已同步 ✓")
-                        } else {
-                            None
-                        });
-                    }
-                }
-            });
+            let _ = app.run_on_main_thread(move || tray_set_frame(&app2, frame));
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
         }
 
@@ -2995,19 +3019,6 @@ fn tray_play_fx(app: &AppHandle, fx: TrayFx) {
         }
         let app2 = app.clone();
         let _ = app.run_on_main_thread(move || tray_set_base_icon(&app2));
-
-        if fx == TrayFx::ClipboardSync {
-            std::thread::sleep(std::time::Duration::from_millis(1100));
-            if TRAY_FX_GEN.load(Ordering::SeqCst) != gen {
-                return;
-            }
-            let app2 = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(tray) = app2.tray_by_id(TRAY_ID) {
-                    let _ = tray.set_title(None::<&str>);
-                }
-            });
-        }
     });
 }
 
