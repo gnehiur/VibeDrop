@@ -8884,42 +8884,12 @@ function attachMediaViewerGestures(root) {
     function beginDismissVisual() {
         if (backdrop) backdrop.style.transition = 'none';
         setMediaViewerChromeHidden(true);
-
-        // 安卓 WebView 的 <video> 是独立硬件图层,CSS 缩放位移时会黑屏;
-        // 下拉开始瞬间抓拍当前帧到 canvas 顶替真视频,让快照跟手,松手再还原
+        // 视频暂停会自动触发抓帧机制(见 refreshMediaViewerPauseFrame),
+        // 之后跟手缩放的是普通图层的快照,不会黑屏
         const slide = currentSlide();
-        if (slide?.video && !slide.dismissSnapshot) {
+        if (slide?.video && !slide.video.paused) {
             try { slide.video.pause(); } catch (error) { /* 忽略 */ }
-            let snapshot = null;
-            if (slide.video.videoWidth) {
-                try {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = slide.video.videoWidth;
-                    canvas.height = slide.video.videoHeight;
-                    canvas.getContext('2d').drawImage(slide.video, 0, 0);
-                    snapshot = canvas;
-                } catch (error) {
-                    console.warn('视频帧抓拍失败,回退海报图', error);
-                }
-            }
-            if (!snapshot && slide.viewItem.item.thumbnailDataUrl) {
-                snapshot = document.createElement('img');
-                snapshot.src = slide.viewItem.item.thumbnailDataUrl;
-            }
-            if (snapshot) {
-                snapshot.classList.add('media-viewer-dismiss-snapshot');
-                slide.dismissSnapshot = snapshot;
-                slide.content.appendChild(snapshot);
-                slide.video.style.visibility = 'hidden';
-            }
         }
-    }
-
-    function restoreDismissSnapshot(slide) {
-        if (!slide?.dismissSnapshot) return;
-        slide.dismissSnapshot.remove();
-        slide.dismissSnapshot = null;
-        if (slide.video) slide.video.style.visibility = '';
     }
 
     function updateDismissVisual(dy) {
@@ -8948,8 +8918,6 @@ function attachMediaViewerGestures(root) {
             resetMediaViewerZoom(slide, true);
             if (backdrop) backdrop.style.opacity = '';
             setMediaViewerChromeHidden(false);
-            // 回弹后再还原真视频,避免还原瞬间闪黑
-            setTimeout(() => restoreDismissSnapshot(slide), 300);
         }
     }
 
@@ -9145,6 +9113,43 @@ function attachMediaViewerGestures(root) {
     window.addEventListener('pointercancel', endPointer);
 }
 
+// ---- 查看器视频暂停帧 ----
+// 安卓 WebView 的 <video> 是独立硬件图层:暂停/被 CSS 变换时图层可能被释放而黑屏。
+// 对策:凡是暂停(含播完、下拉前的强制暂停)就抓当前帧到 canvas 盖住,恢复播放再撤掉。
+
+function refreshMediaViewerPauseFrame(slide) {
+    const video = slide?.video;
+    if (!video || !video.videoWidth) return;
+    let canvas = slide.pauseFrame;
+    if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.className = 'media-viewer-pause-frame';
+        slide.pauseFrame = canvas;
+    }
+    try {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+    } catch (error) {
+        console.warn('抓取视频暂停帧失败', error);
+        return;
+    }
+    if (!canvas.parentNode) {
+        slide.content.appendChild(canvas);
+    }
+    video.style.visibility = 'hidden';
+}
+
+function hideMediaViewerPauseFrame(slide) {
+    if (!slide) return;
+    if (slide.pauseFrame?.parentNode) {
+        slide.pauseFrame.remove();
+    }
+    if (slide.video) {
+        slide.video.style.visibility = '';
+    }
+}
+
 // ---- 查看器视频控制条 ----
 
 function attachMediaViewerVideoUi(slide) {
@@ -9198,17 +9203,25 @@ function attachMediaViewerVideoUi(slide) {
     });
 
     video.addEventListener('play', () => {
+        hideMediaViewerPauseFrame(slide);
         updateMediaViewerVideoUi(slide);
         scheduleMediaViewerChromeAutoHide();
     });
     video.addEventListener('pause', () => {
+        refreshMediaViewerPauseFrame(slide);
         updateMediaViewerVideoUi(slide);
         clearTimeout(mediaViewerState.chromeTimer);
         setMediaViewerChromeHidden(false);
     });
     video.addEventListener('ended', () => {
+        refreshMediaViewerPauseFrame(slide);
         updateMediaViewerVideoUi(slide);
         setMediaViewerChromeHidden(false);
+    });
+    video.addEventListener('seeked', () => {
+        if (video.paused) {
+            refreshMediaViewerPauseFrame(slide);
+        }
     });
     video.addEventListener('timeupdate', () => {
         const ratio = video.duration ? video.currentTime / video.duration : 0;

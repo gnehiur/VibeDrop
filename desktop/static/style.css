@@ -2197,7 +2197,7 @@ body.media-viewer-open {
     height: 26px;
 }
 
-.media-viewer-dismiss-snapshot {
+.media-viewer-pause-frame {
     position: absolute;
     top: 50%;
     left: 50%;
