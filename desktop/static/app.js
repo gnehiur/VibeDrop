@@ -20,6 +20,25 @@ const HEATMAP_VISIBLE_DAYS = 5;
 const HEATMAP_HOUR_SLOTS = 24;
 const HISTORY_RENDER_INITIAL_BATCH = 12;
 const HISTORY_RENDER_BATCH_SIZE = 20;
+// 超过这个条数启用虚拟滚动:只渲染可视区,内存占用与总条数无关
+const HISTORY_VIRTUAL_THRESHOLD = 150;
+const HISTORY_VIRTUAL_OVERSCAN = 6;
+const HISTORY_ESTIMATED_ITEM_HEIGHT = 120;
+const HISTORY_ITEM_GAP = 12;
+const historyVirtual = {
+    active: false,
+    entries: [],
+    heights: [],
+    measuredCount: 0,
+    measuredTotal: 0,
+    window: { start: -1, end: -1 },
+    topSpacer: 0,
+    scroller: null,
+    listenerBound: false,
+    rafPending: false,
+    observer: null,
+    renderMarkup: null,
+};
 const DESKTOP_DISCOVERY_DEFAULT_PORT = 9001;
 const DESKTOP_PAIRING_POLL_MS = 1200;
 const MEDIA_OPENER_KINDS = ['image', 'video'];
@@ -42,6 +61,7 @@ const RECONNECT_FORCE_DISCOVERY_AFTER_ATTEMPTS = 2;
 const SEND_COMPOSER_DEFERRED_RENDER_DELAY_MS = 180;
 const LEGACY_HISTORY_FALLBACK_LIMIT = 200;
 const DEFAULT_HISTORY_FILTERS = {
+    sources: [],
     device: 'all',
     quickTime: 'all',
     startDate: '',
@@ -3553,7 +3573,20 @@ function initNavigation() {
             showView(viewId);
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+            if (viewId === 'history-view') {
+                refreshVaultMergedHistory();
+            }
         });
+    });
+    // 启动后拉一次全设备合并历史,并挂上长连接接收实时通知
+    setTimeout(() => {
+        refreshVaultMergedHistory();
+        connectVaultEventStream();
+    }, 2500);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        connectVaultEventStream();
+        refreshVaultMergedHistory();
     });
 }
 
@@ -4114,6 +4147,13 @@ function getHistoryDateAvailability() {
 
     history.forEach((entry) => {
         const hydratedEntry = entry;
+        const sourceFilters = filters.sources || [];
+        if (sourceFilters.length) {
+            const sourceId = String(hydratedEntry.sourceDeviceId || getLocalSourceId());
+            if (!sourceFilters.includes(sourceId)) {
+                return false;
+            }
+        }
         if (filters.device !== 'all' && hydratedEntry.target !== filters.device) {
             return;
         }
@@ -4821,7 +4861,7 @@ function initHistoryHeatmapInteractions() {
     });
 
     resetBtn?.addEventListener('click', () => {
-        const bounds = historyHeatmapState.renderedBounds || getHistoryHeatmapBounds(filterHistoryEntries(getHistory()));
+        const bounds = historyHeatmapState.renderedBounds || getHistoryHeatmapBounds(filterHistoryEntries(getHistoryForDisplay()));
         historyHeatmapState.viewportEndDate = bounds.maxDate;
         clearHistoryHeatmapSelection();
         scheduleHistoryRender();
@@ -7266,6 +7306,8 @@ function addHistory(entry) {
     setStoredHistoryRaw(JSON.stringify(history), { persistNative: false });
     persistNativeHistoryEntry(entry);
     persistHistory();
+    // 新记录落账后延迟自动推送到 Home Vault
+    scheduleHomeVaultAutoPush();
 }
 
 function pad2(value) {
@@ -7583,6 +7625,7 @@ function getHomeVaultSettings() {
         lastEntryCount: Number(homeVault.lastEntryCount || 0),
         lastRestoredAt: homeVault.lastRestoredAt || '',
         lastRestoreCount: Number(homeVault.lastRestoreCount || 0),
+        lastPushedEntryId: homeVault.lastPushedEntryId || '',
     };
 }
 
@@ -7705,6 +7748,188 @@ function buildHomeVaultPayload(history) {
         exportedAt: new Date().toISOString(),
         history: buildHistoryExportData(history),
     };
+}
+
+// ---- 全设备合并历史(Home Vault 拉取)与自动推送 ----
+const LOCAL_SOURCE_FALLBACK_ID = '__local__';
+let vaultMergedEntries = [];
+let vaultMergedDevices = [];
+let vaultMergedFetchInFlight = false;
+let homeVaultAutoPushTimer = null;
+
+function getLocalSourceId() {
+    return String(clientIdentity?.id || LOCAL_SOURCE_FALLBACK_ID);
+}
+
+function isLocalSourceEntry(entry) {
+    const src = String(entry?.sourceDeviceId || '');
+    return !src || src === getLocalSourceId();
+}
+
+function getHistoryForDisplay() {
+    if (!vaultMergedEntries.length) return getHistory();
+    const combined = getHistory().concat(vaultMergedEntries);
+    combined.sort((a, b) => {
+        const ta = new Date(a?.timestamp || a?.timestamp_iso || 0).getTime() || 0;
+        const tb = new Date(b?.timestamp || b?.timestamp_iso || 0).getTime() || 0;
+        return tb - ta;
+    });
+    return combined;
+}
+
+async function refreshVaultMergedHistory() {
+    if (vaultMergedFetchInFlight) return;
+    vaultMergedFetchInFlight = true;
+    try {
+        const endpoint = getHomeVaultSettings().url;
+        const url = new URL(`${endpoint}/api/history/merged`);
+        url.searchParams.set('limit', '2000');
+        const response = await fetch(url.toString());
+        const data = await response.json();
+        if (!data?.ok || !Array.isArray(data.history)) return;
+        const localId = getLocalSourceId();
+        vaultMergedDevices = (data.devices || []).filter((device) => String(device.deviceId) !== localId);
+        vaultMergedEntries = data.history.filter((entry) => {
+            const src = String(entry?.sourceDeviceId || '');
+            return src && src !== localId;
+        });
+        renderHistorySourceFilters();
+        scheduleHistoryRender();
+    } catch (error) {
+        debugLog('vault-merged-fetch-failed', { message: String(error?.message || error) });
+    } finally {
+        vaultMergedFetchInFlight = false;
+    }
+}
+
+// 金库长连接(SSE):挂着不动,别的设备推了新历史就立刻收到通知去拉
+let vaultEventSource = null;
+let vaultEventRetryTimer = null;
+
+function connectVaultEventStream() {
+    if (vaultEventSource) return;
+    if (typeof EventSource === 'undefined') return;
+    let endpoint = '';
+    try {
+        endpoint = getHomeVaultSettings().url;
+        if (!endpoint) return;
+        const source = new EventSource(`${endpoint}/api/events`);
+        vaultEventSource = source;
+        source.onmessage = (event) => {
+            let senderId = '';
+            try {
+                senderId = String(JSON.parse(event.data || '{}').deviceId || '');
+            } catch (_) {
+                senderId = '';
+            }
+            // 自己推上去的不用回头再拉
+            if (senderId && senderId === getLocalSourceId()) return;
+            refreshVaultMergedHistory();
+        };
+        source.onerror = () => {
+            source.close();
+            if (vaultEventSource === source) vaultEventSource = null;
+            if (vaultEventRetryTimer) clearTimeout(vaultEventRetryTimer);
+            vaultEventRetryTimer = setTimeout(connectVaultEventStream, 15000);
+        };
+    } catch (error) {
+        debugLog('vault-sse-connect-failed', { endpoint, message: String(error?.message || error) });
+    }
+}
+
+/// 找出游标之后的新增条目;返回 null 表示游标不可用,需要全量兜底
+function collectUnpushedEntries(history) {
+    const cursorId = String(getHomeVaultSettings().lastPushedEntryId || '');
+    if (!cursorId) return null;
+    const index = history.findIndex((entry) => String(entry?.id || '') === cursorId);
+    if (index < 0) return null;
+    return history.slice(0, index);
+}
+
+async function pushHomeVaultDelta(endpoint, entries) {
+    const response = await fetch(`${endpoint}/api/history/append`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            deviceId: clientIdentity.id,
+            deviceName: clientIdentity.name,
+            entries: buildHistoryExportData(entries),
+        }),
+    });
+    if (!response.ok) throw new Error(`append 失败 HTTP ${response.status}`);
+    return response.json();
+}
+
+function scheduleHomeVaultAutoPush() {
+    if (homeVaultAutoPushTimer) clearTimeout(homeVaultAutoPushTimer);
+    homeVaultAutoPushTimer = setTimeout(async () => {
+        homeVaultAutoPushTimer = null;
+        try {
+            const history = getHistory();
+            if (!history.length) return;
+            const endpoint = getHomeVaultSettings().url;
+            const fresh = collectUnpushedEntries(history);
+
+            if (fresh && fresh.length === 0) return;      // 没有新增,不打扰服务端
+            if (fresh) {
+                await pushHomeVaultDelta(endpoint, fresh); // 增量:只发这几条
+            } else {
+                // 首次推送或游标失效:全量兜底一次,之后回到增量轨道
+                await syncHomeVaultWithFetch(endpoint, buildHomeVaultPayload(history));
+            }
+            saveHomeVaultSettings({ lastPushedEntryId: String(history[0]?.id || '') });
+        } catch (error) {
+            debugLog('vault-auto-push-failed', { message: String(error?.message || error) });
+        }
+    }, 800);
+}
+
+function renderHistorySourceFilters() {
+    const container = $('history-source-btns');
+    if (!container) return;
+    const selected = new Set(currentHistoryFilters.sources || []);
+    const localId = getLocalSourceId();
+
+    if (!vaultMergedDevices.length && selected.size === 0) {
+        container.innerHTML = '';
+        container.classList.add('hidden');
+        return;
+    }
+
+    const options = [
+        { value: '', label: '全部设备' },
+        { value: localId, label: '本机' },
+        ...vaultMergedDevices.map((device) => ({
+            value: String(device.deviceId),
+            label: device.deviceName || device.deviceId,
+        })),
+    ];
+
+    container.classList.remove('hidden');
+    container.innerHTML = '';
+    options.forEach((option) => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        const active = option.value === '' ? selected.size === 0 : selected.has(option.value);
+        if (active) btn.classList.add('active');
+        btn.textContent = option.label;
+        btn.addEventListener('click', () => {
+            const current = new Set(currentHistoryFilters.sources || []);
+            if (option.value === '') {
+                current.clear();
+            } else if (current.has(option.value)) {
+                current.delete(option.value);
+            } else {
+                current.add(option.value);
+            }
+            currentHistoryFilters.sources = Array.from(current);
+            clearHistoryHeatmapSelection();
+            renderHistorySourceFilters();
+            renderHistoryDateInputs();
+            scheduleHistoryRender();
+        });
+        container.appendChild(btn);
+    });
 }
 
 async function syncHomeVaultWithFetch(endpoint, payload) {
@@ -8782,7 +9007,7 @@ function importHistory(file) {
 function renderHistory() {
     const list = $('history-list');
     if (!list) return;
-    const history = getHistory();
+    const history = getHistoryForDisplay();
     const baseEntries = filterHistoryEntries(history);
     const renderToken = ++historyRenderToken;
 
@@ -8827,6 +9052,7 @@ function renderHistory() {
                     <div class="history-target-group">
                         <span class="history-target">${escapeHtml(primaryTarget)}</span>
                         ${secondaryTarget ? `<span class="history-target-detail">${escapeHtml(secondaryTarget)}</span>` : ''}
+                        ${entry.sourceDeviceName && !isLocalSourceEntry(entry) ? `<span class="history-source-badge">${escapeHtml(String(entry.sourceDeviceName))}</span>` : ''}
                     </div>
                     <span class="history-status">${statusIcon}</span>
                 </div>
@@ -8835,42 +9061,168 @@ function renderHistory() {
         `;
     };
 
-    const initialEnd = Math.min(filtered.length, HISTORY_RENDER_INITIAL_BATCH);
-    list.innerHTML = filtered
-        .slice(0, initialEnd)
-        .map((entry, index) => renderItemMarkup(entry, index))
-        .join('');
-
-    if (initialEnd >= filtered.length) {
+    // 条目不多时保持原来的简单渲染,避免无谓复杂度
+    if (filtered.length <= HISTORY_VIRTUAL_THRESHOLD) {
+        historyVirtual.active = false;
+        list.innerHTML = filtered.map((entry, index) => renderItemMarkup(entry, index)).join('');
         return;
     }
 
-    let nextIndex = initialEnd;
-    const appendBatch = () => {
-        if (renderToken !== historyRenderToken) {
-            return;
-        }
-        if ($('history-view')?.classList.contains('hidden')) {
-            return;
-        }
+    // 长列表走虚拟滚动:只渲染可视区附近的条目,其余用上下占位撑高度
+    historyVirtual.active = true;
+    historyVirtual.renderMarkup = renderItemMarkup;
+    historyVirtual.entries = filtered;
+    historyVirtual.heights = new Array(filtered.length).fill(0);
+    historyVirtual.window = { start: -1, end: -1 };
+    ensureHistoryScrollListener();
+    renderHistoryWindow(true);
+}
 
-        const end = Math.min(nextIndex + HISTORY_RENDER_BATCH_SIZE, filtered.length);
-        const html = [];
-        for (let i = nextIndex; i < end; i += 1) {
-            html.push(renderItemMarkup(filtered[i], i));
-        }
+// ---- 历史列表虚拟滚动 ----
 
-        if (html.length > 0) {
-            list.insertAdjacentHTML('beforeend', html.join(''));
-        }
+function historyAverageHeight() {
+    const { heights, measuredCount, measuredTotal } = historyVirtual;
+    if (measuredCount > 0) return measuredTotal / measuredCount;
+    return heights.length ? HISTORY_ESTIMATED_ITEM_HEIGHT : HISTORY_ESTIMATED_ITEM_HEIGHT;
+}
 
-        nextIndex = end;
-        if (nextIndex < filtered.length) {
-            requestAnimationFrame(appendBatch);
+function historyItemHeight(index) {
+    const measured = historyVirtual.heights[index];
+    return measured > 0 ? measured : historyAverageHeight();
+}
+
+function getScrollParent(element) {
+    let node = element?.parentElement;
+    while (node) {
+        const overflowY = window.getComputedStyle(node).overflowY;
+        if (/(auto|scroll)/.test(overflowY) && node.scrollHeight > node.clientHeight) {
+            return node;
         }
+        node = node.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+}
+
+function ensureHistoryScrollListener() {
+    if (historyVirtual.listenerBound) return;
+    const list = $('history-list');
+    if (!list) return;
+    const scroller = getScrollParent(list);
+    historyVirtual.scroller = scroller;
+    const onScroll = () => {
+        if (!historyVirtual.active) return;
+        if (historyVirtual.rafPending) return;
+        historyVirtual.rafPending = true;
+        requestAnimationFrame(() => {
+            historyVirtual.rafPending = false;
+            renderHistoryWindow(false);
+        });
     };
+    // 捕获阶段挂在 document 上,不管实际滚的是哪个元素都能收到
+    document.addEventListener('scroll', onScroll, { passive: true, capture: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    // 兜底:某些容器不派发可捕获的 scroll 事件时,用观察器盯住窗口边缘
+    if (typeof IntersectionObserver !== 'undefined') {
+        historyVirtual.observer = new IntersectionObserver(onScroll, {
+            root: scroller === document.documentElement || scroller === document.body ? null : scroller,
+            rootMargin: '200px',
+        });
+    }
+    historyVirtual.listenerBound = true;
+}
 
-    requestAnimationFrame(appendBatch);
+function renderHistoryWindow(force) {
+    const list = $('history-list');
+    if (!list || !historyVirtual.active) return;
+    const entries = historyVirtual.entries;
+    if (!entries.length) return;
+
+    const scroller = historyVirtual.scroller || getScrollParent(list);
+    const scrollTop = scroller === document.documentElement || scroller === document.body
+        ? (window.scrollY || document.documentElement.scrollTop || 0)
+        : scroller.scrollTop;
+    const rawViewportHeight = scroller === document.documentElement || scroller === document.body
+        ? (window.innerHeight || document.documentElement.clientHeight)
+        : scroller.clientHeight;
+    const viewportHeight = rawViewportHeight > 0 ? rawViewportHeight : 800;
+
+    // 列表在滚动容器内的起始偏移
+    const listRect = list.getBoundingClientRect();
+    const scrollerRect = scroller === document.documentElement || scroller === document.body
+        ? { top: 0 }
+        : scroller.getBoundingClientRect();
+    // 列表元素自身在滚动容器中的绝对位置(占位块在列表内部,不影响这个值)
+    const listOffsetInScroller = listRect.top - scrollerRect.top + scrollTop;
+
+    const relativeTop = Math.max(scrollTop - listOffsetInScroller, 0);
+    const relativeBottom = relativeTop + viewportHeight;
+
+    let start = 0;
+    let accumulated = 0;
+    while (start < entries.length && accumulated + historyItemHeight(start) < relativeTop) {
+        accumulated += historyItemHeight(start);
+        start += 1;
+    }
+    const topOffsetBeforeOverscan = accumulated;
+
+    let end = start;
+    let visibleHeight = 0;
+    while (end < entries.length && accumulated + visibleHeight < relativeBottom) {
+        visibleHeight += historyItemHeight(end);
+        end += 1;
+    }
+
+    // 上下各多渲染一些,滑动时不会露白
+    let windowStart = Math.max(start - HISTORY_VIRTUAL_OVERSCAN, 0);
+    let windowEnd = Math.min(end + HISTORY_VIRTUAL_OVERSCAN, entries.length);
+
+    if (!force && windowStart === historyVirtual.window.start && windowEnd === historyVirtual.window.end) {
+        return;
+    }
+    historyVirtual.window = { start: windowStart, end: windowEnd };
+
+    let topSpacer = topOffsetBeforeOverscan;
+    for (let i = windowStart; i < start; i += 1) {
+        topSpacer -= historyItemHeight(i);
+    }
+    topSpacer = Math.max(topSpacer, 0);
+
+    let bottomSpacer = 0;
+    for (let i = windowEnd; i < entries.length; i += 1) {
+        bottomSpacer += historyItemHeight(i);
+    }
+
+    const chunks = [`<div class="history-virtual-spacer" style="height:${topSpacer}px"></div>`];
+    for (let i = windowStart; i < windowEnd; i += 1) {
+        chunks.push(historyVirtual.renderMarkup(entries[i], i));
+    }
+    chunks.push(`<div class="history-virtual-spacer" style="height:${bottomSpacer}px"></div>`);
+    list.innerHTML = chunks.join('');
+    historyVirtual.topSpacer = topSpacer;
+
+    // 实测渲染出来的真实高度,越滑越准
+    const nodes = list.querySelectorAll('.history-item');
+    if (historyVirtual.observer) {
+        historyVirtual.observer.disconnect();
+        if (nodes.length) {
+            historyVirtual.observer.observe(nodes[0]);
+            historyVirtual.observer.observe(nodes[nodes.length - 1]);
+        }
+    }
+    nodes.forEach((node) => {
+        const index = Number(node.dataset.idx || '-1');
+        if (index < 0) return;
+        const height = node.getBoundingClientRect().height + HISTORY_ITEM_GAP;
+        if (height <= 0) return;
+        if (!(historyVirtual.heights[index] > 0)) {
+            historyVirtual.measuredCount += 1;
+            historyVirtual.measuredTotal += height;
+        } else {
+            historyVirtual.measuredTotal += height - historyVirtual.heights[index];
+        }
+        historyVirtual.heights[index] = height;
+    });
 }
 
 async function openHistoryMediaItem(entry, itemIndex) {
@@ -9259,7 +9611,7 @@ function matchesStatus(entry, filters = currentHistoryFilters) {
     return (entry.status || 'success') === filters.status;
 }
 
-function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistory())) {
+function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistoryForDisplay())) {
     const toolbar = $('history-toolbar');
     const summary = $('history-filter-summary');
     if (!summary) return;

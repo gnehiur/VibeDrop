@@ -2540,3 +2540,24 @@ body.nearby-reorder-active {
 .outing-mode-switch input:checked + .outing-mode-slider::before {
     transform: translateX(20px);
 }
+
+/* 来源设备标记(全设备合并视图) */
+.history-source-badge {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: rgba(88, 86, 214, 0.12);
+    color: #5856d6;
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+.history-source-filter .filter-btn.active {
+    background: #5856d6;
+    border-color: #5856d6;
+}
+/* 虚拟滚动占位 */
+.history-virtual-spacer {
+    flex: 0 0 auto;
+    width: 100%;
+    pointer-events: none;
+}
