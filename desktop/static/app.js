@@ -8884,6 +8884,42 @@ function attachMediaViewerGestures(root) {
     function beginDismissVisual() {
         if (backdrop) backdrop.style.transition = 'none';
         setMediaViewerChromeHidden(true);
+
+        // 安卓 WebView 的 <video> 是独立硬件图层,CSS 缩放位移时会黑屏;
+        // 下拉开始瞬间抓拍当前帧到 canvas 顶替真视频,让快照跟手,松手再还原
+        const slide = currentSlide();
+        if (slide?.video && !slide.dismissSnapshot) {
+            try { slide.video.pause(); } catch (error) { /* 忽略 */ }
+            let snapshot = null;
+            if (slide.video.videoWidth) {
+                try {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = slide.video.videoWidth;
+                    canvas.height = slide.video.videoHeight;
+                    canvas.getContext('2d').drawImage(slide.video, 0, 0);
+                    snapshot = canvas;
+                } catch (error) {
+                    console.warn('视频帧抓拍失败,回退海报图', error);
+                }
+            }
+            if (!snapshot && slide.viewItem.item.thumbnailDataUrl) {
+                snapshot = document.createElement('img');
+                snapshot.src = slide.viewItem.item.thumbnailDataUrl;
+            }
+            if (snapshot) {
+                snapshot.classList.add('media-viewer-dismiss-snapshot');
+                slide.dismissSnapshot = snapshot;
+                slide.content.appendChild(snapshot);
+                slide.video.style.visibility = 'hidden';
+            }
+        }
+    }
+
+    function restoreDismissSnapshot(slide) {
+        if (!slide?.dismissSnapshot) return;
+        slide.dismissSnapshot.remove();
+        slide.dismissSnapshot = null;
+        if (slide.video) slide.video.style.visibility = '';
     }
 
     function updateDismissVisual(dy) {
@@ -8912,6 +8948,8 @@ function attachMediaViewerGestures(root) {
             resetMediaViewerZoom(slide, true);
             if (backdrop) backdrop.style.opacity = '';
             setMediaViewerChromeHidden(false);
+            // 回弹后再还原真视频,避免还原瞬间闪黑
+            setTimeout(() => restoreDismissSnapshot(slide), 300);
         }
     }
 

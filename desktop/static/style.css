@@ -1938,6 +1938,7 @@ body.media-viewer-open {
 }
 
 .media-viewer-slide-content {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2142,8 +2143,8 @@ body.media-viewer-open {
 .mv-video-play,
 .mv-video-mute {
     flex: 0 0 auto;
-    width: 36px;
-    height: 36px;
+    width: 48px;
+    height: 48px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2188,6 +2189,21 @@ body.media-viewer-open {
 .mv-video-progress-fill {
     width: 0%;
     background: #fff;
+}
+
+.mv-video-play svg,
+.mv-video-mute svg {
+    width: 26px;
+    height: 26px;
+}
+
+.media-viewer-dismiss-snapshot {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 100%;
+    max-height: 100%;
 }
 
 .mv-video-progress-handle {
