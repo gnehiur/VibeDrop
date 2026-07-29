@@ -7909,29 +7909,62 @@ function getHistoryForDisplay() {
     return combined;
 }
 
-async function refreshVaultMergedHistory() {
+// 双档拉取:平时刷新只拉最近 2000 条(轻快);每次会话另做一次全量深拉,
+// 老条目合并进内存(iPhone 这类新设备全靠合并数据才能看到几个月前的媒体)
+let vaultMergedDeepFetchDone = false;
+const vaultMergedEntryKeys = new Map(); // key → 数组下标
+
+function vaultMergedEntryKey(entry) {
+    const src = String(entry?.sourceDeviceId || '');
+    const id = String(entry?.id || '');
+    if (id) return `${src}:${id}`;
+    return `${src}|${entry?.timestamp || entry?.timestamp_iso || ''}|${entry?.text || entry?.fileName || ''}`;
+}
+
+function upsertVaultMergedEntries(entries) {
+    entries.forEach((entry) => {
+        const key = vaultMergedEntryKey(entry);
+        const existingIndex = vaultMergedEntryKeys.get(key);
+        if (existingIndex === undefined) {
+            vaultMergedEntryKeys.set(key, vaultMergedEntries.length);
+            vaultMergedEntries.push(entry);
+        } else {
+            vaultMergedEntries[existingIndex] = entry;
+        }
+    });
+}
+
+async function refreshVaultMergedHistory({ deep = false } = {}) {
     if (vaultMergedFetchInFlight) return;
     vaultMergedFetchInFlight = true;
     try {
         const endpoint = getHomeVaultSettings().url;
         const url = new URL(`${endpoint}/api/history/merged`);
-        url.searchParams.set('limit', '2000');
+        url.searchParams.set('limit', deep ? '10000' : '2000');
         const response = await fetch(url.toString());
         const data = await response.json();
         if (!data?.ok || !Array.isArray(data.history)) return;
         const localId = getLocalSourceId();
         harvestVaultMediaStamps(data.history || []);
         vaultMergedDevices = (data.devices || []).filter((device) => String(device.deviceId) !== localId);
-        vaultMergedEntries = data.history.filter((entry) => {
+        upsertVaultMergedEntries(data.history.filter((entry) => {
             const src = String(entry?.sourceDeviceId || '');
             return src && src !== localId;
-        });
+        }));
+        if (deep) vaultMergedDeepFetchDone = true;
         renderHistorySourceFilters();
         scheduleHistoryRender();
     } catch (error) {
         debugLog('vault-merged-fetch-failed', { message: String(error?.message || error) });
     } finally {
         vaultMergedFetchInFlight = false;
+        // 轻量档回来后,趁会话首次机会补一发全量深拉
+        if (!deep && !vaultMergedDeepFetchDone) {
+            vaultMergedDeepFetchDone = true;
+            setTimeout(() => {
+                refreshVaultMergedHistory({ deep: true });
+            }, 800);
+        }
     }
 }
 

@@ -413,6 +413,49 @@ fn open_accessibility_settings() {
 }
 
 #[tauri::command]
+fn download_vault_media(endpoint: String, hash: String, name: String) -> Result<String, String> {
+    // 跨设备条目本机没有原件:从 Home Vault 拉到本地缓存再交给系统打开
+    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("无效的媒体哈希".into());
+    }
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let cache_dir = std::path::PathBuf::from(home).join(".vibedrop").join("vault-cache");
+    std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+
+    let safe_name: String = name
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '\0'))
+        .collect();
+    let file_name = if safe_name.is_empty() {
+        hash[..12].to_string()
+    } else {
+        format!("{}-{}", &hash[..12], safe_name)
+    };
+    let target = cache_dir.join(&file_name);
+    if target.exists() {
+        return Ok(target.to_string_lossy().to_string());
+    }
+
+    let url = format!("{}/api/media/blob/{}", endpoint.trim_end_matches('/'), hash);
+    let tmp = cache_dir.join(format!("{}.part", file_name));
+    let status = std::process::Command::new("curl")
+        .arg("-fsSL")
+        .arg("--max-time")
+        .arg("600")
+        .arg("-o")
+        .arg(&tmp)
+        .arg(&url)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err("下载失败(vault 不在线或原件缺失)".into());
+    }
+    std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn open_history_path(path: String) -> Result<(), String> {
     let path = PathBuf::from(&path);
     if !path.exists() {
@@ -1936,6 +1979,7 @@ fn main() {
             open_accessibility_settings,
             load_history_entries,
             open_history_path,
+            download_vault_media,
             open_history_paths,
             list_connected_clients,
             list_pair_requests,

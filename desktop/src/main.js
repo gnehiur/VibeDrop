@@ -668,6 +668,8 @@ function normalizeLogItem(item = {}) {
         thumbnail_data_url: item.thumbnail_data_url || item.thumbnailDataUrl || '',
         file_path: item.file_path || item.filePath || '',
         saved_path: item.saved_path || item.savedPath || '',
+        size_bytes: Number(item.size_bytes || item.sizeBytes || 0) || 0,
+        vault_media_hash: item.vault_media_hash || item.vaultMediaHash || '',
         status: item.status || 'pending',
         error: item.error || '',
     };
@@ -772,6 +774,7 @@ function initDesktopHistoryControls() {
 
 function renderLog() {
     const log = getLog()
+        .concat(vaultRemoteEntries)
         .map((entry) => normalizeLogEntry(entry))
         .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
 
@@ -1647,13 +1650,7 @@ function createLogElement(entryOrText, timestamp) {
                 const itemIndex = Number(mediaCell.dataset.mediaIndex);
                 const selectedItem = mediaItems[itemIndex];
                 if (selectedItem) {
-                    const selectedPath = getLogMediaOpenPath(selectedItem);
-                    if (selectedPath) {
-                        try {
-                            await invoke('open_history_path', { path: selectedPath });
-                        } catch (error) {
-                            showToast(`打开失败：${error}`);
-                        }
+                    if (await openLogMediaItem(selectedItem)) {
                         return;
                     }
                     showHistoryMediaPreview(entry, mediaItems, { initialIndex: itemIndex });
@@ -1666,19 +1663,14 @@ function createLogElement(entryOrText, timestamp) {
                 return;
             }
 
-            const openablePaths = mediaItems
-                .map((mediaItem) => getLogMediaOpenPath(mediaItem))
-                .filter(Boolean);
-            const openablePath = mediaItems.length === 1
-                ? (openablePaths[0] || imagePath || filePath || '')
-                : '';
-            if (openablePath) {
-                try {
-                    await invoke('open_history_path', { path: openablePath });
-                } catch (error) {
-                    showToast(`打开失败：${error}`);
+            if (mediaItems.length === 1) {
+                const single = { ...mediaItems[0] };
+                if (!single.file_path) {
+                    single.file_path = imagePath || filePath || '';
                 }
-                return;
+                if (await openLogMediaItem(single)) {
+                    return;
+                }
             }
 
             showHistoryMediaPreview(entry, mediaItems);
@@ -1727,6 +1719,77 @@ function getLogMediaOpenPath(item) {
     return item?.file_path || '';
 }
 
+// ---- Home Vault:跨设备合并时间线 + 原件下载打开 ----
+const VAULT_ENDPOINT = 'http://192.168.3.2:8788';
+let vaultRemoteEntries = [];
+
+function convertVaultEntry(entry) {
+    const items = Array.isArray(entry.items) ? entry.items.map((item) => ({
+        kind: item.kind || '',
+        file_name: item.fileName || '',
+        mime_type: item.mimeType || '',
+        thumbnail_data_url: item.thumbnailDataUrl || '',
+        vault_media_hash: item.vaultMediaHash || '',
+        size_bytes: item.sizeBytes || 0,
+    })) : [];
+    return {
+        timestamp: entry.timestamp || entry.timestamp_iso || '',
+        text: entry.text || '',
+        kind: entry.kind || 'text',
+        status: entry.status || 'success',
+        file_name: entry.fileName || '',
+        mime_type: entry.mimeType || '',
+        thumbnail_data_url: entry.thumbnailDataUrl || '',
+        vault_media_hash: entry.vaultMediaHash || '',
+        client_name: entry.sourceDeviceName || entry.sourceDeviceId || '远程设备',
+        client_id: `vault-${entry.sourceDeviceId || 'unknown'}`,
+        items,
+        vault_remote: true,
+    };
+}
+
+async function refreshVaultRemoteEntries() {
+    try {
+        const response = await fetch(`${VAULT_ENDPOINT}/api/history/merged?limit=10000`);
+        const data = await response.json();
+        if (!data?.ok || !Array.isArray(data.history)) return;
+        vaultRemoteEntries = data.history.map(convertVaultEntry);
+        renderLog();
+    } catch (error) {
+        console.warn('拉取 Home Vault 合并历史失败(vault 可能不在线)', error);
+    }
+}
+setTimeout(refreshVaultRemoteEntries, 3000);
+setInterval(refreshVaultRemoteEntries, 5 * 60 * 1000);
+
+async function openLogMediaItem(item) {
+    const localPath = item?.file_path || item?.saved_path || '';
+    if (localPath) {
+        try {
+            await invoke('open_history_path', { path: localPath });
+            return true;
+        } catch (error) {
+            console.warn('本地打开失败,尝试 Home Vault 原件', error);
+        }
+    }
+    const hash = item?.vault_media_hash || '';
+    if (hash) {
+        try {
+            showToast('正在从 Home Vault 取原件…');
+            const path = await invoke('download_vault_media', {
+                endpoint: VAULT_ENDPOINT,
+                hash,
+                name: item?.file_name || '',
+            });
+            await invoke('open_history_path', { path });
+        } catch (error) {
+            showToast(`从 Vault 打开失败：${error}`);
+        }
+        return true;
+    }
+    return Boolean(localPath);
+}
+
 function getLogEntryItems(entry) {
     const items = Array.isArray(entry.items) ? entry.items.map((item) => normalizeLogItem(item)) : [];
     if (items.length) {
@@ -1740,6 +1803,8 @@ function getLogEntryItems(entry) {
             mime_type: entry.mime_type || entry.mimeType || '',
             thumbnail_data_url: entry.thumbnail_data_url || entry.thumbnailDataUrl || '',
             file_path: entry.file_path || entry.filePath || entry.image_path || entry.imagePath || '',
+            vault_media_hash: entry.vault_media_hash || entry.vaultMediaHash || '',
+            size_bytes: entry.size_bytes || entry.sizeBytes || 0,
         })];
     }
 
@@ -1910,15 +1975,11 @@ function showHistoryMediaPreview(entry, items, { initialIndex = 0 } = {}) {
 
     body.querySelectorAll('[data-preview-open-path]').forEach((node) => {
         node.addEventListener('click', async () => {
-            const path = node.dataset.previewOpenPath || '';
-            if (!path) {
-                return;
-            }
-            try {
-                await invoke('open_history_path', { path });
-            } catch (error) {
-                showToast(`打开失败：${error}`);
-            }
+            await openLogMediaItem({
+                file_path: node.dataset.previewOpenPath || '',
+                vault_media_hash: node.dataset.previewVaultHash || '',
+                file_name: node.dataset.previewName || '',
+            });
         });
     });
 
@@ -1948,8 +2009,12 @@ function renderHistoryMediaPreviewItem(item) {
         ? '<span class="log-media-play log-media-play-single">▶</span>'
         : '';
     const openPath = getLogMediaOpenPath(item);
-    const openableClass = openPath ? ' is-openable' : '';
-    const dataAttr = openPath ? ` data-preview-open-path="${escapeHtml(openPath)}"` : '';
+    const vaultHash = item.vault_media_hash || '';
+    const openable = Boolean(openPath) || Boolean(vaultHash);
+    const openableClass = openable ? ' is-openable' : '';
+    const dataAttr = openable
+        ? ` data-preview-open-path="${escapeHtml(openPath)}" data-preview-vault-hash="${escapeHtml(vaultHash)}" data-preview-name="${escapeHtml(item.file_name || '')}"`
+        : '';
 
     return `
         <div class="history-media-preview-item${openableClass}"${dataAttr}>
