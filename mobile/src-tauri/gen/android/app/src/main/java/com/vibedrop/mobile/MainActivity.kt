@@ -696,6 +696,28 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
+    fun playVideoNative(path: String): String {
+      if (path.isBlank()) {
+        return "原文件路径为空"
+      }
+      return try {
+        if (!path.startsWith("content://")) {
+          val file = File(path)
+          if (!file.exists()) {
+            return "原文件不存在"
+          }
+        }
+        val intent = android.content.Intent(this@MainActivity, VideoPlayerActivity::class.java)
+        intent.putExtra(VideoPlayerActivity.EXTRA_PATH, path)
+        runOnUiThread { startActivity(intent) }
+        ""
+      } catch (e: Exception) {
+        Log.e(TAG, "启动原生视频播放失败", e)
+        e.message ?: "启动失败"
+      }
+    }
+
+    @JavascriptInterface
     fun openPath(path: String, mimeType: String?): String {
       if (path.isBlank()) {
         return "原文件路径为空"

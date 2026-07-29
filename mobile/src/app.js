@@ -8652,6 +8652,36 @@ async function loadMediaViewerSlide(index) {
         return;
     }
 
+    // 混合条目翻页器里的视频页:有原生播放器时只放海报+播放键,点击唤起原生
+    const nativePlayPath = item.savedPath || item.filePath || '';
+    if (supportsNativeVideoPlayback() && nativePlayPath) {
+        slide.loadState = 'ready';
+        slide.spinner.classList.add('hidden');
+        if (item.thumbnailDataUrl) {
+            const poster = document.createElement('img');
+            poster.src = item.thumbnailDataUrl;
+            poster.alt = item.fileName || '视频';
+            poster.draggable = false;
+            slide.mediaEl = poster;
+            slide.content.appendChild(poster);
+        }
+        const playBtn = document.createElement('button');
+        playBtn.type = 'button';
+        playBtn.className = 'mv-video-center-play';
+        playBtn.setAttribute('aria-label', '播放');
+        playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>';
+        playBtn.addEventListener('pointerdown', (event) => event.stopPropagation());
+        playBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const nativeError = window.NativeMediaLibrary.playVideoNative(nativePlayPath);
+            if (nativeError) {
+                showToast(`播放失败：${nativeError}`);
+            }
+        });
+        slide.root.appendChild(playBtn);
+        return;
+    }
+
     const video = document.createElement('video');
     video.setAttribute('playsinline', '');
     video.setAttribute('webkit-playsinline', '');
@@ -9831,6 +9861,19 @@ async function openHistoryMediaItem(entry, itemIndex) {
         return;
     }
 
+    // 视频优先交给原生播放器(安卓 ExoPlayer 页):WebView 视频图层有黑屏顽疾,原生根治
+    if (kind === 'video' && supportsNativeVideoPlayback() && openPath) {
+        try {
+            const nativeError = window.NativeMediaLibrary.playVideoNative(openPath);
+            if (!nativeError) {
+                return;
+            }
+            console.warn('原生视频播放失败，回退应用内查看器', nativeError);
+        } catch (error) {
+            console.warn('原生视频播放调用异常，回退应用内查看器', error);
+        }
+    }
+
     // 默认走应用内全屏查看器(图片/视频统一翻页);失败再回退到外部应用
     if (kind === 'image' || kind === 'video') {
         try {
@@ -9880,6 +9923,10 @@ async function openHistoryMediaItemExternally(item) {
 function supportsExternalMediaOpen() {
     return supportsMediaOpenerPreferences()
         || Boolean(window.NativeMediaLibrary && typeof window.NativeMediaLibrary.openPath === 'function');
+}
+
+function supportsNativeVideoPlayback() {
+    return typeof window.NativeMediaLibrary?.playVideoNative === 'function';
 }
 
 function getHistoryEntryItems(entry) {
