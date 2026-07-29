@@ -334,6 +334,9 @@ def build_merged_history(vault_root: pathlib.Path, mode: str, limit: int) -> dic
     merged.sort(key=entry_sort_key, reverse=True)
     if limit:
         merged = merged[:limit]
+    by_name_size, by_name = build_media_lookups(load_media_index(vault_root))
+    for entry in merged:
+        stamp_entry_media(entry, by_name_size, by_name)
     return {
         "ok": True,
         "schemaVersion": 1,
@@ -342,6 +345,114 @@ def build_merged_history(vault_root: pathlib.Path, mode: str, limit: int) -> dic
         "mergedCount": len(merged),
         "history": merged,
     }
+
+
+
+# ---- 媒体仓:原件按内容哈希存储去重,供跨设备"复活"查看 ----
+MEDIA_MAX_BYTES = 2 * 1024 * 1024 * 1024  # 单文件上限 2GB
+MEDIA_CHUNK = 1024 * 1024
+THUMBNAIL_MAX_CHARS = 48000
+media_lock = threading.Lock()
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def media_dir(vault_root: pathlib.Path) -> pathlib.Path:
+    return vault_root / "media"
+
+
+def media_blob_path(vault_root: pathlib.Path, digest: str) -> pathlib.Path:
+    return media_dir(vault_root) / "blobs" / digest[:2] / digest
+
+
+def media_index_path(vault_root: pathlib.Path) -> pathlib.Path:
+    return media_dir(vault_root) / "index.json"
+
+
+def load_media_index(vault_root: pathlib.Path) -> dict[str, Any]:
+    path = media_index_path(vault_root)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def build_media_lookups(index: dict[str, Any]) -> tuple[dict[str, str], dict[str, set]]:
+    """名字+大小 → 哈希;纯名字 → 哈希集合(唯一时才可用作兜底匹配)。"""
+    by_name_size: dict[str, str] = {}
+    by_name: dict[str, set] = {}
+    for digest, meta in index.items():
+        if not isinstance(meta, dict):
+            continue
+        size = meta.get("sizeBytes")
+        for name in meta.get("names") or []:
+            if size:
+                by_name_size[f"{name}|{size}"] = digest
+            by_name.setdefault(name, set()).add(digest)
+    return by_name_size, by_name
+
+
+def register_media(vault_root: pathlib.Path, digest: str, size: int, name: str, mime: str) -> None:
+    with media_lock:
+        index = load_media_index(vault_root)
+        meta = index.get(digest)
+        if not isinstance(meta, dict):
+            meta = {"sizeBytes": size, "mimeType": mime or "", "names": [], "storedAt": iso_now()}
+        if name and name not in (meta.get("names") or []):
+            meta.setdefault("names", []).append(name)
+        if mime and not meta.get("mimeType"):
+            meta["mimeType"] = mime
+        meta["sizeBytes"] = size
+        index[digest] = meta
+        path = media_index_path(vault_root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(path)
+
+
+def find_media_hash(name: str, size: Any, by_name_size: dict[str, str], by_name: dict[str, set]) -> str:
+    if not name:
+        return ""
+    if size:
+        hit = by_name_size.get(f"{name}|{size}")
+        if hit:
+            return hit
+    candidates = by_name.get(name)
+    if candidates and len(candidates) == 1:
+        return next(iter(candidates))
+    return ""
+
+
+MEDIA_KINDS = {"image", "video", "media", "file"}
+
+
+def stamp_entry_media(entry: dict[str, Any], by_name_size: dict[str, str], by_name: dict[str, set]) -> None:
+    """给条目/子项盖上 vaultMediaHash 章:客户端据此判断"vault 有原件,可点开"。"""
+    items = entry.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            digest = find_media_hash(
+                str(item.get("fileName") or item.get("file_name") or ""),
+                item.get("sizeBytes") or item.get("size_bytes"),
+                by_name_size,
+                by_name,
+            )
+            if digest:
+                item["vaultMediaHash"] = digest
+    if str(entry.get("kind") or "") in MEDIA_KINDS:
+        digest = find_media_hash(
+            str(entry.get("fileName") or entry.get("file_name") or ""),
+            entry.get("sizeBytes") or entry.get("size_bytes"),
+            by_name_size,
+            by_name,
+        )
+        if digest:
+            entry.setdefault("vaultMediaHash", digest)
 
 
 def compact_history_item(item: Any) -> dict[str, Any]:
@@ -357,7 +468,11 @@ def compact_history_item(item: Any) -> dict[str, Any]:
         "width",
         "height",
     )
-    return {key: item[key] for key in allowed_keys if item.get(key) not in (None, "")}
+    result = {key: item[key] for key in allowed_keys if item.get(key) not in (None, "")}
+    thumb = item.get("thumbnailDataUrl") or item.get("thumbnail_data_url") or ""
+    if isinstance(thumb, str) and 0 < len(thumb) <= THUMBNAIL_MAX_CHARS:
+        result["thumbnailDataUrl"] = thumb
+    return result
 
 
 def compact_history_entry(entry: Any) -> dict[str, Any]:
@@ -396,9 +511,15 @@ def compact_history_entry(entry: Any) -> dict[str, Any]:
         result["items"] = compact_items
         result.setdefault("itemCount", len(compact_items))
 
-    result.setdefault("text", entry.get("fileName") or "")
+    result.setdefault("text", entry.get("fileName") or entry.get("file_name") or "")
     result.setdefault("status", "success")
     result.setdefault("kind", "text")
+    if not result.get("fileName") and entry.get("file_name"):
+        result["fileName"] = entry.get("file_name")
+    if str(result.get("kind") or "") in MEDIA_KINDS:
+        thumb = entry.get("thumbnailDataUrl") or entry.get("thumbnail_data_url") or ""
+        if isinstance(thumb, str) and 0 < len(thumb) <= THUMBNAIL_MAX_CHARS:
+            result["thumbnailDataUrl"] = thumb
     return result
 
 
@@ -541,10 +662,68 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                     self.send_json(500, {"ok": False, "error": str(exc)})
                 return
 
+            if path.startswith("/api/media/blob/"):
+                digest = path.rsplit("/", 1)[-1].lower()
+                if not HEX64.match(digest):
+                    self.send_json(400, {"ok": False, "error": "invalid hash"})
+                    return
+                blob = media_blob_path(vault_root, digest)
+                if not blob.exists():
+                    self.send_json(404, {"ok": False, "error": "media not found"})
+                    return
+                meta = load_media_index(vault_root).get(digest) or {}
+                mime = str(meta.get("mimeType") or "application/octet-stream")
+                total = blob.stat().st_size
+                start, end = 0, total - 1
+                range_header = self.headers.get("Range", "")
+                is_partial = False
+                if range_header.startswith("bytes="):
+                    spec = range_header[6:].split(",")[0].strip()
+                    try:
+                        if spec.startswith("-"):
+                            suffix = int(spec[1:])
+                            start = max(0, total - suffix)
+                        else:
+                            parts = spec.split("-")
+                            start = int(parts[0])
+                            if len(parts) > 1 and parts[1]:
+                                end = min(int(parts[1]), total - 1)
+                        if start > end or start >= total:
+                            self.send_response(416)
+                            self.send_header("Content-Range", f"bytes */{total}")
+                            self.end_headers()
+                            return
+                        is_partial = True
+                    except ValueError:
+                        start, end, is_partial = 0, total - 1, False
+                length = end - start + 1
+                self.send_response(206 if is_partial else 200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Content-Length", str(length))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                if is_partial:
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+                self.end_headers()
+                try:
+                    with blob.open("rb") as handle:
+                        handle.seek(start)
+                        remaining = length
+                        while remaining > 0:
+                            chunk = handle.read(min(MEDIA_CHUNK, remaining))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                return
+
             self.send_json(404, {"ok": False, "error": "not_found"})
 
         def do_POST(self) -> None:
-            request_path = self.path.rstrip("/")
+            request_path = urllib.parse.urlparse(self.path).path.rstrip("/")
 
             if request_path == "/api/history/append":
                 # 增量推送:只收新增条目,追加进设备增量文件,立刻广播通知
@@ -572,6 +751,90 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                         "at": iso_now(),
                     })
                     self.send_json(200, {"ok": True, "appended": appended})
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
+                return
+
+            if request_path == "/api/media/upload":
+                # 原件上传:按内容哈希落盘去重;流式写入避免大文件占内存
+                if token and self.headers.get("X-VibeDrop-Token") != token:
+                    self.send_json(401, {"ok": False, "error": "unauthorized"})
+                    return
+                try:
+                    query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                    digest = ((query.get("hash") or [""])[0] or "").lower()
+                    if not HEX64.match(digest):
+                        raise ValueError("缺少合法的 hash 参数(sha256 hex)")
+                    name = (query.get("name") or [""])[0]
+                    mime = (query.get("mime") or [""])[0]
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0:
+                        raise ValueError("请求体为空")
+                    if length > MEDIA_MAX_BYTES:
+                        raise ValueError(f"文件超过单文件上限 2GB: {length}")
+
+                    blob = media_blob_path(vault_root, digest)
+                    hasher = hashlib.sha256()
+                    tmp_dir = media_dir(vault_root) / "tmp"
+                    tmp_dir.mkdir(parents=True, exist_ok=True)
+                    tmp_path = tmp_dir / f"{digest}.{os.getpid()}.{threading.get_ident()}.part"
+                    remaining = length
+                    with tmp_path.open("wb") as handle:
+                        while remaining > 0:
+                            chunk = self.rfile.read(min(MEDIA_CHUNK, remaining))
+                            if not chunk:
+                                raise ValueError("请求体不完整")
+                            hasher.update(chunk)
+                            handle.write(chunk)
+                            remaining -= len(chunk)
+                    actual = hasher.hexdigest()
+                    if actual != digest:
+                        tmp_path.unlink(missing_ok=True)
+                        raise ValueError(f"哈希不匹配: 声明 {digest[:12]}… 实际 {actual[:12]}…")
+
+                    existed = blob.exists()
+                    if existed:
+                        tmp_path.unlink(missing_ok=True)
+                    else:
+                        blob.parent.mkdir(parents=True, exist_ok=True)
+                        tmp_path.replace(blob)
+                    register_media(vault_root, digest, length, name, mime)
+                    self.send_json(200, {"ok": True, "hash": digest, "existed": existed, "sizeBytes": length})
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
+                return
+
+            if request_path == "/api/media/lookup":
+                # 批量查询:哪些哈希已入库 / 按 文件名+大小 匹配哈希
+                if token and self.headers.get("X-VibeDrop-Token") != token:
+                    self.send_json(401, {"ok": False, "error": "unauthorized"})
+                    return
+                try:
+                    body = read_json_body(self, max_bytes)
+                    if not isinstance(body, dict):
+                        raise ValueError("请求体必须是对象")
+                    index = load_media_index(vault_root)
+                    hashes = body.get("hashes")
+                    existing = []
+                    if isinstance(hashes, list):
+                        existing = [
+                            h for h in hashes
+                            if isinstance(h, str) and HEX64.match(h.lower())
+                            and media_blob_path(vault_root, h.lower()).exists()
+                        ]
+                    matches: dict[str, str] = {}
+                    keys = body.get("keys")
+                    if isinstance(keys, list):
+                        by_name_size, by_name = build_media_lookups(index)
+                        for key in keys:
+                            if not isinstance(key, dict):
+                                continue
+                            name = str(key.get("fileName") or "")
+                            size = key.get("sizeBytes")
+                            digest = find_media_hash(name, size, by_name_size, by_name)
+                            if digest:
+                                matches[f"{name}|{size or ''}"] = digest
+                    self.send_json(200, {"ok": True, "existing": existing, "matches": matches, "indexCount": len(index)})
                 except Exception as exc:
                     self.send_json(500, {"ok": False, "error": str(exc)})
                 return

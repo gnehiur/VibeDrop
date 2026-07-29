@@ -43,7 +43,7 @@ class VideoPlayerActivity : Activity() {
             return
         }
 
-        val uri = if (raw.startsWith("content://")) {
+        val uri = if (raw.startsWith("content://") || raw.startsWith("http://") || raw.startsWith("https://")) {
             Uri.parse(raw)
         } else {
             val file = File(raw)

@@ -564,6 +564,163 @@ fn download_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
+fn check_paths_exist(paths: Vec<String>) -> Vec<bool> {
+    paths
+        .iter()
+        .map(|p| !p.starts_with("content://") && std::path::Path::new(p).is_file())
+        .collect()
+}
+
+#[derive(serde::Deserialize)]
+pub struct VaultUploadCandidate {
+    path: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    mime: String,
+}
+
+#[derive(serde::Serialize, Default)]
+pub struct VaultUploadReport {
+    uploaded: usize,
+    existed: usize,
+    failed: usize,
+    missing: usize,
+}
+
+fn sha256_of_file(path: &str) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher).map_err(|e| e.to_string())?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// 把本机还存在的历史媒体原件补传进 Home Vault 媒体仓(按内容哈希去重)。
+#[tauri::command]
+async fn vault_upload_media(
+    endpoint: String,
+    files: Vec<VaultUploadCandidate>,
+) -> Result<VaultUploadReport, String> {
+    const MAX_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+    const IN_MEMORY_LIMIT: u64 = 64 * 1024 * 1024;
+
+    let endpoint = endpoint.trim_end_matches('/').to_string();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut report = VaultUploadReport::default();
+
+    // 逐个哈希(阻塞线程池里做,不卡异步运行时)
+    let mut hashed: Vec<(String, String, String, String, u64)> = Vec::new();
+    for candidate in files {
+        let meta = match std::fs::metadata(&candidate.path) {
+            Ok(meta) if meta.is_file() => meta,
+            _ => {
+                report.missing += 1;
+                continue;
+            }
+        };
+        let size = meta.len();
+        if size == 0 || size > MAX_UPLOAD_BYTES {
+            report.missing += 1;
+            continue;
+        }
+        let path_for_hash = candidate.path.clone();
+        let digest = match tauri::async_runtime::spawn_blocking(move || sha256_of_file(&path_for_hash)).await {
+            Ok(Ok(digest)) => digest,
+            _ => {
+                report.failed += 1;
+                continue;
+            }
+        };
+        let name = if candidate.name.is_empty() {
+            std::path::Path::new(&candidate.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        } else {
+            candidate.name
+        };
+        hashed.push((candidate.path, name, candidate.mime, digest, size));
+    }
+
+    // 批量问 vault 哪些已入库
+    let all_hashes: Vec<String> = hashed.iter().map(|item| item.3.clone()).collect();
+    let mut existing: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for chunk in all_hashes.chunks(200) {
+        let response = client
+            .post(format!("{}/api/media/lookup", endpoint))
+            .json(&serde_json::json!({ "hashes": chunk }))
+            .send()
+            .await;
+        if let Ok(response) = response {
+            if let Ok(value) = response.json::<serde_json::Value>().await {
+                if let Some(list) = value.get("existing").and_then(|v| v.as_array()) {
+                    for item in list {
+                        if let Some(text) = item.as_str() {
+                            existing.insert(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (path, name, mime, digest, size) in hashed {
+        if existing.contains(&digest) || done.contains(&digest) {
+            report.existed += 1;
+            continue;
+        }
+        let url = match reqwest::Url::parse_with_params(
+            &format!("{}/api/media/upload", endpoint),
+            &[("hash", digest.as_str()), ("name", name.as_str()), ("mime", mime.as_str())],
+        ) {
+            Ok(url) => url,
+            Err(_) => {
+                report.failed += 1;
+                continue;
+            }
+        };
+
+        let request = if size <= IN_MEMORY_LIMIT {
+            match tokio::fs::read(&path).await {
+                Ok(bytes) => client.post(url).body(bytes),
+                Err(_) => {
+                    report.missing += 1;
+                    continue;
+                }
+            }
+        } else {
+            match tokio::fs::File::open(&path).await {
+                Ok(file) => client
+                    .post(url)
+                    .header(reqwest::header::CONTENT_LENGTH, size)
+                    .body(reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(file))),
+                Err(_) => {
+                    report.missing += 1;
+                    continue;
+                }
+            }
+        };
+
+        match request.timeout(std::time::Duration::from_secs(1800)).send().await {
+            Ok(response) if response.status().is_success() => {
+                report.uploaded += 1;
+                done.insert(digest);
+            }
+            _ => {
+                report.failed += 1;
+            }
+        }
+    }
+
+    Ok(report)
+}
+
+#[tauri::command]
 fn resolve_media_path(app: tauri::AppHandle, path: String) -> Result<String, String> {
     let original = PathBuf::from(&path);
     if original.exists() {
@@ -1507,6 +1664,8 @@ pub fn run() {
             finish_incoming_file,
             cancel_incoming_file,
             resolve_media_path,
+            check_paths_exist,
+            vault_upload_media,
             get_discovery_diagnostics,
             discover_desktops,
             request_desktop_pairing,

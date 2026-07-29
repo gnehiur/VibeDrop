@@ -701,7 +701,8 @@ class MainActivity : TauriActivity() {
         return "原文件路径为空"
       }
       return try {
-        if (!path.startsWith("content://")) {
+        val isRemote = path.startsWith("http://") || path.startsWith("https://")
+        if (!isRemote && !path.startsWith("content://")) {
           val file = File(path)
           if (!file.exists()) {
             return "原文件不存在"

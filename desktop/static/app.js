@@ -62,6 +62,7 @@ const SEND_COMPOSER_DEFERRED_RENDER_DELAY_MS = 180;
 const LEGACY_HISTORY_FALLBACK_LIMIT = 200;
 const DEFAULT_HISTORY_FILTERS = {
     sources: [],
+    availability: 'available',
     device: 'all',
     quickTime: 'all',
     startDate: '',
@@ -3562,6 +3563,7 @@ function initNavigation() {
             btn.classList.add('active');
             if (viewId === 'history-view') {
                 refreshVaultMergedHistory();
+                void refreshLocalMediaExistence();
             }
         });
     });
@@ -3570,6 +3572,9 @@ function initNavigation() {
         refreshVaultMergedHistory();
         connectVaultEventStream();
     }, 2500);
+    setTimeout(() => {
+        refreshLocalMediaExistence().then(() => autoUploadLocalMediaToVault());
+    }, 12000);
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
         connectVaultEventStream();
@@ -3926,6 +3931,19 @@ function initHistoryFilterControls() {
         });
     }
 
+    const availabilityContainer = $('history-availability-filter-btns');
+    if (availabilityContainer) {
+        availabilityContainer.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                currentHistoryFilters.availability = btn.dataset.availabilityFilter || 'available';
+                clearHistoryHeatmapSelection();
+                renderAvailabilityFilterState();
+                renderHistoryDateInputs();
+                scheduleHistoryRender();
+            });
+        });
+    }
+
     const kindContainer = $('history-kind-filter-btns');
     if (kindContainer) {
         kindContainer.querySelectorAll('.filter-btn').forEach(btn => {
@@ -4001,6 +4019,7 @@ function initHistoryFilterControls() {
     syncHistoryFilterForm();
     renderTimeFilterState();
     renderKindFilterState();
+    renderAvailabilityFilterState();
 }
 
 function openHistoryFilterSheet() {
@@ -4093,6 +4112,12 @@ function renderTimeFilterState() {
 function renderKindFilterState() {
     $('history-kind-filter-btns')?.querySelectorAll('.filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.kindFilter === (currentHistoryFilters.kind || 'all'));
+    });
+}
+
+function renderAvailabilityFilterState() {
+    $('history-availability-filter-btns')?.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.availabilityFilter === (currentHistoryFilters.availability || 'available'));
     });
 }
 
@@ -5622,6 +5647,8 @@ function normalizeHistoryItem(item = {}) {
         thumbnailDataUrl: item.thumbnailDataUrl || item.thumbnail_data_url || '',
         filePath: item.filePath || item.file_path || '',
         savedPath: item.savedPath || item.saved_path || '',
+        sizeBytes: Number(item.sizeBytes || item.size_bytes || 0) || 0,
+        vaultMediaHash: item.vaultMediaHash || item.vault_media_hash || '',
         status: item.status || 'pending',
         error: item.error || '',
     };
@@ -7759,6 +7786,104 @@ function buildHomeVaultPayload(history) {
 
 // ---- 全设备合并历史(Home Vault 拉取)与自动推送 ----
 const LOCAL_SOURCE_FALLBACK_ID = '__local__';
+// ---- 原件可用性:vault 媒体映射 + 本机文件存在性 ----
+const vaultMediaByKey = new Map(); // "文件名|大小" 与 "文件名|" → 哈希
+const localMediaExistence = new Map(); // 本机路径 → 是否存在
+let vaultMediaUploadStarted = false;
+
+function rememberVaultMediaStamp(item) {
+    const digest = item?.vaultMediaHash || item?.vault_media_hash || '';
+    const name = item?.fileName || item?.file_name || '';
+    if (!digest || !name) return;
+    const size = item?.sizeBytes || item?.size_bytes || '';
+    vaultMediaByKey.set(`${name}|${size || ''}`, digest);
+    vaultMediaByKey.set(`${name}|`, digest);
+}
+
+function harvestVaultMediaStamps(entries) {
+    (entries || []).forEach((entry) => {
+        if (!entry || typeof entry !== 'object') return;
+        rememberVaultMediaStamp(entry);
+        if (Array.isArray(entry.items)) {
+            entry.items.forEach((item) => rememberVaultMediaStamp(item));
+        }
+    });
+}
+
+function getItemVaultHash(item) {
+    if (item?.vaultMediaHash) return item.vaultMediaHash;
+    const name = item?.fileName || '';
+    if (!name || !vaultMediaByKey.size) return '';
+    return vaultMediaByKey.get(`${name}|${item?.sizeBytes || ''}`) || vaultMediaByKey.get(`${name}|`) || '';
+}
+
+function vaultMediaBlobUrl(digest) {
+    const endpoint = getHomeVaultSettings().url || '';
+    return endpoint && digest ? `${endpoint}/api/media/blob/${digest}` : '';
+}
+
+function isItemViewableHere(entry, item) {
+    if (getItemVaultHash(item)) return true;
+    const path = item?.savedPath || item?.filePath || '';
+    if (!path) return false;
+    if (path.startsWith('http://') || path.startsWith('https://')) return true;
+    if (!isLocalSourceEntry(entry)) return false; // 别的设备的本地路径在本机打不开
+    if (path.startsWith('content://')) return false;
+    return localMediaExistence.get(path) !== false; // 未检查完先乐观放行
+}
+
+async function refreshLocalMediaExistence() {
+    if (!supportsNativeFileReceive()) return;
+    const paths = [];
+    getHistory().forEach((entry) => {
+        getHistoryEntryItems(entry).forEach((item) => {
+            const path = item.savedPath || item.filePath || '';
+            if (path && !path.startsWith('content://') && !path.startsWith('http') && !localMediaExistence.has(path) && !paths.includes(path)) {
+                paths.push(path);
+            }
+        });
+    });
+    if (!paths.length) return;
+    try {
+        const results = await invokeNative('check_paths_exist', { paths });
+        if (Array.isArray(results)) {
+            paths.forEach((path, i) => localMediaExistence.set(path, Boolean(results[i])));
+            scheduleHistoryRender();
+        }
+    } catch (error) {
+        console.warn('本机媒体存在性检查失败', error);
+    }
+}
+
+async function autoUploadLocalMediaToVault() {
+    if (vaultMediaUploadStarted || !supportsNativeFileReceive()) return;
+    vaultMediaUploadStarted = true;
+    try {
+        const endpoint = getHomeVaultSettings().url || '';
+        if (!endpoint) return;
+        const seen = new Set();
+        const files = [];
+        getHistory().forEach((entry) => {
+            getHistoryEntryItems(entry).forEach((item) => {
+                const path = item.savedPath || item.filePath || '';
+                if (!path || path.startsWith('content://') || path.startsWith('http') || seen.has(path)) return;
+                if (localMediaExistence.get(path) === false) return;
+                seen.add(path);
+                files.push({ path, name: item.fileName || '', mime: item.mimeType || '' });
+            });
+        });
+        if (!files.length) return;
+        const report = await invokeNative('vault_upload_media', { endpoint, files });
+        if (report && Number(report.uploaded) > 0) {
+            showToast(`已向 Home Vault 补传 ${report.uploaded} 个原件`);
+            refreshVaultMergedHistory();
+        }
+    } catch (error) {
+        console.warn('原件补传失败(下次启动会重试)', error);
+        vaultMediaUploadStarted = false;
+    }
+}
+
 let vaultMergedEntries = [];
 let vaultMergedDevices = [];
 let vaultMergedFetchInFlight = false;
@@ -7795,6 +7920,7 @@ async function refreshVaultMergedHistory() {
         const data = await response.json();
         if (!data?.ok || !Array.isArray(data.history)) return;
         const localId = getLocalSourceId();
+        harvestVaultMediaStamps(data.history || []);
         vaultMergedDevices = (data.devices || []).filter((device) => String(device.deviceId) !== localId);
         vaultMergedEntries = data.history.filter((entry) => {
             const src = String(entry?.sourceDeviceId || '');
@@ -8512,7 +8638,8 @@ async function openMediaViewer(entry, itemIndex) {
         const kind = inferMediaOpenerKind(item);
         if (kind !== 'image' && kind !== 'video') return;
         const hasPath = Boolean(item.savedPath || item.filePath);
-        if (!hasPath && !(kind === 'image' && item.thumbnailDataUrl)) return;
+        const hasVault = Boolean(getItemVaultHash(item));
+        if (!hasPath && !hasVault && !(kind === 'image' && item.thumbnailDataUrl)) return;
         viewable.push({ item, kind, originalIndex });
     });
     if (!viewable.length) {
@@ -8653,7 +8780,7 @@ async function loadMediaViewerSlide(index) {
     }
 
     // 混合条目翻页器里的视频页:有原生播放器时只放海报+播放键,点击唤起原生
-    const nativePlayPath = item.savedPath || item.filePath || '';
+    const nativePlayPath = resolveVideoPlayTarget(mediaViewerState.entry, item);
     if (supportsNativeVideoPlayback() && nativePlayPath) {
         slide.loadState = 'ready';
         slide.spinner.classList.add('hidden');
@@ -9385,8 +9512,8 @@ function showHistoryMediaPreview(entry, items, { initialIndex = 0 } = {}) {
                 return;
             }
             const openPath = previewItem.savedPath || previewItem.filePath || '';
-            if (!openPath && !(previewItem.kind === 'image' && previewItem.thumbnailDataUrl)) {
-                showToast('原文件路径未保留');
+            if (!openPath && !getItemVaultHash(previewItem) && !(previewItem.kind === 'image' && previewItem.thumbnailDataUrl)) {
+                showToast('原件已丢失，无法查看');
                 return;
             }
             await openHistoryMediaItem({
@@ -9419,7 +9546,9 @@ function closeHistoryMediaPreview() {
 async function resolveHistoryMediaPreviewUri(item) {
     const openPath = item.savedPath || item.filePath || '';
     if (!openPath) {
-        // 没保留原文件路径(如"传图到剪贴板"的发送记录):图片退回缩略图,至少能看
+        // 没保留原文件路径:优先用 vault 原件,其次图片退回缩略图
+        const digest = getItemVaultHash(item);
+        if (digest) return vaultMediaBlobUrl(digest);
         return item.kind === 'image' ? (item.thumbnailDataUrl || '') : '';
     }
 
@@ -9461,6 +9590,11 @@ async function resolveHistoryMediaPreviewUri(item) {
         }
     }
 
+    // 本地都解析不出来(文件已删/跨设备路径):vault 原件兜底
+    if (!previewUri) {
+        const digest = getItemVaultHash(item);
+        if (digest) previewUri = vaultMediaBlobUrl(digest);
+    }
     if (!previewUri && item.kind === 'image' && item.thumbnailDataUrl) {
         previewUri = item.thumbnailDataUrl;
     }
@@ -9542,7 +9676,7 @@ function renderHistoryMediaPreviewItem(item, index) {
         ? '<span class="history-media-play history-media-play-single">▶</span>'
         : '';
     const openPath = item.savedPath || item.filePath || '';
-    const openable = Boolean(openPath) || (item.kind === 'image' && Boolean(item.thumbnailDataUrl));
+    const openable = Boolean(openPath) || Boolean(getItemVaultHash(item)) || (item.kind === 'image' && Boolean(item.thumbnailDataUrl));
     const openableClass = openable ? ' is-openable' : '';
     const dataAttr = openable ? ` data-preview-media-index="${index}"` : '';
 
@@ -9871,6 +10005,17 @@ function renderHistoryWindow(force) {
     });
 }
 
+function resolveVideoPlayTarget(entry, item) {
+    const path = item?.savedPath || item?.filePath || '';
+    if (path && isLocalSourceEntry(entry)) {
+        if (path.startsWith('content://')) return path;
+        if (!path.startsWith('http') && localMediaExistence.get(path) !== false) return path;
+        if (path.startsWith('http')) return path;
+    }
+    const digest = getItemVaultHash(item);
+    return digest ? vaultMediaBlobUrl(digest) : '';
+}
+
 async function openHistoryMediaItem(entry, itemIndex) {
     const items = getHistoryEntryItems(entry);
     const item = items[itemIndex];
@@ -9880,22 +10025,26 @@ async function openHistoryMediaItem(entry, itemIndex) {
 
     const openPath = item.savedPath || item.filePath || '';
     const kind = inferMediaOpenerKind(item);
+    const vaultHash = getItemVaultHash(item);
     const canShowThumbnailOnly = kind === 'image' && Boolean(item.thumbnailDataUrl);
-    if (!openPath && !canShowThumbnailOnly) {
-        showToast(isLocalSourceEntry(entry) ? '原文件路径未保留' : '原件在其他设备上，远程查看即将支持');
+    if (!openPath && !vaultHash && !canShowThumbnailOnly) {
+        showToast('原件已丢失，无法查看');
         return;
     }
 
-    // 视频优先交给原生播放器(安卓 ExoPlayer 页):WebView 视频图层有黑屏顽疾,原生根治
-    if (kind === 'video' && supportsNativeVideoPlayback() && openPath) {
-        try {
-            const nativeError = window.NativeMediaLibrary.playVideoNative(openPath);
-            if (!nativeError) {
-                return;
+    // 视频优先交给原生播放器(安卓 ExoPlayer 页):本地没有就从 vault 在线播
+    if (kind === 'video' && supportsNativeVideoPlayback()) {
+        const playTarget = resolveVideoPlayTarget(entry, item);
+        if (playTarget) {
+            try {
+                const nativeError = window.NativeMediaLibrary.playVideoNative(playTarget);
+                if (!nativeError) {
+                    return;
+                }
+                console.warn('原生视频播放失败，回退应用内查看器', nativeError);
+            } catch (error) {
+                console.warn('原生视频播放调用异常，回退应用内查看器', error);
             }
-            console.warn('原生视频播放失败，回退应用内查看器', nativeError);
-        } catch (error) {
-            console.warn('原生视频播放调用异常，回退应用内查看器', error);
         }
     }
 
@@ -9982,6 +10131,8 @@ function getHistoryEntryItems(entry) {
             fileName: entry.fileName || entry.file_name || entry.text || '媒体',
             mimeType: entry.mimeType || entry.mime_type || '',
             thumbnailDataUrl: entry.thumbnailDataUrl || entry.thumbnail_data_url || '',
+            sizeBytes: entry.sizeBytes || entry.size_bytes || 0,
+            vaultMediaHash: entry.vaultMediaHash || entry.vault_media_hash || '',
         })];
     }
 
@@ -10192,6 +10343,10 @@ function filterHistoryEntries(history, filters = currentHistoryFilters) {
             return false;
         }
 
+        if (!matchesAvailability(hydratedEntry, filters)) {
+            return false;
+        }
+
         if (!matchesStatus(hydratedEntry, filters)) {
             return false;
         }
@@ -10336,6 +10491,17 @@ function matchesKind(entry, filters = currentHistoryFilters) {
     });
 }
 
+function matchesAvailability(entry, filters = currentHistoryFilters) {
+    if ((filters.availability || 'available') === 'all') {
+        return true;
+    }
+    const items = getHistoryEntryItems(entry).filter((item) => item.kind === 'image' || item.kind === 'video' || item.kind === 'file');
+    if (!items.length) {
+        return true; // 纯文字等非媒体条目不受"原件"筛选影响
+    }
+    return items.some((item) => isItemViewableHere(entry, item));
+}
+
 function matchesStatus(entry, filters = currentHistoryFilters) {
     if (filters.status === 'all') {
         return true;
@@ -10408,6 +10574,10 @@ function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistor
         labels.push(`类型：${kindLabels[currentHistoryFilters.kind] || currentHistoryFilters.kind}`);
     }
 
+    if ((currentHistoryFilters.availability || 'available') === 'all') {
+        labels.push('含已丢失原件');
+    }
+
     const statusLabels = {
         success: '成功',
         partial: '部分成功',
@@ -10444,6 +10614,7 @@ function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistor
         renderHistorySourceFilters();
         renderDeviceFilterState();
         renderKindFilterState();
+        renderAvailabilityFilterState();
         renderTimeFilterState();
         syncHistoryFilterForm();
         scheduleHistoryRender();
