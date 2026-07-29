@@ -8522,6 +8522,12 @@ async function openMediaViewer(entry, itemIndex) {
     let startIndex = viewable.findIndex((v) => v.originalIndex === itemIndex);
     if (startIndex < 0) startIndex = 0;
 
+    // 防抖:刚打开就来的第二次点击(双击/列表重排导致的重复触发)直接忽略
+    if (mediaViewerState.open && Date.now() - (mediaViewerState.openedAt || 0) < 500) {
+        return;
+    }
+    mediaViewerState.openedAt = Date.now();
+
     closeMediaViewer({ instant: true, keepHidden: true });
     mediaViewerState.open = true;
     mediaViewerState.entry = entry;
@@ -8653,6 +8659,13 @@ async function loadMediaViewerSlide(index) {
     if (item.thumbnailDataUrl) video.poster = item.thumbnailDataUrl;
     video.src = uri;
     video.addEventListener('loadedmetadata', () => {
+        // videoWidth 为 0 说明容器/编码(常见 .mov+HEVC)WebView 解不了:
+        // 只会黑屏有声且不报 error,主动降级提示外部打开
+        if (!video.videoWidth) {
+            try { video.pause(); } catch (error) { /* 忽略 */ }
+            showMediaViewerSlideError(slide, '这个视频格式应用内无法解码');
+            return;
+        }
         slide.loadState = 'ready';
         slide.spinner.classList.add('hidden');
         updateMediaViewerVideoUi(slide);
@@ -8665,6 +8678,9 @@ async function loadMediaViewerSlide(index) {
 }
 
 function showMediaViewerSlideError(slide, message) {
+    if (slide.loadState === 'error') {
+        return;
+    }
     slide.loadState = 'error';
     slide.spinner.classList.add('hidden');
     const error = document.createElement('div');
