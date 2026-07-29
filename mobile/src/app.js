@@ -3559,8 +3559,16 @@ function initNavigation() {
             }
         });
     });
-    // 启动后台拉一次全设备合并历史
-    setTimeout(() => refreshVaultMergedHistory(), 2500);
+    // 启动后台拉一次全设备合并历史,并挂上长连接接收后续实时通知
+    setTimeout(() => {
+        refreshVaultMergedHistory();
+        connectVaultEventStream();
+    }, 2500);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        connectVaultEventStream();
+        refreshVaultMergedHistory();
+    });
 }
 
 function initSettingsButton() {
@@ -7591,6 +7599,7 @@ function getHomeVaultSettings() {
         lastEntryCount: Number(homeVault.lastEntryCount || 0),
         lastRestoredAt: homeVault.lastRestoredAt || '',
         lastRestoreCount: Number(homeVault.lastRestoreCount || 0),
+        lastPushedEntryId: homeVault.lastPushedEntryId || '',
     };
 }
 
@@ -7767,6 +7776,64 @@ async function refreshVaultMergedHistory() {
     }
 }
 
+// 金库长连接(SSE):挂着不动,别的设备推了新历史就立刻收到通知去拉
+let vaultEventSource = null;
+let vaultEventRetryTimer = null;
+
+function connectVaultEventStream() {
+    if (vaultEventSource) return;
+    if (typeof EventSource === 'undefined') return;
+    let endpoint = '';
+    try {
+        endpoint = getHomeVaultSettings().url;
+        if (!endpoint) return;
+        const source = new EventSource(`${endpoint}/api/events`);
+        vaultEventSource = source;
+        source.onmessage = (event) => {
+            let senderId = '';
+            try {
+                senderId = String(JSON.parse(event.data || '{}').deviceId || '');
+            } catch (_) {
+                senderId = '';
+            }
+            // 自己推上去的不用回头再拉
+            if (senderId && senderId === getLocalSourceId()) return;
+            refreshVaultMergedHistory();
+        };
+        source.onerror = () => {
+            source.close();
+            if (vaultEventSource === source) vaultEventSource = null;
+            if (vaultEventRetryTimer) clearTimeout(vaultEventRetryTimer);
+            vaultEventRetryTimer = setTimeout(connectVaultEventStream, 15000);
+        };
+    } catch (error) {
+        debugLog('vault-sse-connect-failed', { endpoint, message: String(error?.message || error) });
+    }
+}
+
+/// 找出游标之后的新增条目;返回 null 表示游标不可用,需要全量兜底
+function collectUnpushedEntries(history) {
+    const cursorId = String(getHomeVaultSettings().lastPushedEntryId || '');
+    if (!cursorId) return null;
+    const index = history.findIndex((entry) => String(entry?.id || '') === cursorId);
+    if (index < 0) return null;
+    return history.slice(0, index);
+}
+
+async function pushHomeVaultDelta(endpoint, entries) {
+    const response = await fetch(`${endpoint}/api/history/append`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            deviceId: clientIdentity.id,
+            deviceName: clientIdentity.name,
+            entries: buildHistoryExportData(entries),
+        }),
+    });
+    if (!response.ok) throw new Error(`append 失败 HTTP ${response.status}`);
+    return response.json();
+}
+
 function scheduleHomeVaultAutoPush() {
     if (homeVaultAutoPushTimer) clearTimeout(homeVaultAutoPushTimer);
     homeVaultAutoPushTimer = setTimeout(async () => {
@@ -7775,11 +7842,20 @@ function scheduleHomeVaultAutoPush() {
             const history = getHistory();
             if (!history.length) return;
             const endpoint = getHomeVaultSettings().url;
-            await syncHomeVaultWithFetch(endpoint, buildHomeVaultPayload(history));
+            const fresh = collectUnpushedEntries(history);
+
+            if (fresh && fresh.length === 0) return;      // 没有新增,不打扰服务端
+            if (fresh) {
+                await pushHomeVaultDelta(endpoint, fresh); // 增量:只发这几条
+            } else {
+                // 首次推送或游标失效:全量兜底一次,之后回到增量轨道
+                await syncHomeVaultWithFetch(endpoint, buildHomeVaultPayload(history));
+            }
+            saveHomeVaultSettings({ lastPushedEntryId: String(history[0]?.id || '') });
         } catch (error) {
             debugLog('vault-auto-push-failed', { message: String(error?.message || error) });
         }
-    }, 8000);
+    }, 800);
 }
 
 function renderHistorySourceFilters() {

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import pathlib
+import queue
 import re
 import subprocess
 import sys
@@ -22,6 +23,21 @@ MAX_REQUEST_BYTES = 80 * 1024 * 1024
 
 
 sync_lock = threading.Lock()
+
+# ---- SSE 订阅者(设备连上后挂着,有新历史时被唤醒)----
+subscribers_lock = threading.Lock()
+subscribers: set = set()
+
+
+def broadcast_event(payload: dict[str, Any]) -> None:
+    data = json.dumps(payload, ensure_ascii=False)
+    with subscribers_lock:
+        targets = list(subscribers)
+    for pending in targets:
+        try:
+            pending.put_nowait(data)
+        except queue.Full:
+            pass
 
 
 def iso_now() -> str:
@@ -167,23 +183,126 @@ def entry_dedupe_key(entry: dict[str, Any], device_id: str) -> str:
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
 
 
+DELTA_FILE_NAME = "deltas.jsonl"
+DEVICE_META_NAME = "device.json"
+DELTA_COMPACT_THRESHOLD = 800
+delta_lock = threading.Lock()
+
+
+def device_dir_for(vault_root: pathlib.Path, device_id: str) -> pathlib.Path:
+    return vault_root / "inbox" / "android" / safe_segment(device_id)
+
+
+def append_delta_entries(
+    vault_root: pathlib.Path,
+    device_id: str,
+    device_name: str,
+    entries: list[Any],
+) -> int:
+    """把增量条目追加进设备的 deltas.jsonl;超过阈值时压实成新快照。"""
+    target_dir = device_dir_for(vault_root, device_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    delta_path = target_dir / DELTA_FILE_NAME
+
+    with delta_lock:
+        with delta_path.open("a", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        (target_dir / DEVICE_META_NAME).write_text(
+            json.dumps(
+                {"deviceId": device_id, "deviceName": device_name, "updatedAt": iso_now()},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        line_count = sum(1 for _ in delta_path.open("r", encoding="utf-8"))
+        if line_count >= DELTA_COMPACT_THRESHOLD:
+            compact_device_deltas(vault_root, device_id, device_name)
+    return len(entries)
+
+
+def compact_device_deltas(vault_root: pathlib.Path, device_id: str, device_name: str) -> None:
+    """把快照 + 增量合并写成一份新快照,清空增量,避免读取时越来越慢。"""
+    payload = load_device_payload(vault_root, device_dir_for(vault_root, device_id))
+    if not payload:
+        return
+    payload["deviceName"] = device_name or payload.get("deviceName") or device_id
+    save_payload(vault_root, payload)
+    (device_dir_for(vault_root, device_id) / DELTA_FILE_NAME).unlink(missing_ok=True)
+
+
+def load_device_payload(vault_root: pathlib.Path, device_dir: pathlib.Path) -> dict[str, Any] | None:
+    """一台设备的完整历史 = 最新快照 + 之后追加的增量,按 id 去重。"""
+    snapshots = [
+        path
+        for path in device_dir.glob("*.json")
+        if path.name != DEVICE_META_NAME
+    ]
+    payload: dict[str, Any] | None = None
+    if snapshots:
+        snapshots.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
+        for path in snapshots:
+            try:
+                payload = normalize_payload(load_json_file(path))
+                break
+            except Exception:
+                continue
+
+    delta_entries: list[Any] = []
+    delta_path = device_dir / DELTA_FILE_NAME
+    if delta_path.exists():
+        for line in delta_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                delta_entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    if payload is None:
+        if not delta_entries:
+            return None
+        meta_path = device_dir / DEVICE_META_NAME
+        meta = {}
+        if meta_path.exists():
+            try:
+                meta = load_json_file(meta_path)
+            except Exception:
+                meta = {}
+        payload = {
+            "schemaVersion": 1,
+            "app": "VibeDrop",
+            "deviceId": meta.get("deviceId") or device_dir.name,
+            "deviceName": meta.get("deviceName") or device_dir.name,
+            "exportedAt": meta.get("updatedAt") or iso_now(),
+            "history": [],
+        }
+
+    seen_ids: set[str] = set()
+    combined: list[Any] = []
+    for entry in delta_entries + list(payload.get("history") or []):
+        key = str(entry.get("id") or "") if isinstance(entry, dict) else ""
+        if key:
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+        combined.append(entry)
+    payload["history"] = combined
+    return payload
+
+
 def collect_latest_payload_per_device(vault_root: pathlib.Path) -> list[dict[str, Any]]:
-    """扫描 inbox 全部快照,每个 deviceId 只保留最新一份。"""
-    inbox = vault_root / "inbox"
-    if not inbox.exists():
+    """遍历各设备目录,每台设备取"最新快照 + 增量"的合并结果。"""
+    android_inbox = vault_root / "inbox" / "android"
+    if not android_inbox.exists():
         return []
-    latest_by_device: dict[str, tuple[float, dict[str, Any]]] = {}
-    for path in inbox.glob("**/*.json"):
-        try:
-            payload = normalize_payload(load_json_file(path))
-        except Exception:
-            continue
-        device_id = safe_segment(str(payload.get("deviceId") or "unknown"), "unknown")
-        mtime = path.stat().st_mtime
-        current = latest_by_device.get(device_id)
-        if current is None or mtime > current[0]:
-            latest_by_device[device_id] = (mtime, payload)
-    return [payload for _, payload in latest_by_device.values()]
+    payloads: list[dict[str, Any]] = []
+    for device_dir in sorted(path for path in android_inbox.iterdir() if path.is_dir()):
+        payload = load_device_payload(vault_root, device_dir)
+        if payload:
+            payloads.append(payload)
+    return payloads
 
 
 def build_merged_history(vault_root: pathlib.Path, mode: str, limit: int) -> dict[str, Any]:
@@ -344,6 +463,35 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                 )
                 return
 
+            if path == "/api/events":
+                # SSE 长连接:挂着不动,有新历史时推一行;25 秒无事发一个心跳保活
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                pending: queue.Queue = queue.Queue(maxsize=64)
+                with subscribers_lock:
+                    subscribers.add(pending)
+                try:
+                    self.wfile.write(b": connected\n\n")
+                    self.wfile.flush()
+                    while True:
+                        try:
+                            data = pending.get(timeout=25)
+                            chunk = f"data: {data}\n\n".encode("utf-8")
+                        except queue.Empty:
+                            chunk = b": ping\n\n"
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                finally:
+                    with subscribers_lock:
+                        subscribers.discard(pending)
+                return
+
             if path == "/api/history/merged":
                 if token and self.headers.get("X-VibeDrop-Token") != token:
                     self.send_json(401, {"ok": False, "error": "unauthorized"})
@@ -396,7 +544,39 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
             self.send_json(404, {"ok": False, "error": "not_found"})
 
         def do_POST(self) -> None:
-            if self.path.rstrip("/") != "/api/android-history":
+            request_path = self.path.rstrip("/")
+
+            if request_path == "/api/history/append":
+                # 增量推送:只收新增条目,追加进设备增量文件,立刻广播通知
+                if token and self.headers.get("X-VibeDrop-Token") != token:
+                    self.send_json(401, {"ok": False, "error": "unauthorized"})
+                    return
+                try:
+                    body = read_json_body(self, max_bytes)
+                    if not isinstance(body, dict):
+                        raise ValueError("请求体必须是对象")
+                    device_id = str(body.get("deviceId") or "").strip()
+                    if not device_id:
+                        raise ValueError("缺少 deviceId")
+                    entries = body.get("entries")
+                    if not isinstance(entries, list):
+                        raise ValueError("entries 必须是数组")
+                    device_name = str(body.get("deviceName") or device_id)
+                    appended = append_delta_entries(vault_root, device_id, device_name, entries)
+                    broadcast_event({
+                        "type": "history-updated",
+                        "deviceId": device_id,
+                        "deviceName": device_name,
+                        "historyCount": appended,
+                        "mode": "append",
+                        "at": iso_now(),
+                    })
+                    self.send_json(200, {"ok": True, "appended": appended})
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
+                return
+
+            if request_path != "/api/android-history":
                 self.send_json(404, {"ok": False, "error": "not_found"})
                 return
             if token and self.headers.get("X-VibeDrop-Token") != token:
@@ -406,6 +586,13 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                 payload = normalize_payload(read_json_body(self, max_bytes))
                 history_count = len(payload["history"])
                 saved_path = save_payload(vault_root, payload)
+                broadcast_event({
+                    "type": "history-updated",
+                    "deviceId": payload.get("deviceId") or "",
+                    "deviceName": payload.get("deviceName") or "",
+                    "historyCount": history_count,
+                    "at": iso_now(),
+                })
                 with sync_lock:
                     sync_report = run_sync(sync_script, vault_root, viewer_url, sync_timeout)
                 self.send_json(
