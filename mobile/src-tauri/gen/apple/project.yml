@@ -11,7 +11,8 @@ settingGroups:
   app:
     base:
       PRODUCT_NAME: VibeDrop
-      PRODUCT_BUNDLE_IDENTIFIER: com.vibedrop.mobile
+      PRODUCT_BUNDLE_IDENTIFIER: asia.alidaily.VibeDrop
+      DEVELOPMENT_TEAM: 2LT3U6224A
 targetTemplates:
   app:
     type: application
