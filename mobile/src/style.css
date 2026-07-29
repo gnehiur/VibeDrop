@@ -2555,3 +2555,10 @@ body.nearby-reorder-active {
     background: #5856d6;
     border-color: #5856d6;
 }
+
+/* 虚拟滚动占位:撑起未渲染区域的高度,滚动条长度才正确 */
+.history-virtual-spacer {
+    flex: 0 0 auto;
+    width: 100%;
+    pointer-events: none;
+}

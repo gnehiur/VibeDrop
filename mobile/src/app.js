@@ -20,6 +20,25 @@ const HEATMAP_VISIBLE_DAYS = 5;
 const HEATMAP_HOUR_SLOTS = 24;
 const HISTORY_RENDER_INITIAL_BATCH = 12;
 const HISTORY_RENDER_BATCH_SIZE = 20;
+// 超过这个条数启用虚拟滚动:只渲染可视区,内存占用与总条数无关
+const HISTORY_VIRTUAL_THRESHOLD = 150;
+const HISTORY_VIRTUAL_OVERSCAN = 6;
+const HISTORY_ESTIMATED_ITEM_HEIGHT = 120;
+const HISTORY_ITEM_GAP = 12;
+const historyVirtual = {
+    active: false,
+    entries: [],
+    heights: [],
+    measuredCount: 0,
+    measuredTotal: 0,
+    window: { start: -1, end: -1 },
+    topSpacer: 0,
+    scroller: null,
+    listenerBound: false,
+    rafPending: false,
+    observer: null,
+    renderMarkup: null,
+};
 const DESKTOP_DISCOVERY_DEFAULT_PORT = 9001;
 const DESKTOP_PAIRING_POLL_MS = 1200;
 const MEDIA_OPENER_KINDS = ['image', 'video'];
@@ -9035,42 +9054,168 @@ function renderHistory() {
         `;
     };
 
-    const initialEnd = Math.min(filtered.length, HISTORY_RENDER_INITIAL_BATCH);
-    list.innerHTML = filtered
-        .slice(0, initialEnd)
-        .map((entry, index) => renderItemMarkup(entry, index))
-        .join('');
-
-    if (initialEnd >= filtered.length) {
+    // 条目不多时保持原来的简单渲染,避免无谓复杂度
+    if (filtered.length <= HISTORY_VIRTUAL_THRESHOLD) {
+        historyVirtual.active = false;
+        list.innerHTML = filtered.map((entry, index) => renderItemMarkup(entry, index)).join('');
         return;
     }
 
-    let nextIndex = initialEnd;
-    const appendBatch = () => {
-        if (renderToken !== historyRenderToken) {
-            return;
-        }
-        if ($('history-view')?.classList.contains('hidden')) {
-            return;
-        }
+    // 长列表走虚拟滚动:只渲染可视区附近的条目,其余用上下占位撑高度
+    historyVirtual.active = true;
+    historyVirtual.renderMarkup = renderItemMarkup;
+    historyVirtual.entries = filtered;
+    historyVirtual.heights = new Array(filtered.length).fill(0);
+    historyVirtual.window = { start: -1, end: -1 };
+    ensureHistoryScrollListener();
+    renderHistoryWindow(true);
+}
 
-        const end = Math.min(nextIndex + HISTORY_RENDER_BATCH_SIZE, filtered.length);
-        const html = [];
-        for (let i = nextIndex; i < end; i += 1) {
-            html.push(renderItemMarkup(filtered[i], i));
-        }
+// ---- 历史列表虚拟滚动 ----
 
-        if (html.length > 0) {
-            list.insertAdjacentHTML('beforeend', html.join(''));
-        }
+function historyAverageHeight() {
+    const { heights, measuredCount, measuredTotal } = historyVirtual;
+    if (measuredCount > 0) return measuredTotal / measuredCount;
+    return heights.length ? HISTORY_ESTIMATED_ITEM_HEIGHT : HISTORY_ESTIMATED_ITEM_HEIGHT;
+}
 
-        nextIndex = end;
-        if (nextIndex < filtered.length) {
-            requestAnimationFrame(appendBatch);
+function historyItemHeight(index) {
+    const measured = historyVirtual.heights[index];
+    return measured > 0 ? measured : historyAverageHeight();
+}
+
+function getScrollParent(element) {
+    let node = element?.parentElement;
+    while (node) {
+        const overflowY = window.getComputedStyle(node).overflowY;
+        if (/(auto|scroll)/.test(overflowY) && node.scrollHeight > node.clientHeight) {
+            return node;
         }
+        node = node.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+}
+
+function ensureHistoryScrollListener() {
+    if (historyVirtual.listenerBound) return;
+    const list = $('history-list');
+    if (!list) return;
+    const scroller = getScrollParent(list);
+    historyVirtual.scroller = scroller;
+    const onScroll = () => {
+        if (!historyVirtual.active) return;
+        if (historyVirtual.rafPending) return;
+        historyVirtual.rafPending = true;
+        requestAnimationFrame(() => {
+            historyVirtual.rafPending = false;
+            renderHistoryWindow(false);
+        });
     };
+    // 捕获阶段挂在 document 上,不管实际滚的是哪个元素都能收到
+    document.addEventListener('scroll', onScroll, { passive: true, capture: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    // 兜底:某些容器不派发可捕获的 scroll 事件时,用观察器盯住窗口边缘
+    if (typeof IntersectionObserver !== 'undefined') {
+        historyVirtual.observer = new IntersectionObserver(onScroll, {
+            root: scroller === document.documentElement || scroller === document.body ? null : scroller,
+            rootMargin: '200px',
+        });
+    }
+    historyVirtual.listenerBound = true;
+}
 
-    requestAnimationFrame(appendBatch);
+function renderHistoryWindow(force) {
+    const list = $('history-list');
+    if (!list || !historyVirtual.active) return;
+    const entries = historyVirtual.entries;
+    if (!entries.length) return;
+
+    const scroller = historyVirtual.scroller || getScrollParent(list);
+    const scrollTop = scroller === document.documentElement || scroller === document.body
+        ? (window.scrollY || document.documentElement.scrollTop || 0)
+        : scroller.scrollTop;
+    const rawViewportHeight = scroller === document.documentElement || scroller === document.body
+        ? (window.innerHeight || document.documentElement.clientHeight)
+        : scroller.clientHeight;
+    const viewportHeight = rawViewportHeight > 0 ? rawViewportHeight : 800;
+
+    // 列表在滚动容器内的起始偏移
+    const listRect = list.getBoundingClientRect();
+    const scrollerRect = scroller === document.documentElement || scroller === document.body
+        ? { top: 0 }
+        : scroller.getBoundingClientRect();
+    // 列表元素自身在滚动容器中的绝对位置(占位块在列表内部,不影响这个值)
+    const listOffsetInScroller = listRect.top - scrollerRect.top + scrollTop;
+
+    const relativeTop = Math.max(scrollTop - listOffsetInScroller, 0);
+    const relativeBottom = relativeTop + viewportHeight;
+
+    let start = 0;
+    let accumulated = 0;
+    while (start < entries.length && accumulated + historyItemHeight(start) < relativeTop) {
+        accumulated += historyItemHeight(start);
+        start += 1;
+    }
+    const topOffsetBeforeOverscan = accumulated;
+
+    let end = start;
+    let visibleHeight = 0;
+    while (end < entries.length && accumulated + visibleHeight < relativeBottom) {
+        visibleHeight += historyItemHeight(end);
+        end += 1;
+    }
+
+    // 上下各多渲染一些,滑动时不会露白
+    let windowStart = Math.max(start - HISTORY_VIRTUAL_OVERSCAN, 0);
+    let windowEnd = Math.min(end + HISTORY_VIRTUAL_OVERSCAN, entries.length);
+
+    if (!force && windowStart === historyVirtual.window.start && windowEnd === historyVirtual.window.end) {
+        return;
+    }
+    historyVirtual.window = { start: windowStart, end: windowEnd };
+
+    let topSpacer = topOffsetBeforeOverscan;
+    for (let i = windowStart; i < start; i += 1) {
+        topSpacer -= historyItemHeight(i);
+    }
+    topSpacer = Math.max(topSpacer, 0);
+
+    let bottomSpacer = 0;
+    for (let i = windowEnd; i < entries.length; i += 1) {
+        bottomSpacer += historyItemHeight(i);
+    }
+
+    const chunks = [`<div class="history-virtual-spacer" style="height:${topSpacer}px"></div>`];
+    for (let i = windowStart; i < windowEnd; i += 1) {
+        chunks.push(historyVirtual.renderMarkup(entries[i], i));
+    }
+    chunks.push(`<div class="history-virtual-spacer" style="height:${bottomSpacer}px"></div>`);
+    list.innerHTML = chunks.join('');
+    historyVirtual.topSpacer = topSpacer;
+
+    // 实测渲染出来的真实高度,越滑越准
+    const nodes = list.querySelectorAll('.history-item');
+    if (historyVirtual.observer) {
+        historyVirtual.observer.disconnect();
+        if (nodes.length) {
+            historyVirtual.observer.observe(nodes[0]);
+            historyVirtual.observer.observe(nodes[nodes.length - 1]);
+        }
+    }
+    nodes.forEach((node) => {
+        const index = Number(node.dataset.idx || '-1');
+        if (index < 0) return;
+        const height = node.getBoundingClientRect().height + HISTORY_ITEM_GAP;
+        if (height <= 0) return;
+        if (!(historyVirtual.heights[index] > 0)) {
+            historyVirtual.measuredCount += 1;
+            historyVirtual.measuredTotal += height;
+        } else {
+            historyVirtual.measuredTotal += height - historyVirtual.heights[index];
+        }
+        historyVirtual.heights[index] = height;
+    });
 }
 
 async function openHistoryMediaItem(entry, itemIndex) {
