@@ -564,6 +564,30 @@ fn download_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 #[cfg(target_os = "ios")]
+#[tauri::command]
+fn resolve_media_path(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let original = PathBuf::from(&path);
+    if original.exists() {
+        return Ok(path);
+    }
+
+    // iOS 更新后沙盒容器 UUID 会变,历史里的旧绝对路径失效;
+    // 按 Documents/ 之后的相对部分重新拼到当前容器再试一次
+    if let Some(idx) = path.find("/Documents/") {
+        let relative = &path[idx + "/Documents/".len()..];
+        if !relative.is_empty() {
+            if let Ok(docs) = mobile_documents_dir(&app) {
+                let candidate = docs.join(relative);
+                if candidate.exists() {
+                    return Ok(candidate.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    Ok(String::new())
+}
+
 fn mobile_documents_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .document_dir()
@@ -1483,6 +1507,7 @@ pub fn run() {
             append_incoming_file_chunk,
             finish_incoming_file,
             cancel_incoming_file,
+            resolve_media_path,
             get_discovery_diagnostics,
             discover_desktops,
             request_desktop_pairing,

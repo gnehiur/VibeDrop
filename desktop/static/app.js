@@ -3578,7 +3578,7 @@ function initNavigation() {
             }
         });
     });
-    // 启动后拉一次全设备合并历史,并挂上长连接接收实时通知
+    // 启动后台拉一次全设备合并历史,并挂上长连接接收后续实时通知
     setTimeout(() => {
         refreshVaultMergedHistory();
         connectVaultEventStream();
@@ -4151,7 +4151,7 @@ function getHistoryDateAvailability() {
         if (sourceFilters.length) {
             const sourceId = String(hydratedEntry.sourceDeviceId || getLocalSourceId());
             if (!sourceFilters.includes(sourceId)) {
-                return false;
+                return;
             }
         }
         if (filters.device !== 'all' && hydratedEntry.target !== filters.device) {
@@ -7306,7 +7306,7 @@ function addHistory(entry) {
     setStoredHistoryRaw(JSON.stringify(history), { persistNative: false });
     persistNativeHistoryEntry(entry);
     persistHistory();
-    // 新记录落账后延迟自动推送到 Home Vault
+    // 新记录落账后延迟自动推送到 Home Vault,供其他设备的合并视图拉取
     scheduleHomeVaultAutoPush();
 }
 
@@ -8605,7 +8605,7 @@ function showHistoryMediaViewerError(item, message, { allowFallback = true } = {
         return;
     }
 
-    const hasFallback = allowFallback && window.NativeMediaLibrary && typeof window.NativeMediaLibrary.openPath === 'function';
+    const hasFallback = allowFallback && supportsExternalMediaOpen();
     title.textContent = truncateFilenamePreserveExtension(item.fileName || '媒体');
     subtitle.textContent = item.kind === 'video' ? '这个视频暂时无法在应用内直接播放。' : '这个图片暂时无法在应用内直接显示。';
     stage.classList.remove('is-loading');
@@ -8620,7 +8620,7 @@ function showHistoryMediaViewerError(item, message, { allowFallback = true } = {
 
     if (hasFallback) {
         $('history-media-viewer-fallback')?.addEventListener('click', () => {
-            fallbackOpenHistoryMediaExternally(item);
+            openHistoryMediaItemExternally(item);
         });
     }
 }
@@ -8643,6 +8643,29 @@ async function resolveHistoryMediaPreviewUri(item) {
             previewUri = window.NativeMediaLibrary.getPreviewUri(openPath, item.mimeType || '') || '';
         } catch (error) {
             console.warn('NativeMediaLibrary.getPreviewUri 调用失败', error);
+        }
+    }
+
+    // iOS(及其他无原生桥的 Tauri 环境)兜底:本地绝对路径转 asset 协议地址
+    if (!previewUri && !openPath.startsWith('content://')) {
+        const convertFileSrc = window.__TAURI__?.core?.convertFileSrc;
+        if (typeof convertFileSrc === 'function') {
+            let resolvedPath = openPath;
+            // iOS 更新后容器路径会变,先让原生侧校验/重定位一次
+            if (supportsNativeFileReceive()) {
+                try {
+                    resolvedPath = (await invokeNative('resolve_media_path', { path: openPath })) || '';
+                } catch (error) {
+                    resolvedPath = openPath;
+                }
+            }
+            if (resolvedPath) {
+                try {
+                    previewUri = convertFileSrc(resolvedPath) || '';
+                } catch (error) {
+                    console.warn('convertFileSrc 转换失败', error);
+                }
+            }
         }
     }
 
@@ -8686,50 +8709,50 @@ function resolveImageDimensions(source) {
     });
 }
 
-async function buildPhotoSwipeSlides(items) {
-    const slides = [];
-    for (const item of items) {
-        const src = await resolveHistoryMediaPreviewUri(item);
-        if (!src) {
-            continue;
-        }
-        const dimensions = await resolveImageDimensions(item.thumbnailDataUrl || src);
-        slides.push({
-            src,
-            width: dimensions.width,
-            height: dimensions.height,
-            alt: item.fileName || '图片',
-        });
-    }
-    return slides;
-}
-
 async function showHistoryMediaImageViewer(entry, itemIndex) {
     if (!photoswipeReady || typeof window.PhotoSwipe !== 'function') {
         throw new Error('图片预览组件还没准备好');
     }
 
-    const items = getHistoryEntryItems(entry).filter((item) => item.kind === 'image');
-    if (!items.length) {
+    const allItems = getHistoryEntryItems(entry);
+    const clickedItem = allItems[itemIndex];
+    const imageItems = allItems.filter((item) => item.kind === 'image');
+    if (!imageItems.length) {
         throw new Error('没有可预览的图片');
     }
 
-    const clickedItem = getHistoryEntryItems(entry)[itemIndex];
+    // 逐项解析可加载地址,解析失败的直接跳过,幻灯片和条目保持一一对应
+    const resolved = [];
+    for (const item of imageItems) {
+        const src = await resolveHistoryMediaPreviewUri(item);
+        if (!src) {
+            continue;
+        }
+        const dimensions = await resolveImageDimensions(item.thumbnailDataUrl || src);
+        resolved.push({
+            item,
+            slide: {
+                src,
+                width: dimensions.width,
+                height: dimensions.height,
+                alt: item.fileName || '图片',
+            },
+        });
+    }
+    if (!resolved.length) {
+        throw new Error('图片预览地址无效');
+    }
+
     const clickedPath = clickedItem?.savedPath || clickedItem?.filePath || '';
-    let startIndex = items.findIndex((item) => (item.savedPath || item.filePath || '') === clickedPath);
+    let startIndex = resolved.findIndex(({ item }) => (item.savedPath || item.filePath || '') === clickedPath);
     if (startIndex < 0) {
         startIndex = 0;
     }
 
-    const slides = await buildPhotoSwipeSlides(items);
-    if (!slides.length) {
-        throw new Error('图片预览地址无效');
-    }
-
     const pswp = new window.PhotoSwipe({
-        dataSource: slides,
-        index: Math.min(startIndex, slides.length - 1),
-        loop: slides.length > 1,
+        dataSource: resolved.map((r) => r.slide),
+        index: startIndex,
+        loop: resolved.length > 1,
         bgOpacity: 0.96,
         spacing: 0.08,
         showHideAnimationType: 'zoom',
@@ -8738,6 +8761,26 @@ async function showHistoryMediaImageViewer(entry, itemIndex) {
         secondaryZoomLevel: 2.5,
         maxZoomLevel: 4,
     });
+
+    if (supportsExternalMediaOpen()) {
+        pswp.on('uiRegister', () => {
+            pswp.ui.registerElement({
+                name: 'external-open',
+                title: '用其他应用打开',
+                order: 9,
+                isButton: true,
+                html: '<svg aria-hidden="true" class="pswp__icn" width="32" height="32" viewBox="0 0 32 32"><path d="M14 9H10.5A2.5 2.5 0 0 0 8 11.5v10A2.5 2.5 0 0 0 10.5 24h10a2.5 2.5 0 0 0 2.5-2.5V18" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M18.5 7.5H24.5V13.5M24 8 16 16" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/></svg>',
+                onClick: () => {
+                    const current = resolved[pswp.currIndex]?.item;
+                    pswp.close();
+                    if (current) {
+                        openHistoryMediaItemExternally(current);
+                    }
+                },
+            });
+        });
+    }
+
     pswp.init();
 }
 
@@ -8774,13 +8817,21 @@ async function showHistoryMediaVideoViewer(entry, itemIndex) {
     title.textContent = truncateFilenamePreserveExtension(item.fileName || '视频');
     subtitle.textContent = '应用内直接播放原始视频';
     stage.classList.remove('is-loading');
+    const externalOpenButton = supportsExternalMediaOpen()
+        ? '<div class="history-media-viewer-actions"><button id="history-media-viewer-open-external" class="secondary-btn" type="button">用其他应用打开</button></div>'
+        : '';
     stage.innerHTML = `
         <div class="history-media-video-shell">
             <div class="history-media-video-player">
                 <video id="history-media-viewer-video" playsinline controls preload="metadata"></video>
             </div>
+            ${externalOpenButton}
         </div>
     `;
+
+    $('history-media-viewer-open-external')?.addEventListener('click', () => {
+        openHistoryMediaItemExternally(item);
+    });
 
     const video = $('history-media-viewer-video');
     if (!video) {
@@ -9234,6 +9285,38 @@ async function openHistoryMediaItem(entry, itemIndex) {
 
     const openPath = item.savedPath || item.filePath || '';
     if (!openPath) {
+        showToast(isLocalSourceEntry(entry) ? '原文件路径未保留' : '原件在其他设备上，远程查看即将支持');
+        return;
+    }
+
+    // 默认走应用内查看器:图片用 PhotoSwipe,视频用 Plyr;失败再回退到外部应用
+    const kind = inferMediaOpenerKind(item);
+    if (kind === 'image') {
+        try {
+            await showHistoryMediaImageViewer(entry, itemIndex);
+            return;
+        } catch (error) {
+            console.warn('应用内图片查看失败，回退到外部打开', error);
+        }
+    } else if (kind === 'video') {
+        try {
+            await showHistoryMediaVideoViewer(entry, itemIndex);
+            return;
+        } catch (error) {
+            console.warn('应用内视频播放失败，回退到外部打开', error);
+        }
+    }
+
+    await openHistoryMediaItemExternally(item);
+}
+
+async function openHistoryMediaItemExternally(item) {
+    if (!item) {
+        return;
+    }
+
+    const openPath = item.savedPath || item.filePath || '';
+    if (!openPath) {
         showToast('原文件路径未保留');
         return;
     }
@@ -9258,6 +9341,11 @@ async function openHistoryMediaItem(entry, itemIndex) {
     }
 
     fallbackOpenHistoryMediaExternally(item);
+}
+
+function supportsExternalMediaOpen() {
+    return supportsMediaOpenerPreferences()
+        || Boolean(window.NativeMediaLibrary && typeof window.NativeMediaLibrary.openPath === 'function');
 }
 
 function getHistoryEntryItems(entry) {
@@ -9450,6 +9538,13 @@ function formatTime(isoString) {
 function filterHistoryEntries(history, filters = currentHistoryFilters) {
     return history.filter((entry) => {
         const hydratedEntry = entry;
+        const sourceFilters = filters.sources || [];
+        if (sourceFilters.length) {
+            const sourceId = String(hydratedEntry.sourceDeviceId || getLocalSourceId());
+            if (!sourceFilters.includes(sourceId)) {
+                return false;
+            }
+        }
         if (filters.device !== 'all' && hydratedEntry.target !== filters.device) {
             return false;
         }
