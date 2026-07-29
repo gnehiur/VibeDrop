@@ -3939,6 +3939,19 @@ function initHistoryFilterControls() {
         });
     }
 
+    const kindContainer = $('history-kind-filter-btns');
+    if (kindContainer) {
+        kindContainer.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                currentHistoryFilters.kind = btn.dataset.kindFilter || 'all';
+                clearHistoryHeatmapSelection();
+                renderKindFilterState();
+                renderHistoryDateInputs();
+                scheduleHistoryRender();
+            });
+        });
+    }
+
     $('history-search-input')?.addEventListener('input', (event) => {
         currentHistoryFilters.query = event.target.value || '';
         clearHistoryHeatmapSelection();
@@ -3954,14 +3967,19 @@ function initHistoryFilterControls() {
     });
     $('history-filter-close-btn')?.addEventListener('click', closeHistoryFilterSheet);
     $('history-filter-reset-btn')?.addEventListener('click', () => {
+        // 弹层只重置自己管的字段:日期/时段/状态;来源、目标、类型、搜索等首层筛选不动
         currentHistoryFilters = {
-            ...DEFAULT_HISTORY_FILTERS,
-            device: currentHistoryFilters.device,
-            query: currentHistoryFilters.query,
+            ...currentHistoryFilters,
+            quickTime: currentHistoryFilters.quickTime === 'custom' ? 'all' : currentHistoryFilters.quickTime,
+            startDate: '',
+            endDate: '',
+            timeRange: 'all',
+            startTime: '',
+            endTime: '',
+            status: 'all',
         };
         clearHistoryHeatmapSelection();
         syncHistoryFilterForm();
-        renderDeviceFilterState();
         renderTimeFilterState();
         scheduleHistoryRender();
         closeHistoryFilterSheet();
@@ -3979,7 +3997,6 @@ function initHistoryFilterControls() {
     });
     $('history-start-time')?.addEventListener('input', renderHistoryDateInputs);
     $('history-end-time')?.addEventListener('input', renderHistoryDateInputs);
-    $('history-kind-filter')?.addEventListener('change', renderHistoryDateInputs);
     $('history-status-filter')?.addEventListener('change', renderHistoryDateInputs);
     $('history-start-date-trigger')?.addEventListener('click', () => openHistoryDatePicker('startDate'));
     $('history-end-date-trigger')?.addEventListener('click', () => openHistoryDatePicker('endDate'));
@@ -3996,6 +4013,7 @@ function initHistoryFilterControls() {
 
     syncHistoryFilterForm();
     renderTimeFilterState();
+    renderKindFilterState();
 }
 
 function openHistoryFilterSheet() {
@@ -4014,7 +4032,6 @@ function syncHistoryFilterForm() {
         timeRange,
         startTime,
         endTime,
-        kind,
         status,
         query,
     } = currentHistoryFilters;
@@ -4024,7 +4041,6 @@ function syncHistoryFilterForm() {
     if ($('history-time-range')) $('history-time-range').value = timeRange;
     if ($('history-start-time')) $('history-start-time').value = startTime;
     if ($('history-end-time')) $('history-end-time').value = endTime;
-    if ($('history-kind-filter')) $('history-kind-filter').value = kind;
     if ($('history-status-filter')) $('history-status-filter').value = status;
     if ($('history-search-input')) $('history-search-input').value = query;
     syncCustomTimeInputsState();
@@ -4044,7 +4060,6 @@ function applyHistoryFilterForm() {
     const timeRange = $('history-time-range')?.value || 'all';
     const startTime = $('history-start-time')?.value || '';
     const endTime = $('history-end-time')?.value || '';
-    const kind = $('history-kind-filter')?.value || 'all';
     const status = $('history-status-filter')?.value || 'all';
 
     if (startDate && endDate && startDate > endDate) {
@@ -4067,7 +4082,6 @@ function applyHistoryFilterForm() {
         timeRange,
         startTime: timeRange === 'custom' ? startTime : '',
         endTime: timeRange === 'custom' ? endTime : '',
-        kind,
         status,
     };
 
@@ -4086,6 +4100,12 @@ function renderDeviceFilterState() {
 function renderTimeFilterState() {
     $('history-time-filter-btns')?.querySelectorAll('.filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.timeFilter === currentHistoryFilters.quickTime);
+    });
+}
+
+function renderKindFilterState() {
+    $('history-kind-filter-btns')?.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.kindFilter === (currentHistoryFilters.kind || 'all'));
     });
 }
 
@@ -4133,7 +4153,7 @@ function readHistoryFilterDraft() {
         timeRange,
         startTime: timeRange === 'custom' ? ($('history-start-time')?.value || '') : '',
         endTime: timeRange === 'custom' ? ($('history-end-time')?.value || '') : '',
-        kind: $('history-kind-filter')?.value || currentHistoryFilters.kind || 'all',
+        kind: currentHistoryFilters.kind || 'all',
         status: $('history-status-filter')?.value || currentHistoryFilters.status || 'all',
     };
 }
@@ -7897,7 +7917,7 @@ function renderHistorySourceFilters() {
     }
 
     const options = [
-        { value: '', label: '全部设备' },
+        { value: '', label: '全部' },
         { value: localId, label: '本机' },
         ...vaultMergedDevices.map((device) => ({
             value: String(device.deviceId),
@@ -9692,11 +9712,26 @@ function matchesHistorySearch(entry, filters = currentHistoryFilters) {
 }
 
 function matchesKind(entry, filters = currentHistoryFilters) {
-    if (filters.kind === 'all') {
+    const target = filters.kind || 'all';
+    if (target === 'all') {
         return true;
     }
-    const kind = entry.kind || 'text';
-    return kind === filters.kind;
+
+    const entryKind = entry.kind || 'text';
+    if (entryKind === target) {
+        return true;
+    }
+
+    // 混合媒体条目(kind='media')以及多项传输,按实际包含的项匹配:
+    // 例如筛"图片"时,一次同时传了图片+视频的记录也应命中
+    const items = Array.isArray(entry.items) ? entry.items : [];
+    if (!items.length) {
+        return false;
+    }
+    return items.some((item) => {
+        const itemKind = item?.kind || normalizeHistoryKind(item?.mimeType || item?.mime_type || '');
+        return itemKind === target;
+    });
 }
 
 function matchesStatus(entry, filters = currentHistoryFilters) {
@@ -9716,8 +9751,21 @@ function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistor
     if (queryLabel) {
         labels.push(`搜索：${queryLabel}`);
     }
+
+    const sourceIds = currentHistoryFilters.sources || [];
+    if (sourceIds.length) {
+        const localId = getLocalSourceId();
+        const names = sourceIds.map((id) => {
+            if (String(id) === localId) return '本机';
+            const device = vaultMergedDevices.find((d) => String(d.deviceId) === String(id));
+            return device?.deviceName || '未知设备';
+        });
+        const shown = names.slice(0, 2).join('、');
+        labels.push(`来源：${shown}${names.length > 2 ? ` 等${names.length}台` : ''}`);
+    }
+
     const deviceLabel = getHistoryDeviceLabel(currentHistoryFilters.device);
-    if (deviceLabel) labels.push(deviceLabel);
+    if (deviceLabel) labels.push(`目标：${deviceLabel}`);
 
     const quickTimeLabels = {
         today: '今天',
@@ -9755,7 +9803,7 @@ function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistor
         file: '文件',
     };
     if (currentHistoryFilters.kind !== 'all') {
-        labels.push(kindLabels[currentHistoryFilters.kind] || currentHistoryFilters.kind);
+        labels.push(`类型：${kindLabels[currentHistoryFilters.kind] || currentHistoryFilters.kind}`);
     }
 
     const statusLabels = {
@@ -9791,7 +9839,9 @@ function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistor
     $('history-filter-clear-btn')?.addEventListener('click', () => {
         currentHistoryFilters = { ...DEFAULT_HISTORY_FILTERS };
         clearHistoryHeatmapSelection();
+        renderHistorySourceFilters();
         renderDeviceFilterState();
+        renderKindFilterState();
         renderTimeFilterState();
         syncHistoryFilterForm();
         scheduleHistoryRender();

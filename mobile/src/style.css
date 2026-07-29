@@ -1282,6 +1282,17 @@ body.nearby-reorder-active {
     box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
 }
 
+.history-labeled-filter::before {
+    content: attr(data-row-label);
+    align-self: center;
+    padding: 0 4px 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: #98a2b3;
+    user-select: none;
+}
+
 .filter-btn {
     padding: 9px 14px;
     border-radius: 14px;
