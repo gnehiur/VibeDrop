@@ -8699,6 +8699,17 @@ async function loadMediaViewerSlide(index) {
         slide.loadState = 'ready';
         slide.spinner.classList.add('hidden');
         updateMediaViewerVideoUi(slide);
+        if (slide.pendingNativeFullscreen) {
+            slide.pendingNativeFullscreen = false;
+            tryEnterIosNativeFullscreen(slide);
+        }
+    });
+    // 退出系统播放器:单媒体条目直接收起查看器,多媒体条目留在翻页器里
+    video.addEventListener('webkitendfullscreen', () => {
+        try { video.pause(); } catch (error) { /* 忽略 */ }
+        if (mediaViewerState.items.length <= 1) {
+            closeMediaViewer();
+        }
     });
     video.addEventListener('error', () => showMediaViewerSlideError(slide, '视频加载失败'));
     slide.mediaEl = video;
@@ -8747,7 +8758,17 @@ async function activateMediaViewerSlide(index, { autoplay = false } = {}) {
     const slide = mediaViewerState.slides[index];
     if (!slide) return;
     if (slide.video && autoplay) {
-        slide.video.play().catch(() => { /* 需要用户手势时静默降级 */ });
+        if (getNativeMobilePlatform() === 'ios' && typeof slide.video.webkitEnterFullscreen === 'function') {
+            // iOS 直接进系统原生播放器;元数据没就绪就挂起等 loadedmetadata
+            if (slide.video.readyState >= 1) {
+                tryEnterIosNativeFullscreen(slide);
+            } else {
+                slide.pendingNativeFullscreen = true;
+                slide.video.play().catch(() => { /* 忽略 */ });
+            }
+        } else {
+            slide.video.play().catch(() => { /* 需要用户手势时静默降级 */ });
+        }
     }
 }
 
@@ -9216,6 +9237,10 @@ function attachMediaViewerVideoUi(slide) {
 
     const togglePlay = () => {
         if (video.paused) {
+            // iOS 播放一律走系统原生全屏播放器
+            if (getNativeMobilePlatform() === 'ios' && tryEnterIosNativeFullscreen(slide)) {
+                return;
+            }
             video.play().catch(() => showToast('视频播放失败'));
         } else {
             video.pause();
@@ -9927,6 +9952,22 @@ function supportsExternalMediaOpen() {
 
 function supportsNativeVideoPlayback() {
     return typeof window.NativeMediaLibrary?.playVideoNative === 'function';
+}
+
+// iOS:WKWebView 的 webkitEnterFullscreen 会唤起系统原生播放器 UI(即 Safari 全屏播放那套)
+function tryEnterIosNativeFullscreen(slide) {
+    const video = slide?.video;
+    if (!video || typeof video.webkitEnterFullscreen !== 'function') {
+        return false;
+    }
+    try {
+        video.play().catch(() => { /* 播放被拒也不阻塞进全屏 */ });
+        video.webkitEnterFullscreen();
+        return true;
+    } catch (error) {
+        console.warn('唤起 iOS 系统播放器失败，留在应用内播放', error);
+        return false;
+    }
 }
 
 function getHistoryEntryItems(entry) {
