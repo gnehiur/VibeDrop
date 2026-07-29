@@ -563,7 +563,6 @@ fn download_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     }
 }
 
-#[cfg(target_os = "ios")]
 #[tauri::command]
 fn resolve_media_path(app: tauri::AppHandle, path: String) -> Result<String, String> {
     let original = PathBuf::from(&path);
