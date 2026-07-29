@@ -141,19 +141,22 @@ def find_latest_android_payload(
 
 def entry_sort_key(entry: dict[str, Any]) -> float:
     """尽力从条目里解析时间,用于全设备时间线排序;解析不了排最旧。"""
-    iso = entry.get("timestamp_iso") or ""
-    if iso:
+    for candidate in (entry.get("timestamp_iso"), entry.get("timestamp")):
+        if candidate in (None, ""):
+            continue
+        # 数字时间戳(秒或毫秒)
+        if isinstance(candidate, (int, float)) or str(candidate).strip().lstrip("-").isdigit():
+            try:
+                value = float(candidate)
+                return value / 1000.0 if value > 1e11 else value
+            except (TypeError, ValueError):
+                pass
+        # ISO 文本时间(历史条目实际用的就是这种)
         try:
-            return dt.datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+            return dt.datetime.fromisoformat(str(candidate).replace("Z", "+00:00")).timestamp()
         except ValueError:
-            pass
-    raw = entry.get("timestamp")
-    try:
-        value = float(raw)
-        # 毫秒时间戳归一为秒
-        return value / 1000.0 if value > 1e11 else value
-    except (TypeError, ValueError):
-        return 0.0
+            continue
+    return 0.0
 
 
 def entry_dedupe_key(entry: dict[str, Any], device_id: str) -> str:
