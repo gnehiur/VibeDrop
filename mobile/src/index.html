@@ -10,8 +10,6 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <link rel="apple-touch-icon" href="/icon.png?v=gold">
-    <link rel="stylesheet" href="/vendor/photoswipe/photoswipe.css">
-    <link rel="stylesheet" href="/vendor/plyr/plyr.css">
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -371,17 +369,21 @@
             </div>
         </div>
 
-        <div id="history-media-viewer-modal" class="history-media-viewer-modal hidden" aria-hidden="true">
-            <div id="history-media-viewer-backdrop" class="history-media-viewer-backdrop"></div>
-            <div class="history-media-viewer-card" role="dialog" aria-modal="true" aria-labelledby="history-media-viewer-title">
-                <div class="history-media-viewer-header">
-                    <div class="history-media-viewer-copy">
-                        <h3 id="history-media-viewer-title">媒体预览</h3>
-                        <p id="history-media-viewer-subtitle" class="history-media-viewer-subtitle">正在加载媒体内容…</p>
-                    </div>
-                    <button id="history-media-viewer-close" class="icon-btn share-clear-btn" title="关闭">关闭</button>
+        <!-- 全屏媒体查看器(自研:图片/视频统一翻页浏览) -->
+        <div id="media-viewer" class="media-viewer hidden" aria-hidden="true" role="dialog" aria-modal="true">
+            <div id="media-viewer-backdrop" class="media-viewer-backdrop"></div>
+            <div id="media-viewer-track" class="media-viewer-track"></div>
+            <div class="media-viewer-topbar" id="media-viewer-topbar">
+                <button id="media-viewer-close" class="media-viewer-icon-btn" aria-label="关闭">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg>
+                </button>
+                <div class="media-viewer-heading">
+                    <div id="media-viewer-title" class="media-viewer-title"></div>
+                    <div id="media-viewer-counter" class="media-viewer-counter"></div>
                 </div>
-                <div id="history-media-viewer-stage" class="history-media-viewer-stage"></div>
+                <button id="media-viewer-external" class="media-viewer-icon-btn hidden" aria-label="用其他应用打开">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 6H6.8A2.8 2.8 0 0 0 4 8.8v8.4A2.8 2.8 0 0 0 6.8 20h8.4a2.8 2.8 0 0 0 2.8-2.8V14"/><path d="M14 4h6v6M20 4 11 13"/></svg>
+                </button>
             </div>
         </div>
 
@@ -416,12 +418,6 @@
         </nav>
     </div>
 
-    <script src="/vendor/plyr/plyr.min.js"></script>
-    <script type="module">
-        import PhotoSwipe from '/vendor/photoswipe/photoswipe.esm.min.js';
-        window.PhotoSwipe = PhotoSwipe;
-        window.dispatchEvent(new Event('vibedrop:photoswipe-ready'));
-    </script>
     <script src="/app.js"></script>
 </body>
 </html>

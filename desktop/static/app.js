@@ -257,18 +257,10 @@ let mediaOpenerPickerState = {
     apps: [],
     remember: false,
 };
-let historyMediaViewerInitialized = false;
-let historyMediaViewerState = {
-    entry: null,
-    items: [],
-    currentIndex: 0,
-    plyr: null,
-};
 let historyRenderScheduled = false;
 let historyRenderToken = 0;
 let currentRenderedHistoryEntries = [];
 const historyMediaPreviewUriCache = new Map();
-const historyMediaPreviewDimensionsCache = new Map();
 let settingsRevision = 0;
 let historyRevision = 0;
 let storedSettingsCache = {
@@ -292,12 +284,7 @@ let knownDeviceHostNamesCache = {
     historyRevision: -1,
     values: new Map(),
 };
-let photoswipeReady = typeof window.PhotoSwipe === 'function';
 let nativeHistoryStoreEnabled = false;
-
-window.addEventListener('vibedrop:photoswipe-ready', () => {
-    photoswipeReady = typeof window.PhotoSwipe === 'function';
-});
 
 // ---- DOM 缓存 ----
 const $ = (id) => document.getElementById(id);
@@ -327,7 +314,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initHistoryFilterControls();
     initHistoryHeatmapInteractions();
     initHistoryMediaPreview();
-    initHistoryMediaViewer();
+    initMediaViewer();
     initNativeShareInbox();
     startNativeCapabilityWatcher();
 
@@ -8463,33 +8450,773 @@ function initHistoryMediaPreview() {
     historyMediaPreviewInitialized = true;
 }
 
-function initHistoryMediaViewer() {
-    if (historyMediaViewerInitialized) {
+// ============================================
+// 全屏媒体查看器(自研)
+// 图片/视频统一进一个翻页器:左右滑切换、图片捏合/双击缩放与平移、
+// 未缩放时下拉拖拽关闭、单击切换信息栏、视频内嵌极简控制条自动隐藏
+// ============================================
+
+const mediaViewerState = {
+    open: false,
+    entry: null,
+    items: [],
+    index: 0,
+    slides: [],
+    width: 0,
+    chromeHidden: false,
+    chromeTimer: null,
+};
+
+function initMediaViewer() {
+    const root = $('media-viewer');
+    if (!root || root.dataset.ready) {
         return;
     }
+    root.dataset.ready = '1';
 
-    const modal = $('history-media-viewer-modal');
-    const backdrop = $('history-media-viewer-backdrop');
-    const closeBtn = $('history-media-viewer-close');
-
-    if (!modal || !backdrop || !closeBtn) {
-        return;
-    }
-
-    const close = () => closeHistoryMediaViewer();
-    backdrop.addEventListener('click', close);
-    closeBtn.addEventListener('click', close);
-    document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
-            closeHistoryMediaViewer();
+    $('media-viewer-close')?.addEventListener('click', () => closeMediaViewer());
+    $('media-viewer-external')?.addEventListener('click', () => {
+        const current = mediaViewerState.items[mediaViewerState.index]?.item;
+        if (current) {
+            closeMediaViewer({ instant: true });
+            openHistoryMediaItemExternally(current);
         }
     });
 
-    if (window.Plyr?.defaults) {
-        window.Plyr.defaults.iconUrl = '/vendor/plyr/plyr.svg';
+    document.addEventListener('keydown', (event) => {
+        if (!mediaViewerState.open) return;
+        if (event.key === 'Escape') closeMediaViewer();
+        if (event.key === 'ArrowRight') setMediaViewerIndex(mediaViewerState.index + 1);
+        if (event.key === 'ArrowLeft') setMediaViewerIndex(mediaViewerState.index - 1);
+    });
+
+    window.addEventListener('resize', () => {
+        if (!mediaViewerState.open) return;
+        mediaViewerState.width = root.clientWidth || window.innerWidth;
+        layoutMediaViewerTrack(false);
+    });
+
+    attachMediaViewerGestures(root);
+}
+
+async function openMediaViewer(entry, itemIndex) {
+    const root = $('media-viewer');
+    const track = $('media-viewer-track');
+    if (!root || !track) {
+        throw new Error('查看器未就绪');
     }
 
-    historyMediaViewerInitialized = true;
+    const allItems = getHistoryEntryItems(entry);
+    const viewable = [];
+    allItems.forEach((item, originalIndex) => {
+        const kind = inferMediaOpenerKind(item);
+        if (kind !== 'image' && kind !== 'video') return;
+        const hasPath = Boolean(item.savedPath || item.filePath);
+        if (!hasPath && !(kind === 'image' && item.thumbnailDataUrl)) return;
+        viewable.push({ item, kind, originalIndex });
+    });
+    if (!viewable.length) {
+        throw new Error('没有可预览的媒体');
+    }
+
+    let startIndex = viewable.findIndex((v) => v.originalIndex === itemIndex);
+    if (startIndex < 0) startIndex = 0;
+
+    closeMediaViewer({ instant: true, keepHidden: true });
+    mediaViewerState.open = true;
+    mediaViewerState.entry = entry;
+    mediaViewerState.items = viewable;
+    mediaViewerState.index = startIndex;
+    mediaViewerState.chromeHidden = false;
+
+    track.innerHTML = '';
+    mediaViewerState.slides = viewable.map((v) => buildMediaViewerSlide(v));
+    mediaViewerState.slides.forEach((slide) => track.appendChild(slide.root));
+
+    root.classList.remove('hidden');
+    root.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('media-viewer-open');
+    mediaViewerState.width = root.clientWidth || window.innerWidth;
+
+    layoutMediaViewerTrack(false);
+    renderMediaViewerChrome();
+    setMediaViewerChromeHidden(false);
+
+    // 入场:背景淡入,当前页从 92% 缩放弹到位
+    root.classList.add('is-entering');
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => root.classList.remove('is-entering'));
+    });
+
+    void activateMediaViewerSlide(startIndex, { autoplay: viewable[startIndex].kind === 'video' });
+    preloadMediaViewerNeighbors();
+}
+
+function closeMediaViewer({ instant = false, keepHidden = false } = {}) {
+    const root = $('media-viewer');
+    const track = $('media-viewer-track');
+    if (!root || !track) return;
+    if (!mediaViewerState.open && !keepHidden) return;
+
+    mediaViewerState.slides.forEach((slide) => {
+        if (slide.video) {
+            try { slide.video.pause(); } catch (error) { /* 忽略 */ }
+        }
+    });
+    clearTimeout(mediaViewerState.chromeTimer);
+
+    const finalize = () => {
+        root.classList.add('hidden');
+        root.classList.remove('is-leaving', 'is-entering', 'chrome-hidden');
+        root.setAttribute('aria-hidden', 'true');
+        track.innerHTML = '';
+        const backdrop = $('media-viewer-backdrop');
+        if (backdrop) backdrop.style.opacity = '';
+        document.body.classList.remove('media-viewer-open');
+    };
+
+    mediaViewerState.open = false;
+    mediaViewerState.entry = null;
+    mediaViewerState.items = [];
+    mediaViewerState.slides = [];
+
+    if (instant || keepHidden) {
+        finalize();
+        return;
+    }
+    root.classList.add('is-leaving');
+    setTimeout(finalize, 200);
+}
+
+function buildMediaViewerSlide(viewItem) {
+    const rootEl = document.createElement('div');
+    rootEl.className = 'media-viewer-slide';
+    const content = document.createElement('div');
+    content.className = 'media-viewer-slide-content';
+    rootEl.appendChild(content);
+
+    const spinner = document.createElement('div');
+    spinner.className = 'media-viewer-spinner';
+    rootEl.appendChild(spinner);
+
+    return {
+        root: rootEl,
+        content,
+        spinner,
+        viewItem,
+        zoom: { scale: 1, tx: 0, ty: 0 },
+        loadState: 'idle',
+        mediaEl: null,
+        video: null,
+        videoUi: null,
+    };
+}
+
+async function loadMediaViewerSlide(index) {
+    const slide = mediaViewerState.slides[index];
+    if (!slide || slide.loadState === 'loading' || slide.loadState === 'ready' || slide.loadState === 'error') {
+        return;
+    }
+    slide.loadState = 'loading';
+
+    const { item, kind } = slide.viewItem;
+    let uri = '';
+    try {
+        uri = await resolveHistoryMediaPreviewUri(item);
+    } catch (error) {
+        console.warn('解析媒体地址失败', error);
+    }
+    if (!uri) {
+        showMediaViewerSlideError(slide, kind === 'video' ? '没有可用的视频地址' : '没有可用的图片地址');
+        return;
+    }
+
+    if (kind === 'image') {
+        const img = document.createElement('img');
+        img.alt = item.fileName || '图片';
+        img.draggable = false;
+        img.addEventListener('load', () => {
+            slide.loadState = 'ready';
+            slide.spinner.classList.add('hidden');
+        });
+        img.addEventListener('error', () => showMediaViewerSlideError(slide, '图片加载失败'));
+        img.src = uri;
+        slide.mediaEl = img;
+        slide.content.appendChild(img);
+        return;
+    }
+
+    const video = document.createElement('video');
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
+    video.preload = 'metadata';
+    if (item.thumbnailDataUrl) video.poster = item.thumbnailDataUrl;
+    video.src = uri;
+    video.addEventListener('loadedmetadata', () => {
+        slide.loadState = 'ready';
+        slide.spinner.classList.add('hidden');
+        updateMediaViewerVideoUi(slide);
+    });
+    video.addEventListener('error', () => showMediaViewerSlideError(slide, '视频加载失败'));
+    slide.mediaEl = video;
+    slide.video = video;
+    slide.content.appendChild(video);
+    attachMediaViewerVideoUi(slide);
+}
+
+function showMediaViewerSlideError(slide, message) {
+    slide.loadState = 'error';
+    slide.spinner.classList.add('hidden');
+    const error = document.createElement('div');
+    error.className = 'media-viewer-error';
+    const text = document.createElement('div');
+    text.textContent = message;
+    error.appendChild(text);
+    if (supportsExternalMediaOpen() && (slide.viewItem.item.savedPath || slide.viewItem.item.filePath)) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'media-viewer-error-btn';
+        btn.textContent = '用其他应用打开';
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            closeMediaViewer({ instant: true });
+            openHistoryMediaItemExternally(slide.viewItem.item);
+        });
+        error.appendChild(btn);
+    }
+    slide.root.appendChild(error);
+}
+
+async function activateMediaViewerSlide(index, { autoplay = false } = {}) {
+    mediaViewerState.slides.forEach((slide, i) => {
+        if (i !== index && slide.video) {
+            try { slide.video.pause(); } catch (error) { /* 忽略 */ }
+        }
+        if (i !== index) {
+            resetMediaViewerZoom(slide, false);
+        }
+    });
+
+    await loadMediaViewerSlide(index);
+    const slide = mediaViewerState.slides[index];
+    if (!slide) return;
+    if (slide.video && autoplay) {
+        slide.video.play().catch(() => { /* 需要用户手势时静默降级 */ });
+    }
+}
+
+function preloadMediaViewerNeighbors() {
+    const { index, slides } = mediaViewerState;
+    [index - 1, index + 1].forEach((i) => {
+        if (i >= 0 && i < slides.length && slides[i].viewItem.kind === 'image') {
+            void loadMediaViewerSlide(i);
+        }
+    });
+}
+
+function setMediaViewerIndex(next, { animate = true } = {}) {
+    const clamped = Math.max(0, Math.min(next, mediaViewerState.items.length - 1));
+    const changed = clamped !== mediaViewerState.index;
+    mediaViewerState.index = clamped;
+    layoutMediaViewerTrack(animate);
+    if (changed) {
+        renderMediaViewerChrome();
+        void activateMediaViewerSlide(clamped, { autoplay: mediaViewerState.items[clamped].kind === 'video' });
+        preloadMediaViewerNeighbors();
+    }
+}
+
+function layoutMediaViewerTrack(animate, dragOffset = 0) {
+    const track = $('media-viewer-track');
+    if (!track) return;
+    track.classList.toggle('is-animating', Boolean(animate));
+    const x = -(mediaViewerState.index * mediaViewerState.width) + dragOffset;
+    track.style.transform = `translate3d(${x}px, 0, 0)`;
+}
+
+function renderMediaViewerChrome() {
+    const { items, index } = mediaViewerState;
+    const current = items[index];
+    const title = $('media-viewer-title');
+    const counter = $('media-viewer-counter');
+    const external = $('media-viewer-external');
+
+    if (title) {
+        title.textContent = truncateFilenamePreserveExtension(current?.item?.fileName || (current?.kind === 'video' ? '视频' : '图片'));
+    }
+    if (counter) {
+        counter.textContent = items.length > 1 ? `${index + 1} / ${items.length}` : '';
+    }
+    if (external) {
+        const openable = supportsExternalMediaOpen() && Boolean(current?.item?.savedPath || current?.item?.filePath);
+        external.classList.toggle('hidden', !openable);
+    }
+}
+
+function setMediaViewerChromeHidden(hidden) {
+    mediaViewerState.chromeHidden = hidden;
+    $('media-viewer')?.classList.toggle('chrome-hidden', hidden);
+}
+
+function toggleMediaViewerChrome() {
+    setMediaViewerChromeHidden(!mediaViewerState.chromeHidden);
+}
+
+function scheduleMediaViewerChromeAutoHide() {
+    clearTimeout(mediaViewerState.chromeTimer);
+    const slide = mediaViewerState.slides[mediaViewerState.index];
+    if (!slide?.video || slide.video.paused) return;
+    mediaViewerState.chromeTimer = setTimeout(() => {
+        if (mediaViewerState.open && slide.video && !slide.video.paused) {
+            setMediaViewerChromeHidden(true);
+        }
+    }, 3000);
+}
+
+function resetMediaViewerZoom(slide, animate = true) {
+    if (!slide) return;
+    slide.zoom = { scale: 1, tx: 0, ty: 0 };
+    applyMediaViewerZoom(slide, animate);
+}
+
+function applyMediaViewerZoom(slide, animate = false) {
+    if (!slide) return;
+    slide.content.classList.toggle('is-animating', Boolean(animate));
+    const { scale, tx, ty } = slide.zoom;
+    slide.content.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`;
+}
+
+function mediaViewerZoomBounds(slide) {
+    const media = slide?.mediaEl;
+    if (!media) return { x: 0, y: 0 };
+    const scale = slide.zoom.scale;
+    const w = (media.clientWidth || 0) * scale;
+    const h = (media.clientHeight || 0) * scale;
+    return {
+        x: Math.max(0, (w - mediaViewerState.width) / 2),
+        y: Math.max(0, (h - (slide.root.clientHeight || window.innerHeight)) / 2),
+    };
+}
+
+function mediaViewerZoomTo(slide, targetScale, focalX, focalY, animate = true) {
+    if (!slide?.mediaEl) return;
+    const rect = slide.root.getBoundingClientRect();
+    const cx = focalX - rect.left - rect.width / 2;
+    const cy = focalY - rect.top - rect.height / 2;
+    const prev = slide.zoom;
+    const ratio = targetScale / prev.scale;
+    let tx = cx - (cx - prev.tx) * ratio;
+    let ty = cy - (cy - prev.ty) * ratio;
+    slide.zoom = { scale: targetScale, tx, ty };
+    const bounds = mediaViewerZoomBounds(slide);
+    slide.zoom.tx = Math.max(-bounds.x, Math.min(bounds.x, tx));
+    slide.zoom.ty = Math.max(-bounds.y, Math.min(bounds.y, ty));
+    applyMediaViewerZoom(slide, animate);
+}
+
+// ---- 查看器手势引擎:单指翻页/平移/下拉关闭,双指捏合,单击/双击 ----
+
+function attachMediaViewerGestures(root) {
+    const track = $('media-viewer-track');
+    const backdrop = $('media-viewer-backdrop');
+    if (!track) return;
+
+    const pointers = new Map();
+    let mode = 'idle';
+    let startX = 0;
+    let startY = 0;
+    let lastX = 0;
+    let lastY = 0;
+    let lastMoveTime = 0;
+    let velX = 0;
+    let velY = 0;
+    let startTime = 0;
+    let panStart = null;
+    let pinchPrevDist = 0;
+    let pinchPrevMid = null;
+    let dragOffset = 0;
+    let dismissDy = 0;
+    let lastTapTime = 0;
+    let lastTapX = 0;
+    let lastTapY = 0;
+    let singleTapTimer = null;
+
+    const currentSlide = () => mediaViewerState.slides[mediaViewerState.index];
+    const currentKind = () => mediaViewerState.items[mediaViewerState.index]?.kind;
+
+    function pointerDistance() {
+        const list = Array.from(pointers.values());
+        if (list.length < 2) return 0;
+        return Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y);
+    }
+
+    function pointerMidpoint() {
+        const list = Array.from(pointers.values());
+        if (list.length < 2) return null;
+        return { x: (list[0].x + list[1].x) / 2, y: (list[0].y + list[1].y) / 2 };
+    }
+
+    function resetGesture() {
+        pointers.clear();
+        mode = 'idle';
+        dragOffset = 0;
+        dismissDy = 0;
+        panStart = null;
+        pinchPrevMid = null;
+    }
+
+    function beginDismissVisual() {
+        if (backdrop) backdrop.style.transition = 'none';
+        setMediaViewerChromeHidden(true);
+    }
+
+    function updateDismissVisual(dy) {
+        const slide = currentSlide();
+        if (!slide) return;
+        const progress = Math.min(Math.max(dy, 0) / 500, 0.8);
+        slide.zoom.tx = 0;
+        slide.zoom.ty = dy;
+        slide.zoom.scale = 1 - Math.min(Math.max(dy, 0) / 900, 0.2);
+        applyMediaViewerZoom(slide, false);
+        if (backdrop) backdrop.style.opacity = String(1 - progress);
+    }
+
+    function settleDismiss(shouldClose) {
+        const slide = currentSlide();
+        if (backdrop) backdrop.style.transition = '';
+        if (!slide) return;
+        if (shouldClose) {
+            slide.content.classList.add('is-animating');
+            slide.zoom.ty = (slide.root.clientHeight || window.innerHeight);
+            slide.zoom.scale = 0.7;
+            applyMediaViewerZoom(slide, true);
+            if (backdrop) backdrop.style.opacity = '0';
+            setTimeout(() => closeMediaViewer({ instant: true }), 180);
+        } else {
+            resetMediaViewerZoom(slide, true);
+            if (backdrop) backdrop.style.opacity = '';
+            setMediaViewerChromeHidden(false);
+        }
+    }
+
+    track.addEventListener('pointerdown', (event) => {
+        if (!mediaViewerState.open) return;
+        if (event.target.closest('.mv-video-bar') || event.target.closest('.media-viewer-error-btn')) return;
+
+        pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (pointers.size === 1) {
+            startX = lastX = event.clientX;
+            startY = lastY = event.clientY;
+            startTime = Date.now();
+            lastMoveTime = startTime;
+            velX = 0;
+            velY = 0;
+            mode = 'idle';
+        } else if (pointers.size === 2 && currentKind() === 'image') {
+            const slide = currentSlide();
+            if (slide?.mediaEl) {
+                mode = 'pinch';
+                pinchPrevDist = pointerDistance();
+                pinchPrevMid = pointerMidpoint();
+                clearTimeout(singleTapTimer);
+            }
+        }
+    });
+
+    window.addEventListener('pointermove', (event) => {
+        if (!mediaViewerState.open || !pointers.has(event.pointerId)) return;
+        pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+        if (mode === 'pinch' && pointers.size >= 2) {
+            const slide = currentSlide();
+            if (!slide) return;
+            const dist = pointerDistance();
+            const mid = pointerMidpoint();
+            if (!dist || !pinchPrevDist || !mid || !pinchPrevMid) return;
+            const rect = slide.root.getBoundingClientRect();
+            const prev = slide.zoom;
+            let nextScale = prev.scale * (dist / pinchPrevDist);
+            nextScale = Math.max(0.5, Math.min(nextScale, 5));
+            const fx = mid.x - rect.left - rect.width / 2;
+            const fy = mid.y - rect.top - rect.height / 2;
+            const ratio = nextScale / prev.scale;
+            slide.zoom = {
+                scale: nextScale,
+                tx: fx - (fx - prev.tx) * ratio + (mid.x - pinchPrevMid.x),
+                ty: fy - (fy - prev.ty) * ratio + (mid.y - pinchPrevMid.y),
+            };
+            applyMediaViewerZoom(slide, false);
+            pinchPrevDist = dist;
+            pinchPrevMid = mid;
+            return;
+        }
+
+        if (pointers.size !== 1) return;
+        const x = event.clientX;
+        const y = event.clientY;
+        const now = Date.now();
+        const dt = Math.max(now - lastMoveTime, 1);
+        velX = (x - lastX) / dt;
+        velY = (y - lastY) / dt;
+        lastX = x;
+        lastY = y;
+        lastMoveTime = now;
+
+        const dx = x - startX;
+        const dy = y - startY;
+
+        if (mode === 'idle') {
+            if (Math.hypot(dx, dy) < 10) return;
+            const slide = currentSlide();
+            const zoomed = currentKind() === 'image' && slide && slide.zoom.scale > 1.02;
+            if (zoomed) {
+                mode = 'pan';
+                panStart = { tx: slide.zoom.tx, ty: slide.zoom.ty };
+            } else if (Math.abs(dx) > Math.abs(dy)) {
+                mode = 'pager';
+            } else {
+                mode = 'dismiss';
+                beginDismissVisual();
+            }
+            clearTimeout(singleTapTimer);
+        }
+
+        if (mode === 'pager') {
+            let offset = dx;
+            const atStart = mediaViewerState.index === 0 && dx > 0;
+            const atEnd = mediaViewerState.index === mediaViewerState.items.length - 1 && dx < 0;
+            if (atStart || atEnd) offset = dx * 0.35;
+            dragOffset = offset;
+            layoutMediaViewerTrack(false, offset);
+        } else if (mode === 'dismiss') {
+            dismissDy = dy;
+            updateDismissVisual(Math.max(dy, 0));
+        } else if (mode === 'pan') {
+            const slide = currentSlide();
+            if (!slide || !panStart) return;
+            const bounds = mediaViewerZoomBounds(slide);
+            const clampRubber = (value, limit) => {
+                if (value > limit) return limit + (value - limit) * 0.25;
+                if (value < -limit) return -limit + (value + limit) * 0.25;
+                return value;
+            };
+            slide.zoom.tx = clampRubber(panStart.tx + dx, bounds.x);
+            slide.zoom.ty = clampRubber(panStart.ty + dy, bounds.y);
+            applyMediaViewerZoom(slide, false);
+        }
+    }, { passive: true });
+
+    function endPointer(event) {
+        if (!mediaViewerState.open || !pointers.has(event.pointerId)) return;
+        pointers.delete(event.pointerId);
+
+        if (mode === 'pinch') {
+            if (pointers.size < 2) {
+                const slide = currentSlide();
+                if (slide) {
+                    if (slide.zoom.scale < 0.8) {
+                        settleDismiss(true);
+                    } else if (slide.zoom.scale <= 1.02) {
+                        resetMediaViewerZoom(slide, true);
+                    } else {
+                        const bounds = mediaViewerZoomBounds(slide);
+                        slide.zoom.tx = Math.max(-bounds.x, Math.min(bounds.x, slide.zoom.tx));
+                        slide.zoom.ty = Math.max(-bounds.y, Math.min(bounds.y, slide.zoom.ty));
+                        applyMediaViewerZoom(slide, true);
+                    }
+                }
+                resetGesture();
+            }
+            return;
+        }
+
+        if (pointers.size > 0) return;
+
+        const dx = lastX - startX;
+        const dy = lastY - startY;
+        const elapsed = Date.now() - startTime;
+        const isTap = Math.hypot(dx, dy) < 10 && elapsed < 350 && mode === 'idle';
+
+        if (isTap) {
+            const now = Date.now();
+            const isDouble = now - lastTapTime < 300 && Math.hypot(lastX - lastTapX, lastY - lastTapY) < 40;
+            if (isDouble && currentKind() === 'image') {
+                clearTimeout(singleTapTimer);
+                lastTapTime = 0;
+                const slide = currentSlide();
+                if (slide?.mediaEl) {
+                    if (slide.zoom.scale > 1.02) {
+                        resetMediaViewerZoom(slide, true);
+                    } else {
+                        mediaViewerZoomTo(slide, 2.4, lastX, lastY, true);
+                    }
+                }
+            } else {
+                lastTapTime = now;
+                lastTapX = lastX;
+                lastTapY = lastY;
+                clearTimeout(singleTapTimer);
+                if (currentKind() === 'image') {
+                    singleTapTimer = setTimeout(() => toggleMediaViewerChrome(), 280);
+                } else {
+                    toggleMediaViewerChrome();
+                    scheduleMediaViewerChromeAutoHide();
+                }
+            }
+            resetGesture();
+            return;
+        }
+
+        if (mode === 'pager') {
+            const threshold = mediaViewerState.width * 0.22;
+            let next = mediaViewerState.index;
+            if (dragOffset < -threshold || velX < -0.5) next += 1;
+            else if (dragOffset > threshold || velX > 0.5) next -= 1;
+            setMediaViewerIndex(next, { animate: true });
+        } else if (mode === 'dismiss') {
+            settleDismiss(dismissDy > 110 || velY > 0.55);
+        } else if (mode === 'pan') {
+            const slide = currentSlide();
+            if (slide) {
+                const bounds = mediaViewerZoomBounds(slide);
+                slide.zoom.tx = Math.max(-bounds.x, Math.min(bounds.x, slide.zoom.tx));
+                slide.zoom.ty = Math.max(-bounds.y, Math.min(bounds.y, slide.zoom.ty));
+                applyMediaViewerZoom(slide, true);
+            }
+        }
+        resetGesture();
+    }
+
+    window.addEventListener('pointerup', endPointer);
+    window.addEventListener('pointercancel', endPointer);
+}
+
+// ---- 查看器视频控制条 ----
+
+function attachMediaViewerVideoUi(slide) {
+    const ui = document.createElement('div');
+    ui.className = 'mv-video-ui';
+    ui.innerHTML = `
+        <button type="button" class="mv-video-center-play" aria-label="播放">
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>
+        </button>
+        <div class="mv-video-bar">
+            <button type="button" class="mv-video-play" aria-label="播放/暂停"></button>
+            <span class="mv-video-time">0:00</span>
+            <div class="mv-video-progress">
+                <div class="mv-video-progress-rail"></div>
+                <div class="mv-video-progress-fill"></div>
+                <div class="mv-video-progress-handle"></div>
+            </div>
+            <span class="mv-video-duration">0:00</span>
+            <button type="button" class="mv-video-mute" aria-label="静音"></button>
+        </div>
+    `;
+    slide.root.appendChild(ui);
+    slide.videoUi = ui;
+
+    const video = slide.video;
+    const centerPlay = ui.querySelector('.mv-video-center-play');
+    const playBtn = ui.querySelector('.mv-video-play');
+    const muteBtn = ui.querySelector('.mv-video-mute');
+    const timeEl = ui.querySelector('.mv-video-time');
+    const durationEl = ui.querySelector('.mv-video-duration');
+    const progress = ui.querySelector('.mv-video-progress');
+    const fill = ui.querySelector('.mv-video-progress-fill');
+    const handle = ui.querySelector('.mv-video-progress-handle');
+
+    const togglePlay = () => {
+        if (video.paused) {
+            video.play().catch(() => showToast('视频播放失败'));
+        } else {
+            video.pause();
+        }
+    };
+    centerPlay.addEventListener('click', (event) => {
+        event.stopPropagation();
+        togglePlay();
+    });
+    centerPlay.addEventListener('pointerdown', (event) => event.stopPropagation());
+    playBtn.addEventListener('click', togglePlay);
+    muteBtn.addEventListener('click', () => {
+        video.muted = !video.muted;
+        updateMediaViewerVideoUi(slide);
+    });
+
+    video.addEventListener('play', () => {
+        updateMediaViewerVideoUi(slide);
+        scheduleMediaViewerChromeAutoHide();
+    });
+    video.addEventListener('pause', () => {
+        updateMediaViewerVideoUi(slide);
+        clearTimeout(mediaViewerState.chromeTimer);
+        setMediaViewerChromeHidden(false);
+    });
+    video.addEventListener('ended', () => {
+        updateMediaViewerVideoUi(slide);
+        setMediaViewerChromeHidden(false);
+    });
+    video.addEventListener('timeupdate', () => {
+        const ratio = video.duration ? video.currentTime / video.duration : 0;
+        fill.style.width = `${ratio * 100}%`;
+        handle.style.left = `${ratio * 100}%`;
+        timeEl.textContent = formatMediaViewerClock(video.currentTime);
+        durationEl.textContent = formatMediaViewerClock(video.duration);
+    });
+
+    const seekFromEvent = (event) => {
+        const rect = progress.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min((event.clientX - rect.left) / rect.width, 1));
+        if (video.duration) {
+            video.currentTime = ratio * video.duration;
+        }
+    };
+    progress.addEventListener('pointerdown', (event) => {
+        event.stopPropagation();
+        progress.setPointerCapture(event.pointerId);
+        seekFromEvent(event);
+        const onMove = (moveEvent) => seekFromEvent(moveEvent);
+        const onUp = () => {
+            progress.removeEventListener('pointermove', onMove);
+            progress.removeEventListener('pointerup', onUp);
+            progress.removeEventListener('pointercancel', onUp);
+        };
+        progress.addEventListener('pointermove', onMove);
+        progress.addEventListener('pointerup', onUp);
+        progress.addEventListener('pointercancel', onUp);
+    });
+
+    updateMediaViewerVideoUi(slide);
+}
+
+function updateMediaViewerVideoUi(slide) {
+    const ui = slide.videoUi;
+    const video = slide.video;
+    if (!ui || !video) return;
+
+    const playing = !video.paused && !video.ended;
+    ui.classList.toggle('is-playing', playing);
+
+    const playIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>';
+    const pauseIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M7 5h3.4v14H7zM13.6 5H17v14h-3.4z"/></svg>';
+    const playBtn = ui.querySelector('.mv-video-play');
+    if (playBtn) playBtn.innerHTML = playing ? pauseIcon : playIcon;
+
+    const muteIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="m16.5 9.5 5 5m0-5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    const soundIcon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.6a4.8 4.8 0 0 1 0 6.8M18.8 6.2a8 8 0 0 1 0 11.6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
+    const muteBtn = ui.querySelector('.mv-video-mute');
+    if (muteBtn) muteBtn.innerHTML = video.muted ? muteIcon : soundIcon;
+
+    const durationEl = ui.querySelector('.mv-video-duration');
+    if (durationEl) durationEl.textContent = formatMediaViewerClock(video.duration);
+}
+
+function formatMediaViewerClock(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+    const total = Math.round(seconds);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 function showHistoryMediaPreview(entry, items, { initialIndex = 0 } = {}) {
@@ -8567,84 +9294,6 @@ function closeHistoryMediaPreview() {
     };
 }
 
-function showHistoryMediaViewerLoading(item) {
-    const modal = $('history-media-viewer-modal');
-    const title = $('history-media-viewer-title');
-    const subtitle = $('history-media-viewer-subtitle');
-    const stage = $('history-media-viewer-stage');
-    if (!modal || !title || !subtitle || !stage) {
-        return;
-    }
-
-    title.textContent = truncateFilenamePreserveExtension(item.fileName || '媒体');
-    subtitle.textContent = item.kind === 'video' ? '正在加载视频播放器…' : '正在加载原始图片…';
-    stage.classList.add('is-loading');
-    stage.innerHTML = '正在准备媒体预览…';
-    modal.classList.remove('hidden');
-    modal.setAttribute('aria-hidden', 'false');
-}
-
-function destroyHistoryMediaViewerPlayer() {
-    if (!historyMediaViewerState.plyr) {
-        return;
-    }
-    try {
-        historyMediaViewerState.plyr.destroy();
-    } catch (error) {
-        console.warn('销毁 Plyr 实例失败', error);
-    }
-    historyMediaViewerState.plyr = null;
-}
-
-function closeHistoryMediaViewer() {
-    const modal = $('history-media-viewer-modal');
-    const stage = $('history-media-viewer-stage');
-    if (!modal || !stage) {
-        return;
-    }
-
-    destroyHistoryMediaViewerPlayer();
-    stage.classList.remove('is-loading');
-    stage.innerHTML = '';
-    modal.classList.add('hidden');
-    modal.setAttribute('aria-hidden', 'true');
-    historyMediaViewerState = {
-        entry: null,
-        items: [],
-        currentIndex: 0,
-        plyr: null,
-    };
-}
-
-function showHistoryMediaViewerError(item, message, { allowFallback = true } = {}) {
-    const modal = $('history-media-viewer-modal');
-    const title = $('history-media-viewer-title');
-    const subtitle = $('history-media-viewer-subtitle');
-    const stage = $('history-media-viewer-stage');
-    if (!modal || !title || !subtitle || !stage) {
-        return;
-    }
-
-    const hasFallback = allowFallback && supportsExternalMediaOpen();
-    title.textContent = truncateFilenamePreserveExtension(item.fileName || '媒体');
-    subtitle.textContent = item.kind === 'video' ? '这个视频暂时无法在应用内直接播放。' : '这个图片暂时无法在应用内直接显示。';
-    stage.classList.remove('is-loading');
-    stage.innerHTML = `
-        <div class="history-media-viewer-error">
-            <div>${escapeHtml(message || '媒体预览失败')}</div>
-            ${hasFallback ? '<button id="history-media-viewer-fallback" class="secondary-btn history-media-viewer-fallback">改用系统打开</button>' : ''}
-        </div>
-    `;
-    modal.classList.remove('hidden');
-    modal.setAttribute('aria-hidden', 'false');
-
-    if (hasFallback) {
-        $('history-media-viewer-fallback')?.addEventListener('click', () => {
-            openHistoryMediaItemExternally(item);
-        });
-    }
-}
-
 async function resolveHistoryMediaPreviewUri(item) {
     const openPath = item.savedPath || item.filePath || '';
     if (!openPath) {
@@ -8698,205 +9347,6 @@ async function resolveHistoryMediaPreviewUri(item) {
         historyMediaPreviewUriCache.set(openPath, previewUri);
     }
     return previewUri;
-}
-
-function resolveImageDimensions(source) {
-    return new Promise((resolve) => {
-        if (!source) {
-            resolve({ width: 1200, height: 1200 });
-            return;
-        }
-
-        if (historyMediaPreviewDimensionsCache.has(source)) {
-            resolve(historyMediaPreviewDimensionsCache.get(source));
-            return;
-        }
-
-        const image = new Image();
-        image.onload = () => {
-            const dimensions = {
-                width: image.naturalWidth || 1200,
-                height: image.naturalHeight || 1200,
-            };
-            historyMediaPreviewDimensionsCache.set(source, dimensions);
-            resolve(dimensions);
-        };
-        image.onerror = () => {
-            const dimensions = { width: 1200, height: 1200 };
-            historyMediaPreviewDimensionsCache.set(source, dimensions);
-            resolve(dimensions);
-        };
-        image.src = source;
-    });
-}
-
-async function showHistoryMediaImageViewer(entry, itemIndex) {
-    if (!photoswipeReady || typeof window.PhotoSwipe !== 'function') {
-        throw new Error('图片预览组件还没准备好');
-    }
-
-    const allItems = getHistoryEntryItems(entry);
-    const clickedItem = allItems[itemIndex];
-    const imageItems = allItems.filter((item) => item.kind === 'image');
-    if (!imageItems.length) {
-        throw new Error('没有可预览的图片');
-    }
-
-    // 逐项解析可加载地址,解析失败的直接跳过,幻灯片和条目保持一一对应
-    const resolved = [];
-    for (const item of imageItems) {
-        const src = await resolveHistoryMediaPreviewUri(item);
-        if (!src) {
-            continue;
-        }
-        const dimensions = await resolveImageDimensions(item.thumbnailDataUrl || src);
-        resolved.push({
-            item,
-            slide: {
-                src,
-                width: dimensions.width,
-                height: dimensions.height,
-                alt: item.fileName || '图片',
-            },
-        });
-    }
-    if (!resolved.length) {
-        throw new Error('图片预览地址无效');
-    }
-
-    const itemKey = (item) => `${item?.fileName || ''}|${item?.savedPath || item?.filePath || ''}`;
-    const clickedKey = itemKey(clickedItem);
-    let startIndex = resolved.findIndex(({ item }) => itemKey(item) === clickedKey);
-    if (startIndex < 0) {
-        startIndex = 0;
-    }
-
-    const pswp = new window.PhotoSwipe({
-        dataSource: resolved.map((r) => r.slide),
-        index: startIndex,
-        loop: resolved.length > 1,
-        bgOpacity: 0.96,
-        spacing: 0.08,
-        showHideAnimationType: 'zoom',
-        closeOnVerticalDrag: true,
-        pinchToClose: true,
-        secondaryZoomLevel: 2.5,
-        maxZoomLevel: 4,
-    });
-
-    if (supportsExternalMediaOpen()) {
-        pswp.on('uiRegister', () => {
-            pswp.ui.registerElement({
-                name: 'external-open',
-                title: '用其他应用打开',
-                order: 9,
-                isButton: true,
-                html: '<svg aria-hidden="true" class="pswp__icn" width="32" height="32" viewBox="0 0 32 32"><path d="M14 9H10.5A2.5 2.5 0 0 0 8 11.5v10A2.5 2.5 0 0 0 10.5 24h10a2.5 2.5 0 0 0 2.5-2.5V18" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M18.5 7.5H24.5V13.5M24 8 16 16" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/></svg>',
-                onClick: () => {
-                    const current = resolved[pswp.currIndex]?.item;
-                    pswp.close();
-                    if (current) {
-                        openHistoryMediaItemExternally(current);
-                    }
-                },
-            });
-        });
-    }
-
-    pswp.init();
-}
-
-async function showHistoryMediaVideoViewer(entry, itemIndex) {
-    const items = getHistoryEntryItems(entry);
-    const item = items[itemIndex];
-    if (!item) {
-        return;
-    }
-
-    showHistoryMediaViewerLoading(item);
-
-    const previewUri = await resolveHistoryMediaPreviewUri(item);
-    if (!previewUri) {
-        showHistoryMediaViewerError(item, '没有可用的视频预览地址。');
-        return;
-    }
-
-    const title = $('history-media-viewer-title');
-    const subtitle = $('history-media-viewer-subtitle');
-    const stage = $('history-media-viewer-stage');
-    if (!title || !subtitle || !stage) {
-        return;
-    }
-
-    destroyHistoryMediaViewerPlayer();
-    historyMediaViewerState = {
-        entry,
-        items,
-        currentIndex: itemIndex,
-        plyr: null,
-    };
-
-    title.textContent = truncateFilenamePreserveExtension(item.fileName || '视频');
-    subtitle.textContent = '应用内直接播放原始视频';
-    stage.classList.remove('is-loading');
-    const externalOpenButton = supportsExternalMediaOpen()
-        ? '<div class="history-media-viewer-actions"><button id="history-media-viewer-open-external" class="secondary-btn" type="button">用其他应用打开</button></div>'
-        : '';
-    stage.innerHTML = `
-        <div class="history-media-video-shell">
-            <div class="history-media-video-player">
-                <video id="history-media-viewer-video" playsinline controls preload="metadata"></video>
-            </div>
-            ${externalOpenButton}
-        </div>
-    `;
-
-    $('history-media-viewer-open-external')?.addEventListener('click', () => {
-        openHistoryMediaItemExternally(item);
-    });
-
-    const video = $('history-media-viewer-video');
-    if (!video) {
-        showHistoryMediaViewerError(item, '视频播放器初始化失败。');
-        return;
-    }
-
-    if (item.thumbnailDataUrl) {
-        video.poster = item.thumbnailDataUrl;
-    }
-    video.src = previewUri;
-    video.setAttribute('playsinline', '');
-    video.setAttribute('webkit-playsinline', '');
-    video.load();
-
-    try {
-        if (window.Plyr) {
-            historyMediaViewerState.plyr = new window.Plyr(video, {
-                controls: [
-                    'play-large',
-                    'play',
-                    'progress',
-                    'current-time',
-                    'duration',
-                    'mute',
-                    'volume',
-                    'settings',
-                    'picture-in-picture',
-                    'fullscreen',
-                ],
-                fullscreen: {
-                    enabled: true,
-                    iosNative: true,
-                },
-                storage: {
-                    enabled: false,
-                },
-                iconUrl: '/vendor/plyr/plyr.svg',
-            });
-        }
-    } catch (error) {
-        console.warn('Plyr 初始化失败，回退到原生 video 控件', error);
-    }
 }
 
 function fallbackOpenHistoryMediaExternally(item) {
@@ -9314,20 +9764,13 @@ async function openHistoryMediaItem(entry, itemIndex) {
         return;
     }
 
-    // 默认走应用内查看器:图片用 PhotoSwipe,视频用 Plyr;失败再回退到外部应用
-    if (kind === 'image') {
+    // 默认走应用内全屏查看器(图片/视频统一翻页);失败再回退到外部应用
+    if (kind === 'image' || kind === 'video') {
         try {
-            await showHistoryMediaImageViewer(entry, itemIndex);
+            await openMediaViewer(entry, itemIndex);
             return;
         } catch (error) {
-            console.warn('应用内图片查看失败，回退到外部打开', error);
-        }
-    } else if (kind === 'video') {
-        try {
-            await showHistoryMediaVideoViewer(entry, itemIndex);
-            return;
-        } catch (error) {
-            console.warn('应用内视频播放失败，回退到外部打开', error);
+            console.warn('应用内查看失败，回退到外部打开', error);
         }
     }
 
@@ -9345,7 +9788,7 @@ async function openHistoryMediaItemExternally(item) {
         return;
     }
 
-    closeHistoryMediaViewer();
+    closeMediaViewer({ instant: true });
     closeHistoryMediaPreview();
     const kind = inferMediaOpenerKind(item);
     if (!kind) {
