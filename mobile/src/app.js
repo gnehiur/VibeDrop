@@ -8536,7 +8536,7 @@ function showHistoryMediaPreview(entry, items, { initialIndex = 0 } = {}) {
                 return;
             }
             const openPath = previewItem.savedPath || previewItem.filePath || '';
-            if (!openPath) {
+            if (!openPath && !(previewItem.kind === 'image' && previewItem.thumbnailDataUrl)) {
                 showToast('原文件路径未保留');
                 return;
             }
@@ -8648,7 +8648,8 @@ function showHistoryMediaViewerError(item, message, { allowFallback = true } = {
 async function resolveHistoryMediaPreviewUri(item) {
     const openPath = item.savedPath || item.filePath || '';
     if (!openPath) {
-        return '';
+        // 没保留原文件路径(如"传图到剪贴板"的发送记录):图片退回缩略图,至少能看
+        return item.kind === 'image' ? (item.thumbnailDataUrl || '') : '';
     }
 
     if (historyMediaPreviewUriCache.has(openPath)) {
@@ -8763,8 +8764,9 @@ async function showHistoryMediaImageViewer(entry, itemIndex) {
         throw new Error('图片预览地址无效');
     }
 
-    const clickedPath = clickedItem?.savedPath || clickedItem?.filePath || '';
-    let startIndex = resolved.findIndex(({ item }) => (item.savedPath || item.filePath || '') === clickedPath);
+    const itemKey = (item) => `${item?.fileName || ''}|${item?.savedPath || item?.filePath || ''}`;
+    const clickedKey = itemKey(clickedItem);
+    let startIndex = resolved.findIndex(({ item }) => itemKey(item) === clickedKey);
     if (startIndex < 0) {
         startIndex = 0;
     }
@@ -8968,8 +8970,9 @@ function renderHistoryMediaPreviewItem(item, index) {
         ? '<span class="history-media-play history-media-play-single">▶</span>'
         : '';
     const openPath = item.savedPath || item.filePath || '';
-    const openableClass = openPath ? ' is-openable' : '';
-    const dataAttr = openPath ? ` data-preview-media-index="${index}"` : '';
+    const openable = Boolean(openPath) || (item.kind === 'image' && Boolean(item.thumbnailDataUrl));
+    const openableClass = openable ? ' is-openable' : '';
+    const dataAttr = openable ? ` data-preview-media-index="${index}"` : '';
 
     return `
         <div class="history-media-preview-item${openableClass}"${dataAttr}>
@@ -9304,13 +9307,14 @@ async function openHistoryMediaItem(entry, itemIndex) {
     }
 
     const openPath = item.savedPath || item.filePath || '';
-    if (!openPath) {
+    const kind = inferMediaOpenerKind(item);
+    const canShowThumbnailOnly = kind === 'image' && Boolean(item.thumbnailDataUrl);
+    if (!openPath && !canShowThumbnailOnly) {
         showToast(isLocalSourceEntry(entry) ? '原文件路径未保留' : '原件在其他设备上，远程查看即将支持');
         return;
     }
 
     // 默认走应用内查看器:图片用 PhotoSwipe,视频用 Plyr;失败再回退到外部应用
-    const kind = inferMediaOpenerKind(item);
     if (kind === 'image') {
         try {
             await showHistoryMediaImageViewer(entry, itemIndex);
