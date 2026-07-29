@@ -139,6 +139,89 @@ def find_latest_android_payload(
     raise FileNotFoundError("没有找到 Android 历史快照")
 
 
+def entry_sort_key(entry: dict[str, Any]) -> float:
+    """尽力从条目里解析时间,用于全设备时间线排序;解析不了排最旧。"""
+    iso = entry.get("timestamp_iso") or ""
+    if iso:
+        try:
+            return dt.datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    raw = entry.get("timestamp")
+    try:
+        value = float(raw)
+        # 毫秒时间戳归一为秒
+        return value / 1000.0 if value > 1e11 else value
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def entry_dedupe_key(entry: dict[str, Any], device_id: str) -> str:
+    explicit = str(entry.get("id") or "").strip()
+    if explicit:
+        return f"{device_id}:{explicit}"
+    basis = f"{device_id}|{entry.get('timestamp') or entry.get('timestamp_iso') or ''}|{entry.get('text') or entry.get('fileName') or ''}"
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
+
+
+def collect_latest_payload_per_device(vault_root: pathlib.Path) -> list[dict[str, Any]]:
+    """扫描 inbox 全部快照,每个 deviceId 只保留最新一份。"""
+    inbox = vault_root / "inbox"
+    if not inbox.exists():
+        return []
+    latest_by_device: dict[str, tuple[float, dict[str, Any]]] = {}
+    for path in inbox.glob("**/*.json"):
+        try:
+            payload = normalize_payload(load_json_file(path))
+        except Exception:
+            continue
+        device_id = safe_segment(str(payload.get("deviceId") or "unknown"), "unknown")
+        mtime = path.stat().st_mtime
+        current = latest_by_device.get(device_id)
+        if current is None or mtime > current[0]:
+            latest_by_device[device_id] = (mtime, payload)
+    return [payload for _, payload in latest_by_device.values()]
+
+
+def build_merged_history(vault_root: pathlib.Path, mode: str, limit: int) -> dict[str, Any]:
+    payloads = collect_latest_payload_per_device(vault_root)
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    devices: list[dict[str, Any]] = []
+    for payload in payloads:
+        device_id = str(payload.get("deviceId") or "unknown")
+        device_name = str(payload.get("deviceName") or device_id)
+        devices.append({
+            "deviceId": device_id,
+            "deviceName": device_name,
+            "exportedAt": payload.get("exportedAt") or "",
+            "historyCount": len(payload.get("history") or []),
+        })
+        for raw_entry in payload.get("history") or []:
+            entry = compact_history_entry(raw_entry) if mode != "full" else (
+                raw_entry if isinstance(raw_entry, dict) else compact_history_entry(raw_entry)
+            )
+            key = entry_dedupe_key(entry, device_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            tagged = dict(entry)
+            tagged["sourceDeviceId"] = device_id
+            tagged["sourceDeviceName"] = device_name
+            merged.append(tagged)
+    merged.sort(key=entry_sort_key, reverse=True)
+    if limit:
+        merged = merged[:limit]
+    return {
+        "ok": True,
+        "schemaVersion": 1,
+        "generatedAt": iso_now(),
+        "devices": sorted(devices, key=lambda item: item["deviceName"]),
+        "mergedCount": len(merged),
+        "history": merged,
+    }
+
+
 def compact_history_item(item: Any) -> dict[str, Any]:
     if not isinstance(item, dict):
         return {"fileName": str(item)}
@@ -256,6 +339,21 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                         "time": iso_now(),
                     },
                 )
+                return
+
+            if path == "/api/history/merged":
+                if token and self.headers.get("X-VibeDrop-Token") != token:
+                    self.send_json(401, {"ok": False, "error": "unauthorized"})
+                    return
+                try:
+                    query = urllib.parse.parse_qs(parsed_path.query)
+                    mode = ((query.get("mode") or ["compact"])[0] or "compact").lower()
+                    if mode not in {"compact", "full"}:
+                        raise ValueError("mode 只能是 compact 或 full")
+                    limit = clamp_limit((query.get("limit") or ["500"])[0], 500, 10000)
+                    self.send_json(200, build_merged_history(vault_root, mode, limit))
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
                 return
 
             if path == "/api/android-history/latest":

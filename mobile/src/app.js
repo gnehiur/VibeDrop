@@ -42,6 +42,7 @@ const RECONNECT_FORCE_DISCOVERY_AFTER_ATTEMPTS = 2;
 const SEND_COMPOSER_DEFERRED_RENDER_DELAY_MS = 180;
 const LEGACY_HISTORY_FALLBACK_LIMIT = 200;
 const DEFAULT_HISTORY_FILTERS = {
+    sources: [],
     device: 'all',
     quickTime: 'all',
     startDate: '',
@@ -3553,8 +3554,13 @@ function initNavigation() {
             showView(viewId);
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+            if (viewId === 'history-view') {
+                refreshVaultMergedHistory();
+            }
         });
     });
+    // 启动后台拉一次全设备合并历史
+    setTimeout(() => refreshVaultMergedHistory(), 2500);
 }
 
 function initSettingsButton() {
@@ -4821,7 +4827,7 @@ function initHistoryHeatmapInteractions() {
     });
 
     resetBtn?.addEventListener('click', () => {
-        const bounds = historyHeatmapState.renderedBounds || getHistoryHeatmapBounds(filterHistoryEntries(getHistory()));
+        const bounds = historyHeatmapState.renderedBounds || getHistoryHeatmapBounds(filterHistoryEntries(getHistoryForDisplay()));
         historyHeatmapState.viewportEndDate = bounds.maxDate;
         clearHistoryHeatmapSelection();
         scheduleHistoryRender();
@@ -7266,6 +7272,8 @@ function addHistory(entry) {
     setStoredHistoryRaw(JSON.stringify(history), { persistNative: false });
     persistNativeHistoryEntry(entry);
     persistHistory();
+    // 新记录落账后延迟自动推送到 Home Vault,供其他设备的合并视图拉取
+    scheduleHomeVaultAutoPush();
 }
 
 function pad2(value) {
@@ -7705,6 +7713,121 @@ function buildHomeVaultPayload(history) {
         exportedAt: new Date().toISOString(),
         history: buildHistoryExportData(history),
     };
+}
+
+// ---- 全设备合并历史(Home Vault 拉取)与自动推送 ----
+const LOCAL_SOURCE_FALLBACK_ID = '__local__';
+let vaultMergedEntries = [];
+let vaultMergedDevices = [];
+let vaultMergedFetchInFlight = false;
+let homeVaultAutoPushTimer = null;
+
+function getLocalSourceId() {
+    return String(clientIdentity?.id || LOCAL_SOURCE_FALLBACK_ID);
+}
+
+function isLocalSourceEntry(entry) {
+    const src = String(entry?.sourceDeviceId || '');
+    return !src || src === getLocalSourceId();
+}
+
+function getHistoryForDisplay() {
+    if (!vaultMergedEntries.length) return getHistory();
+    const combined = getHistory().concat(vaultMergedEntries);
+    combined.sort((a, b) => {
+        const ta = new Date(a?.timestamp || a?.timestamp_iso || 0).getTime() || 0;
+        const tb = new Date(b?.timestamp || b?.timestamp_iso || 0).getTime() || 0;
+        return tb - ta;
+    });
+    return combined;
+}
+
+async function refreshVaultMergedHistory() {
+    if (vaultMergedFetchInFlight) return;
+    vaultMergedFetchInFlight = true;
+    try {
+        const endpoint = getHomeVaultSettings().url;
+        const url = new URL(`${endpoint}/api/history/merged`);
+        url.searchParams.set('limit', '2000');
+        const response = await fetch(url.toString());
+        const data = await response.json();
+        if (!data?.ok || !Array.isArray(data.history)) return;
+        const localId = getLocalSourceId();
+        vaultMergedDevices = (data.devices || []).filter((device) => String(device.deviceId) !== localId);
+        vaultMergedEntries = data.history.filter((entry) => {
+            const src = String(entry?.sourceDeviceId || '');
+            return src && src !== localId;
+        });
+        renderHistorySourceFilters();
+        scheduleHistoryRender();
+    } catch (error) {
+        debugLog('vault-merged-fetch-failed', { message: String(error?.message || error) });
+    } finally {
+        vaultMergedFetchInFlight = false;
+    }
+}
+
+function scheduleHomeVaultAutoPush() {
+    if (homeVaultAutoPushTimer) clearTimeout(homeVaultAutoPushTimer);
+    homeVaultAutoPushTimer = setTimeout(async () => {
+        homeVaultAutoPushTimer = null;
+        try {
+            const history = getHistory();
+            if (!history.length) return;
+            const endpoint = getHomeVaultSettings().url;
+            await syncHomeVaultWithFetch(endpoint, buildHomeVaultPayload(history));
+        } catch (error) {
+            debugLog('vault-auto-push-failed', { message: String(error?.message || error) });
+        }
+    }, 8000);
+}
+
+function renderHistorySourceFilters() {
+    const container = $('history-source-btns');
+    if (!container) return;
+    const selected = new Set(currentHistoryFilters.sources || []);
+    const localId = getLocalSourceId();
+
+    if (!vaultMergedDevices.length && selected.size === 0) {
+        container.innerHTML = '';
+        container.classList.add('hidden');
+        return;
+    }
+
+    const options = [
+        { value: '', label: '全部设备' },
+        { value: localId, label: '本机' },
+        ...vaultMergedDevices.map((device) => ({
+            value: String(device.deviceId),
+            label: device.deviceName || device.deviceId,
+        })),
+    ];
+
+    container.classList.remove('hidden');
+    container.innerHTML = '';
+    options.forEach((option) => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-btn';
+        const active = option.value === '' ? selected.size === 0 : selected.has(option.value);
+        if (active) btn.classList.add('active');
+        btn.textContent = option.label;
+        btn.addEventListener('click', () => {
+            const current = new Set(currentHistoryFilters.sources || []);
+            if (option.value === '') {
+                current.clear();
+            } else if (current.has(option.value)) {
+                current.delete(option.value);
+            } else {
+                current.add(option.value);
+            }
+            currentHistoryFilters.sources = Array.from(current);
+            clearHistoryHeatmapSelection();
+            renderHistorySourceFilters();
+            renderHistoryDateInputs();
+            scheduleHistoryRender();
+        });
+        container.appendChild(btn);
+    });
 }
 
 async function syncHomeVaultWithFetch(endpoint, payload) {
@@ -8782,7 +8905,7 @@ function importHistory(file) {
 function renderHistory() {
     const list = $('history-list');
     if (!list) return;
-    const history = getHistory();
+    const history = getHistoryForDisplay();
     const baseEntries = filterHistoryEntries(history);
     const renderToken = ++historyRenderToken;
 
@@ -8827,6 +8950,7 @@ function renderHistory() {
                     <div class="history-target-group">
                         <span class="history-target">${escapeHtml(primaryTarget)}</span>
                         ${secondaryTarget ? `<span class="history-target-detail">${escapeHtml(secondaryTarget)}</span>` : ''}
+                        ${entry.sourceDeviceName && !isLocalSourceEntry(entry) ? `<span class="history-source-badge">${escapeHtml(String(entry.sourceDeviceName))}</span>` : ''}
                     </div>
                     <span class="history-status">${statusIcon}</span>
                 </div>
@@ -9098,6 +9222,13 @@ function formatTime(isoString) {
 function filterHistoryEntries(history, filters = currentHistoryFilters) {
     return history.filter((entry) => {
         const hydratedEntry = entry;
+        const sourceFilters = filters.sources || [];
+        if (sourceFilters.length) {
+            const sourceId = String(hydratedEntry.sourceDeviceId || getLocalSourceId());
+            if (!sourceFilters.includes(sourceId)) {
+                return false;
+            }
+        }
         if (filters.device !== 'all' && hydratedEntry.target !== filters.device) {
             return false;
         }
@@ -9259,7 +9390,7 @@ function matchesStatus(entry, filters = currentHistoryFilters) {
     return (entry.status || 'success') === filters.status;
 }
 
-function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistory())) {
+function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistoryForDisplay())) {
     const toolbar = $('history-toolbar');
     const summary = $('history-filter-summary');
     if (!summary) return;
