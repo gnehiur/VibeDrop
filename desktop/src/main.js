@@ -34,8 +34,32 @@ try {
     hiddenDeviceIds = new Set(JSON.parse(localStorage.getItem('vibedrop-hidden-devices') || '[]'));
 } catch (error) { /* 忽略 */ }
 
+let unhiddenDeviceIds = new Set();
+try {
+    unhiddenDeviceIds = new Set(JSON.parse(localStorage.getItem('vibedrop-unhidden-devices') || '[]'));
+} catch (error) { /* 忽略 */ }
+
+// 默认隐藏:测试身份 + 重复的旧 client_id(数据不删,管理面板可恢复)
+const DEFAULT_HIDDEN_DEVICE_IDS = [
+    'ws-client', 'type-test', 't', 'claude-test-client', 'codex_diag_type',
+    'client_mqjcw783ei2mta', 'native-android:b56e676a776a6',
+    'vault-pkg110-direct-test',
+];
+const DEFAULT_HIDDEN_DEVICE_NAMES = ['打字测试', 'Claude 测试客户端', 'Codex 输入诊断', 'PKG110 direct test', 't'];
+DEFAULT_HIDDEN_DEVICE_IDS.forEach((id) => {
+    if (!unhiddenDeviceIds.has(id)) hiddenDeviceIds.add(id);
+});
+
+function isDeviceHiddenEntry(entry) {
+    const id = getLogEntryDeviceId(entry);
+    if (unhiddenDeviceIds.has(id)) return false;
+    if (hiddenDeviceIds.has(id)) return true;
+    return DEFAULT_HIDDEN_DEVICE_NAMES.includes(entry.client_name || '');
+}
+
 function persistHiddenDevices() {
     localStorage.setItem('vibedrop-hidden-devices', JSON.stringify(Array.from(hiddenDeviceIds)));
+    localStorage.setItem('vibedrop-unhidden-devices', JSON.stringify(Array.from(unhiddenDeviceIds)));
 }
 let logHeatmapState = {
     viewportEndDate: '',
@@ -821,7 +845,8 @@ function renderDesktopHistoryDeviceFilters(entries) {
     const container = document.getElementById('desktop-history-device-filter');
     if (!container) return;
 
-    const devices = getDesktopHistoryDeviceOptions(entries).filter((device) => !hiddenDeviceIds.has(device.id));
+    const devices = getDesktopHistoryDeviceOptions(entries).filter((device) =>
+        unhiddenDeviceIds.has(device.id) || (!hiddenDeviceIds.has(device.id) && !DEFAULT_HIDDEN_DEVICE_NAMES.includes(device.label)));
     container.innerHTML = [
         `<button type="button" class="desktop-history-filter-btn${currentLogHistoryFilters.device === 'all' ? ' is-active' : ''}" data-device-filter="all">全部</button>`,
         ...devices.map((device) => `
@@ -868,8 +893,13 @@ function showManageDevicesModal() {
     overlay.querySelectorAll('input[data-device-id]').forEach((box) => {
         box.addEventListener('change', () => {
             const id = box.dataset.deviceId;
-            if (box.checked) hiddenDeviceIds.add(id);
-            else hiddenDeviceIds.delete(id);
+            if (box.checked) {
+                hiddenDeviceIds.add(id);
+                unhiddenDeviceIds.delete(id);
+            } else {
+                hiddenDeviceIds.delete(id);
+                unhiddenDeviceIds.add(id);
+            }
             if (hiddenDeviceIds.has(currentLogHistoryFilters.device)) {
                 currentLogHistoryFilters.device = 'all';
             }
@@ -1147,7 +1177,7 @@ function renderLogList(entries, totalCount = 0) {
 
 function filterLogEntries(entries, filters = currentLogHistoryFilters) {
     return entries.filter((entry) => {
-        if (hiddenDeviceIds.has(getLogEntryDeviceId(entry))) {
+        if (isDeviceHiddenEntry(entry)) {
             return false;
         }
         if (filters.device !== 'all' && getLogEntryDeviceId(entry) !== filters.device) {
