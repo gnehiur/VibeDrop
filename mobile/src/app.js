@@ -1,3 +1,48 @@
+// ---- 启动自检探针(黑匣子):最早安装。阶段打点+错误捕获,存本地环形缓冲,
+// 启动后连同上一次会话的记录一起回传 vault(/api/client-log),远程可取。 ----
+const bootProbe = { records: [], start: Date.now(), prev: [], uploaded: false };
+try {
+    bootProbe.prev = JSON.parse(localStorage.getItem('vibedrop-boot-probe') || '[]');
+} catch (error) { /* 忽略 */ }
+function probe(stage, detail = '') {
+    try {
+        bootProbe.records.push({ t: Date.now() - bootProbe.start, stage, detail: String(detail).slice(0, 300) });
+        if (bootProbe.records.length > 300) bootProbe.records.shift();
+        localStorage.setItem('vibedrop-boot-probe', JSON.stringify(bootProbe.records));
+    } catch (error) { /* 忽略 */ }
+}
+window.addEventListener('error', (event) => {
+    probe('js-error', `${event.message} @${(event.filename || '').split('/').pop()}:${event.lineno}`);
+    scheduleProbeUpload(1500);
+});
+window.addEventListener('unhandledrejection', (event) => {
+    probe('promise-rejection', String(event.reason && (event.reason.message || event.reason)).slice(0, 300));
+    scheduleProbeUpload(1500);
+});
+let probeUploadTimer = null;
+function scheduleProbeUpload(delay) {
+    if (probeUploadTimer) return;
+    probeUploadTimer = setTimeout(async () => {
+        probeUploadTimer = null;
+        try {
+            const endpoint = getHomeVaultSettings().url || '';
+            if (!endpoint) return;
+            await fetch(`${endpoint}/api/client-log`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    deviceId: clientIdentity?.id || '',
+                    deviceName: clientIdentity?.name || '',
+                    platform: typeof getNativeMobilePlatform === 'function' ? getNativeMobilePlatform() : '',
+                    probes: bootProbe.records,
+                    prevSessionProbes: bootProbe.prev.slice(-80),
+                }),
+            });
+        } catch (error) { /* vault 不在线时静默 */ }
+    }, delay);
+}
+probe('script-start');
+
 // ============================================
 // VibeDrop — 前端逻辑（动态多设备版）
 // ============================================
@@ -3595,6 +3640,8 @@ function initNavigation() {
         refreshLocalMediaExistence().then(() => autoUploadLocalMediaToVault());
     }, 12000);
     setTimeout(() => { void upgradeIosDeviceModelName(); }, 3000);
+    probe('init-navigation-done');
+    scheduleProbeUpload(6000);
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
         connectVaultEventStream();
@@ -9840,6 +9887,7 @@ function importHistory(file) {
 }
 
 function renderHistory() {
+    probe('render-history-start');
     const list = $('history-list');
     if (!list) return;
     const history = getHistoryForDisplay();
@@ -9938,6 +9986,7 @@ function renderHistory() {
         }
     };
     mountChunk();
+    probe('render-history-mounted', `entries=${filtered.length}`);
 }
 
 // ---- 历史列表虚拟滚动 ----

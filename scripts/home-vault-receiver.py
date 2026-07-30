@@ -757,6 +757,23 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                     self.send_json(500, {"ok": False, "error": str(exc)})
                 return
 
+            if request_path == "/api/client-log":
+                # 客户端黑匣子:启动自检探针日志回收,按设备落盘
+                try:
+                    body = read_json_body(self, max_bytes)
+                    if not isinstance(body, dict):
+                        raise ValueError("请求体必须是对象")
+                    device = safe_segment(str(body.get("deviceId") or "unknown"), "unknown")
+                    log_dir = vault_root / "logs" / "client"
+                    log_dir.mkdir(parents=True, exist_ok=True)
+                    body["receivedAt"] = iso_now()
+                    with (log_dir / f"{device}.jsonl").open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(body, ensure_ascii=False) + "\n")
+                    self.send_json(200, {"ok": True})
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
+                return
+
             if request_path == "/api/media/upload":
                 # 原件上传:按内容哈希落盘去重;流式写入避免大文件占内存
                 if token and self.headers.get("X-VibeDrop-Token") != token:
