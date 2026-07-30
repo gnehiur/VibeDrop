@@ -42,10 +42,9 @@ try {
 // 默认隐藏:测试身份 + 重复的旧 client_id(数据不删,管理面板可恢复)
 const DEFAULT_HIDDEN_DEVICE_IDS = [
     'ws-client', 'type-test', 't', 'claude-test-client', 'codex_diag_type',
-    'native-android:b56e676a776a6',
     'vault-pkg110-direct-test',
 ];
-const DEFAULT_HIDDEN_DEVICE_NAMES = ['打字测试', 'Claude 测试客户端', 'Codex 输入诊断', 'PKG110 direct test', 't'];
+const DEFAULT_HIDDEN_DEVICE_NAMES = ['打字测试', 'Claude 测试客户端', 'Codex 输入诊断', 't'];
 DEFAULT_HIDDEN_DEVICE_IDS.forEach((id) => {
     if (!unhiddenDeviceIds.has(id)) hiddenDeviceIds.add(id);
 });
@@ -2203,6 +2202,9 @@ const MANUAL_DEVICE_ALIASES = new Map([
     // iPhone 583L(4月旧装) → iPhone P6XS(7月重装),同一台 iPhone
     ['client_mocerc6iik583l', 'client_ms5vmo9kqup6xs'],
     ['vault-client_mocerc6iik583l', 'client_ms5vmo9kqup6xs'],
+    // Oneplus PKG110(原生重构测试) / PKG110 direct test(直连测试) → 同一台一加 Ace 5
+    ['native-android:b56e676a776a6', 'client_mmr92alsud0nu7'],
+    ['direct-test-3B6F4FE910B8KRLS', 'client_mmr92alsud0nu7'],
 ]);
 
 function buildDeviceAliasMap(entries) {
