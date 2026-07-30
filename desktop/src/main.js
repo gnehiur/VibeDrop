@@ -823,11 +823,32 @@ function initDesktopHistoryControls() {
     desktopHistoryControlsInitialized = true;
 }
 
+function dedupeLogEntries(entries) {
+    // 同一次传输有两份账:手机记"发送"(经vault同步来),Mac本地记"接收",时间差1-2秒。
+    // 能匹配到本地记录(同设备+同内容+时间差≤10秒)的 vault 副本丢弃,保留信息更全的本地条。
+    const localTimes = new Map();
+    const keyOf = (entry) => `${getLogEntryDeviceId(entry)}|${entry.kind || 'text'}|${(entry.text || '').slice(0, 80)}`;
+    entries.forEach((entry) => {
+        if (entry.vault_remote) return;
+        const key = keyOf(entry);
+        if (!localTimes.has(key)) localTimes.set(key, []);
+        localTimes.get(key).push(new Date(entry.timestamp || 0).getTime());
+    });
+    return entries.filter((entry) => {
+        if (!entry.vault_remote) return true;
+        const times = localTimes.get(keyOf(entry));
+        if (!times) return true;
+        const t = new Date(entry.timestamp || 0).getTime();
+        return !times.some((localT) => Math.abs(localT - t) <= 10000);
+    });
+}
+
 function renderLog() {
-    const log = getLog()
-        .concat(vaultRemoteEntries)
-        .map((entry) => normalizeLogEntry(entry))
-        .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+    const log = dedupeLogEntries(
+        getLog()
+            .concat(vaultRemoteEntries)
+            .map((entry) => normalizeLogEntry(entry))
+    ).sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
 
     buildDeviceAliasMap(log);
     renderDesktopHistoryDeviceFilters(log);
