@@ -162,6 +162,17 @@
                             <button id="desktop-history-search-clear-btn" class="btn-small hidden" type="button">清空</button>
                         </div>
                         <div class="desktop-history-filter-row" id="desktop-history-device-filter"></div>
+                        <div class="desktop-history-filter-row" id="desktop-history-kind-filter">
+                            <button type="button" class="desktop-history-filter-btn is-active" data-kind-filter="all">全部类型</button>
+                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="text">文字</button>
+                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="image">图片</button>
+                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="video">视频</button>
+                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="file">文件</button>
+                        </div>
+                        <div class="desktop-history-filter-row" id="desktop-history-availability-filter">
+                            <button type="button" class="desktop-history-filter-btn is-active" data-availability-filter="available">有原件</button>
+                            <button type="button" class="desktop-history-filter-btn" data-availability-filter="all">全部(含已丢失)</button>
+                        </div>
                         <div class="desktop-history-filter-row" id="desktop-history-time-filter">
                             <button type="button" class="desktop-history-filter-btn" data-time-filter="all">全部时间</button>
                             <button type="button" class="desktop-history-filter-btn" data-time-filter="today">今天</button>

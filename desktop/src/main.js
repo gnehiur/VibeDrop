@@ -10,6 +10,7 @@ const DEFAULT_LOG_HISTORY_FILTERS = {
     startTime: '',
     endTime: '',
     kind: 'all',
+    availability: 'available',
     query: '',
 };
 let connectedDropClients = [];
@@ -27,6 +28,15 @@ let lastNonCustomLogQuickTime = DEFAULT_LOG_HISTORY_FILTERS.quickTime;
 const desktopTransferItems = new Map();
 let currentDesktopTab = 'overview';
 let currentLogHistoryFilters = { ...DEFAULT_LOG_HISTORY_FILTERS };
+
+let hiddenDeviceIds = new Set();
+try {
+    hiddenDeviceIds = new Set(JSON.parse(localStorage.getItem('vibedrop-hidden-devices') || '[]'));
+} catch (error) { /* 忽略 */ }
+
+function persistHiddenDevices() {
+    localStorage.setItem('vibedrop-hidden-devices', JSON.stringify(Array.from(hiddenDeviceIds)));
+}
 let logHeatmapState = {
     viewportEndDate: '',
     rangeToken: '',
@@ -701,7 +711,25 @@ function initDesktopHistoryControls() {
         return;
     }
 
+    document.getElementById('desktop-history-kind-filter')?.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-kind-filter]');
+        if (!button) return;
+        currentLogHistoryFilters.kind = button.dataset.kindFilter || 'all';
+        renderLog();
+    });
+
+    document.getElementById('desktop-history-availability-filter')?.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-availability-filter]');
+        if (!button) return;
+        currentLogHistoryFilters.availability = button.dataset.availabilityFilter || 'available';
+        renderLog();
+    });
+
     document.getElementById('desktop-history-device-filter')?.addEventListener('click', (event) => {
+        if (event.target.closest('[data-manage-devices]')) {
+            showManageDevicesModal();
+            return;
+        }
         const button = event.target.closest('[data-device-filter]');
         if (!button) return;
         currentLogHistoryFilters.device = button.dataset.deviceFilter || 'all';
@@ -779,6 +807,7 @@ function renderLog() {
         .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
 
     renderDesktopHistoryDeviceFilters(log);
+    renderDesktopHistoryKindFilterState();
     renderDesktopHistoryTimeFilterState();
     renderDesktopHistoryAdvancedPanelState();
 
@@ -792,7 +821,7 @@ function renderDesktopHistoryDeviceFilters(entries) {
     const container = document.getElementById('desktop-history-device-filter');
     if (!container) return;
 
-    const devices = getDesktopHistoryDeviceOptions(entries);
+    const devices = getDesktopHistoryDeviceOptions(entries).filter((device) => !hiddenDeviceIds.has(device.id));
     container.innerHTML = [
         `<button type="button" class="desktop-history-filter-btn${currentLogHistoryFilters.device === 'all' ? ' is-active' : ''}" data-device-filter="all">全部</button>`,
         ...devices.map((device) => `
@@ -803,7 +832,52 @@ function renderDesktopHistoryDeviceFilters(entries) {
                 title="${escapeHtml(device.label)}"
             >${escapeHtml(device.label)}</button>
         `),
+        `<button type="button" class="desktop-history-filter-btn desktop-history-manage-btn" data-manage-devices="1" title="隐藏测试设备等,不删除任何数据">管理</button>`,
     ].join('');
+}
+
+function showManageDevicesModal() {
+    document.getElementById('manage-devices-overlay')?.remove();
+    const allDevices = getDesktopHistoryDeviceOptions(
+        getLog().concat(vaultRemoteEntries).map((entry) => normalizeLogEntry(entry))
+    );
+    const overlay = document.createElement('div');
+    overlay.id = 'manage-devices-overlay';
+    overlay.className = 'manage-devices-overlay';
+    overlay.innerHTML = `
+        <div class="manage-devices-card">
+            <h3>管理设备</h3>
+            <p class="manage-devices-hint">勾选"隐藏"后,该设备不再出现在筛选和历史列表里。只是视图隐藏,不删除任何记录,随时可恢复。</p>
+            <div class="manage-devices-list">
+                ${allDevices.map((device) => `
+                    <label class="manage-devices-row">
+                        <input type="checkbox" data-device-id="${escapeHtml(device.id)}" ${hiddenDeviceIds.has(device.id) ? 'checked' : ''}>
+                        <span>隐藏「${escapeHtml(device.label)}」</span>
+                    </label>
+                `).join('')}
+            </div>
+            <div class="manage-devices-actions">
+                <button type="button" class="manage-devices-done">完成</button>
+            </div>
+        </div>
+    `;
+    overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) overlay.remove();
+    });
+    overlay.querySelector('.manage-devices-done').addEventListener('click', () => overlay.remove());
+    overlay.querySelectorAll('input[data-device-id]').forEach((box) => {
+        box.addEventListener('change', () => {
+            const id = box.dataset.deviceId;
+            if (box.checked) hiddenDeviceIds.add(id);
+            else hiddenDeviceIds.delete(id);
+            if (hiddenDeviceIds.has(currentLogHistoryFilters.device)) {
+                currentLogHistoryFilters.device = 'all';
+            }
+            persistHiddenDevices();
+            renderLog();
+        });
+    });
+    document.body.appendChild(overlay);
 }
 
 function getDesktopHistoryDeviceOptions(entries) {
@@ -830,6 +904,15 @@ function getDesktopHistoryDeviceOptions(entries) {
     return Array.from(deviceMap.values()).sort((a, b) =>
         a.label.localeCompare(b.label, 'zh-CN')
     );
+}
+
+function renderDesktopHistoryKindFilterState() {
+    document.querySelectorAll('#desktop-history-kind-filter .desktop-history-filter-btn').forEach((button) => {
+        button.classList.toggle('is-active', button.dataset.kindFilter === (currentLogHistoryFilters.kind || 'all'));
+    });
+    document.querySelectorAll('#desktop-history-availability-filter .desktop-history-filter-btn').forEach((button) => {
+        button.classList.toggle('is-active', button.dataset.availabilityFilter === (currentLogHistoryFilters.availability || 'available'));
+    });
 }
 
 function renderDesktopHistoryTimeFilterState() {
@@ -1064,6 +1147,9 @@ function renderLogList(entries, totalCount = 0) {
 
 function filterLogEntries(entries, filters = currentLogHistoryFilters) {
     return entries.filter((entry) => {
+        if (hiddenDeviceIds.has(getLogEntryDeviceId(entry))) {
+            return false;
+        }
         if (filters.device !== 'all' && getLogEntryDeviceId(entry) !== filters.device) {
             return false;
         }
@@ -1086,6 +1172,10 @@ function filterLogEntries(entries, filters = currentLogHistoryFilters) {
         }
 
         if (!matchesLogKind(entry, filters)) {
+            return false;
+        }
+
+        if (!matchesLogAvailability(entry, filters)) {
             return false;
         }
 
@@ -1160,10 +1250,31 @@ function matchesLogTimeRange(entryDate, filters = currentLogHistoryFilters) {
 }
 
 function matchesLogKind(entry, filters = currentLogHistoryFilters) {
-    if (filters.kind === 'all') {
+    const target = filters.kind || 'all';
+    if (target === 'all') {
         return true;
     }
-    return (entry.kind || 'text') === filters.kind;
+    if ((entry.kind || 'text') === target) {
+        return true;
+    }
+    // 混合媒体/多项传输按实际包含的项命中
+    const items = Array.isArray(entry.items) ? entry.items : [];
+    return items.some((item) => (item?.kind || '') === target);
+}
+
+function matchesLogAvailability(entry, filters = currentLogHistoryFilters) {
+    if ((filters.availability || 'available') === 'all') {
+        return true;
+    }
+    const items = getLogEntryItems(entry).filter((item) => item.kind === 'image' || item.kind === 'video' || item.kind === 'file');
+    if (!items.length) {
+        return true; // 非媒体条目不受影响
+    }
+    return items.some((item) => {
+        if (item.vault_media_hash) return true;
+        if (entry.vault_remote) return false; // 远程条目只认 vault 原件
+        return Boolean(item.file_path || item.saved_path);
+    });
 }
 
 function parseClockMinutes(value) {
