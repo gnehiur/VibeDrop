@@ -42,7 +42,7 @@ try {
 // 默认隐藏:测试身份 + 重复的旧 client_id(数据不删,管理面板可恢复)
 const DEFAULT_HIDDEN_DEVICE_IDS = [
     'ws-client', 'type-test', 't', 'claude-test-client', 'codex_diag_type',
-    'client_mqjcw783ei2mta', 'native-android:b56e676a776a6',
+    'native-android:b56e676a776a6',
     'vault-pkg110-direct-test',
 ];
 const DEFAULT_HIDDEN_DEVICE_NAMES = ['打字测试', 'Claude 测试客户端', 'Codex 输入诊断', 'PKG110 direct test', 't'];
@@ -830,6 +830,7 @@ function renderLog() {
         .map((entry) => normalizeLogEntry(entry))
         .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
 
+    buildDeviceAliasMap(log);
     renderDesktopHistoryDeviceFilters(log);
     renderDesktopHistoryKindFilterState();
     renderDesktopHistoryTimeFilterState();
@@ -2195,9 +2196,40 @@ function truncateFilenamePreserveExtension(filename, maxBaseLength = 18, maxTota
     return `${base.slice(0, allowedBaseLength)}…${ext}`;
 }
 
+let deviceAliasMap = new Map();
+
+function buildDeviceAliasMap(entries) {
+    // 统计 每个显示名 下各原始ID的条目数;同名多ID时全部指向条目最多的主ID
+    const byName = new Map();
+    entries.forEach((entry) => {
+        const name = (entry.client_name || '').trim();
+        if (!name || DEFAULT_HIDDEN_DEVICE_NAMES.includes(name)) return;
+        const raw = entry.client_id || entry.client_ip || '';
+        if (!raw) return;
+        if (!byName.has(name)) byName.set(name, new Map());
+        const counts = byName.get(name);
+        counts.set(raw, (counts.get(raw) || 0) + 1);
+    });
+    deviceAliasMap = new Map();
+    byName.forEach((counts) => {
+        if (counts.size < 2) return;
+        let canonical = '';
+        let best = -1;
+        counts.forEach((count, id) => {
+            // vault- 前缀是同步身份,优先让本地连接身份当主ID
+            const weight = count + (id.startsWith('vault-') ? 0 : 100000);
+            if (weight > best) { best = weight; canonical = id; }
+        });
+        counts.forEach((_count, id) => {
+            if (id !== canonical) deviceAliasMap.set(id, canonical);
+        });
+    });
+}
+
 function getLogEntryDeviceId(entry) {
     const fallback = getSingleConnectedClientFallback();
-    return entry.client_id || fallback?.id || entry.client_ip || entry.client_name || '';
+    const raw = entry.client_id || fallback?.id || entry.client_ip || entry.client_name || '';
+    return deviceAliasMap.get(raw) || raw;
 }
 
 function getLogEntryDeviceName(entry) {
