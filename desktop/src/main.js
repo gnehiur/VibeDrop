@@ -2198,6 +2198,13 @@ function truncateFilenamePreserveExtension(filename, maxBaseLength = 18, maxTota
 
 let deviceAliasMap = new Map();
 
+// 人工确认的设备别名:旧身份 → 现身份(用户确认为同一台物理设备)
+const MANUAL_DEVICE_ALIASES = new Map([
+    // iPhone 583L(4月旧装) → iPhone P6XS(7月重装),同一台 iPhone
+    ['client_mocerc6iik583l', 'client_ms5vmo9kqup6xs'],
+    ['vault-client_mocerc6iik583l', 'client_ms5vmo9kqup6xs'],
+]);
+
 function buildDeviceAliasMap(entries) {
     // 统计 每个显示名 下各原始ID的条目数;同名多ID时全部指向条目最多的主ID
     const byName = new Map();
@@ -2229,7 +2236,7 @@ function buildDeviceAliasMap(entries) {
 function getLogEntryDeviceId(entry) {
     const fallback = getSingleConnectedClientFallback();
     const raw = entry.client_id || fallback?.id || entry.client_ip || entry.client_name || '';
-    return deviceAliasMap.get(raw) || raw;
+    return MANUAL_DEVICE_ALIASES.get(raw) || deviceAliasMap.get(raw) || raw;
 }
 
 function getLogEntryDeviceName(entry) {
