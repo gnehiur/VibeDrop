@@ -117,13 +117,15 @@
                 </div>
             </section>
 
-            <div class="settings-card data-card">
-                <h3>数据管理</h3>
-                <div class="home-vault-sync">
-                    <div class="home-vault-sync-copy">
-                        <div class="home-vault-sync-label">家庭服务器</div>
-                        <div class="home-vault-sync-hint">把当前手机历史直接同步到 Mac mini Home Vault，也可以从 Vault 拉回历史。</div>
+            <details class="settings-card advanced-connect-panel data-card">
+                <summary class="advanced-connect-summary">
+                    <div class="advanced-connect-copy">
+                        <h3>Home Vault</h3>
+                        <p class="hint">历史与原件已全自动同步。只有出门在外要改 vault 地址（tailnet 域名）、或新设备要恢复历史时，才需要展开。</p>
                     </div>
+                    <span class="advanced-connect-toggle">自动同步中</span>
+                </summary>
+                <div class="advanced-connect-body home-vault-sync">
                     <input id="home-vault-url-input" class="home-vault-url-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://minideMac-mini.local:8788">
                     <div class="home-vault-sync-actions">
                         <button id="sync-home-vault-btn" class="primary-btn" type="button">同步到 Mac mini</button>
@@ -141,7 +143,7 @@
                     </div>
                     <div id="home-vault-sync-status" class="home-vault-sync-status">未同步</div>
                 </div>
-            </div>
+            </details>
         </section>
 
         <!-- 发送页面 -->
