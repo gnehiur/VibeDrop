@@ -1279,7 +1279,7 @@ body.nearby-reorder-active {
     box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
 }
 
-.history-item {
+body:not(.plat-ios) .history-item {
     content-visibility: auto;
     contain-intrinsic-size: auto 150px;
 }

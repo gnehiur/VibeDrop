@@ -9903,6 +9903,20 @@ function renderHistory() {
         return;
     }
 
+    // iOS 的 WKWebView 对 content-visibility 实现有渲染缺陷(整页黑屏),
+    // 该平台回退到 JS 虚拟滚动;安卓/桌面用浏览器原生虚拟化。
+    if (getNativeMobilePlatform() === 'ios') {
+        document.body.classList.add('plat-ios');
+        historyVirtual.active = true;
+        historyVirtual.renderMarkup = renderItemMarkup;
+        historyVirtual.entries = filtered;
+        historyVirtual.heights = new Array(filtered.length).fill(0);
+        historyVirtual.window = { start: -1, end: -1 };
+        ensureHistoryScrollListener();
+        renderHistoryWindow(true);
+        return;
+    }
+
     // 长列表:浏览器原生虚拟化(CSS content-visibility)。所有条目都进 DOM,
     // 屏幕外的由渲染引擎跳过排版与绘制,滚动时引擎同步按需绘制——
     // 再快的拖动也不会出现空窗(旧 JS 虚拟滚动是异步补渲染,追不上就黑屏)。
