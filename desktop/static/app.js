@@ -67,7 +67,7 @@ const HISTORY_RENDER_INITIAL_BATCH = 12;
 const HISTORY_RENDER_BATCH_SIZE = 20;
 // 超过这个条数启用虚拟滚动:只渲染可视区,内存占用与总条数无关
 const HISTORY_VIRTUAL_THRESHOLD = 150;
-const HISTORY_VIRTUAL_OVERSCAN = 6;
+const HISTORY_VIRTUAL_OVERSCAN = 30;
 const HISTORY_ESTIMATED_ITEM_HEIGHT = 120;
 const HISTORY_ITEM_GAP = 12;
 const historyVirtual = {
@@ -10022,6 +10022,9 @@ function ensureHistoryScrollListener() {
     historyVirtual.scroller = scroller;
     const onScroll = () => {
         if (!historyVirtual.active) return;
+        // 同步刷新:滚动事件一到立即更新窗口,消灭"等下一帧"的空窗;
+        // 再挂一个尾随 rAF 兜住高频事件的最后一次位置
+        renderHistoryWindow(false);
         if (historyVirtual.rafPending) return;
         historyVirtual.rafPending = true;
         requestAnimationFrame(() => {

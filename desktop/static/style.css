@@ -1,3 +1,7 @@
+html {
+    background: #eef1f5;
+}
+
 :root {
     color-scheme: light;
     --page-bg: #eef1f5;
