@@ -3,7 +3,7 @@ const LOG_HEATMAP_VISIBLE_DAYS = 7;
 const LOG_HEATMAP_HOUR_SLOTS = 24;
 const DEFAULT_LOG_HISTORY_FILTERS = {
     device: 'all',
-    quickTime: '7d',
+    quickTime: 'all',
     startDate: '',
     endDate: '',
     timeRange: 'all',
@@ -1198,10 +1198,27 @@ function renderLogList(entries, totalCount = 0) {
     }
 
     list.innerHTML = '';
-    entries.forEach((entry) => {
-        list.appendChild(createLogElement(entry));
-    });
+    // 分片挂载 + CSS content-visibility 原生虚拟化:近万条也不卡,快滑不空窗
+    logListRenderToken += 1;
+    const token = logListRenderToken;
+    const MOUNT_CHUNK = 300;
+    let cursor = 0;
+    const mountChunk = () => {
+        if (token !== logListRenderToken) return;
+        const fragment = document.createDocumentFragment();
+        entries.slice(cursor, cursor + MOUNT_CHUNK).forEach((entry) => {
+            fragment.appendChild(createLogElement(entry));
+        });
+        list.appendChild(fragment);
+        cursor += MOUNT_CHUNK;
+        if (cursor < entries.length) {
+            setTimeout(mountChunk, 0);
+        }
+    };
+    mountChunk();
 }
+
+let logListRenderToken = 0;
 
 function filterLogEntries(entries, filters = currentLogHistoryFilters) {
     return entries.filter((entry) => {

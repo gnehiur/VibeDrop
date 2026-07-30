@@ -9896,21 +9896,34 @@ function renderHistory() {
         `;
     };
 
-    // 条目不多时保持原来的简单渲染,避免无谓复杂度
+    // 条目不多时一次性渲染
     if (filtered.length <= HISTORY_VIRTUAL_THRESHOLD) {
         historyVirtual.active = false;
         list.innerHTML = filtered.map((entry, index) => renderItemMarkup(entry, index)).join('');
         return;
     }
 
-    // 长列表走虚拟滚动:只渲染可视区附近的条目,其余用上下占位撑高度
-    historyVirtual.active = true;
-    historyVirtual.renderMarkup = renderItemMarkup;
-    historyVirtual.entries = filtered;
-    historyVirtual.heights = new Array(filtered.length).fill(0);
-    historyVirtual.window = { start: -1, end: -1 };
-    ensureHistoryScrollListener();
-    renderHistoryWindow(true);
+    // 长列表:浏览器原生虚拟化(CSS content-visibility)。所有条目都进 DOM,
+    // 屏幕外的由渲染引擎跳过排版与绘制,滚动时引擎同步按需绘制——
+    // 再快的拖动也不会出现空窗(旧 JS 虚拟滚动是异步补渲染,追不上就黑屏)。
+    // 首次挂载分片进行,避免一次构建近万节点卡住主线程。
+    historyVirtual.active = false;
+    list.innerHTML = '';
+    const MOUNT_CHUNK = 400;
+    let mountCursor = 0;
+    const mountChunk = () => {
+        if (renderToken !== historyRenderToken) return; // 已有新一轮渲染,放弃本轮
+        const html = filtered
+            .slice(mountCursor, mountCursor + MOUNT_CHUNK)
+            .map((entry, offset) => renderItemMarkup(entry, mountCursor + offset))
+            .join('');
+        list.insertAdjacentHTML('beforeend', html);
+        mountCursor += MOUNT_CHUNK;
+        if (mountCursor < filtered.length) {
+            setTimeout(mountChunk, 0);
+        }
+    };
+    mountChunk();
 }
 
 // ---- 历史列表虚拟滚动 ----
