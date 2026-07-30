@@ -1424,7 +1424,11 @@ function getNativeMobileDefaultLabel() {
 }
 
 function buildClientDisplayName(clientId, nativeInfo = null) {
-    const preferredName = nativeInfo?.friendlyName || nativeInfo?.marketName;
+    let cachedIosModel = '';
+    if (getNativeMobilePlatform() === 'ios') {
+        try { cachedIosModel = localStorage.getItem('vibedrop-ios-model') || ''; } catch (error) { /* 忽略 */ }
+    }
+    const preferredName = nativeInfo?.friendlyName || nativeInfo?.marketName || cachedIosModel;
     if (preferredName) {
         return preferredName;
     }
@@ -1432,6 +1436,21 @@ function buildClientDisplayName(clientId, nativeInfo = null) {
     const suffix = String(clientId || '').slice(-4).toUpperCase();
     const label = getNativeMobileDefaultLabel();
     return suffix ? `${label} ${suffix}` : label;
+}
+
+async function upgradeIosDeviceModelName() {
+    if (getNativeMobilePlatform() !== 'ios' || !supportsNativeFileReceive()) return;
+    try {
+        const model = String((await invokeNative('get_device_model')) || '').trim();
+        if (!model || model === 'iPhone') return;
+        localStorage.setItem('vibedrop-ios-model', model);
+        // 只升级"iPhone+随机尾巴"式自动名;用户手动改过的名字不碰
+        if (/^iPhone [A-Z0-9]{4}$/.test(clientIdentity?.name || '')) {
+            clientIdentity = getClientIdentity();
+        }
+    } catch (error) {
+        console.warn('读取 iPhone 机型失败', error);
+    }
 }
 
 function getNativeInvoker() {
@@ -3575,6 +3594,7 @@ function initNavigation() {
     setTimeout(() => {
         refreshLocalMediaExistence().then(() => autoUploadLocalMediaToVault());
     }, 12000);
+    setTimeout(() => { void upgradeIosDeviceModelName(); }, 3000);
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
         connectVaultEventStream();

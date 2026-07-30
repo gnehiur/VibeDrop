@@ -563,6 +563,82 @@ fn download_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     }
 }
 
+#[cfg(target_os = "ios")]
+fn iphone_machine_to_market_name(machine: &str) -> String {
+    // 机型代码 → 市售名(常见近代机型;查不到就返回代码本身,也比随机ID强)
+    let name = match machine {
+        "iPhone12,1" => "iPhone 11",
+        "iPhone12,3" => "iPhone 11 Pro",
+        "iPhone12,5" => "iPhone 11 Pro Max",
+        "iPhone12,8" => "iPhone SE 2",
+        "iPhone13,1" => "iPhone 12 mini",
+        "iPhone13,2" => "iPhone 12",
+        "iPhone13,3" => "iPhone 12 Pro",
+        "iPhone13,4" => "iPhone 12 Pro Max",
+        "iPhone14,2" => "iPhone 13 Pro",
+        "iPhone14,3" => "iPhone 13 Pro Max",
+        "iPhone14,4" => "iPhone 13 mini",
+        "iPhone14,5" => "iPhone 13",
+        "iPhone14,6" => "iPhone SE 3",
+        "iPhone14,7" => "iPhone 14",
+        "iPhone14,8" => "iPhone 14 Plus",
+        "iPhone15,2" => "iPhone 14 Pro",
+        "iPhone15,3" => "iPhone 14 Pro Max",
+        "iPhone15,4" => "iPhone 15",
+        "iPhone15,5" => "iPhone 15 Plus",
+        "iPhone16,1" => "iPhone 15 Pro",
+        "iPhone16,2" => "iPhone 15 Pro Max",
+        "iPhone17,1" => "iPhone 16 Pro",
+        "iPhone17,2" => "iPhone 16 Pro Max",
+        "iPhone17,3" => "iPhone 16",
+        "iPhone17,4" => "iPhone 16 Plus",
+        "iPhone17,5" => "iPhone 16e",
+        "iPhone18,1" => "iPhone 17 Pro",
+        "iPhone18,2" => "iPhone 17 Pro Max",
+        "iPhone18,3" => "iPhone 17",
+        "iPhone18,4" => "iPhone Air",
+        other => other,
+    };
+    name.to_string()
+}
+
+#[tauri::command]
+fn get_device_model() -> String {
+    #[cfg(target_os = "ios")]
+    {
+        use std::os::raw::{c_char, c_int, c_void};
+        extern "C" {
+            fn sysctlbyname(
+                name: *const c_char,
+                oldp: *mut c_void,
+                oldlenp: *mut usize,
+                newp: *mut c_void,
+                newlen: usize,
+            ) -> c_int;
+        }
+        let key = std::ffi::CString::new("hw.machine").unwrap();
+        let mut len: usize = 0;
+        unsafe {
+            if sysctlbyname(key.as_ptr(), std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) == 0
+                && len > 1
+            {
+                let mut buf = vec![0u8; len];
+                if sysctlbyname(key.as_ptr(), buf.as_mut_ptr() as *mut c_void, &mut len, std::ptr::null_mut(), 0) == 0 {
+                    buf.truncate(len.saturating_sub(1));
+                    if let Ok(machine) = String::from_utf8(buf) {
+                        return iphone_machine_to_market_name(machine.trim());
+                    }
+                }
+            }
+        }
+        return String::new();
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        String::new()
+    }
+}
+
 #[tauri::command]
 fn check_paths_exist(paths: Vec<String>) -> Vec<bool> {
     paths
@@ -1664,6 +1740,7 @@ pub fn run() {
             finish_incoming_file,
             cancel_incoming_file,
             resolve_media_path,
+            get_device_model,
             check_paths_exist,
             vault_upload_media,
             get_discovery_diagnostics,
