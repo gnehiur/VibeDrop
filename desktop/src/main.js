@@ -826,16 +826,23 @@ function initDesktopHistoryControls() {
 function dedupeLogEntries(entries) {
     // 同一次传输有两份账:手机记"发送"(经vault同步来),Mac本地记"接收",时间差1-2秒。
     // 能匹配到本地记录(同设备+同内容+时间差≤10秒)的 vault 副本丢弃,保留信息更全的本地条。
+    // 升级:优先按 transferId 单号精确归并(发送方生成,双方记账共用);
+    // 没有单号的存量旧记录才退回"同设备+同内容+10秒窗"启发式
+    const localTransferIds = new Set();
     const localTimes = new Map();
     const keyOf = (entry) => `${getLogEntryDeviceId(entry)}|${entry.kind || 'text'}|${(entry.text || '').slice(0, 80)}`;
     entries.forEach((entry) => {
         if (entry.vault_remote) return;
+        if (entry.transfer_id) localTransferIds.add(entry.transfer_id);
         const key = keyOf(entry);
         if (!localTimes.has(key)) localTimes.set(key, []);
         localTimes.get(key).push(new Date(entry.timestamp || 0).getTime());
     });
     return entries.filter((entry) => {
         if (!entry.vault_remote) return true;
+        if (entry.transfer_id) {
+            return !localTransferIds.has(entry.transfer_id);
+        }
         const times = localTimes.get(keyOf(entry));
         if (!times) return true;
         const t = new Date(entry.timestamp || 0).getTime();

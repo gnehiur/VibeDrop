@@ -154,6 +154,8 @@ struct HistoryEntry {
     save_target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     items: Option<Vec<HistoryTransferItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transfer_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1702,6 +1704,7 @@ impl HistoryEntry {
             item_count: None,
             save_target: None,
             items: None,
+            transfer_id: None,
         }
     }
 }
@@ -2428,6 +2431,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                             item_count: None,
                                             save_target: None,
                                             items: None,
+                                            transfer_id: None,
                                         };
 
                                         append_history_entry(&history_entry);
@@ -2477,7 +2481,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                     } else {
                                         info!("收到文字: {}", text_content);
                                     }
-                                    let history_entry = HistoryEntry::text_entry(
+                                    let mut history_entry = HistoryEntry::text_entry(
                                         text_content,
                                         "ws-client",
                                         if current_client_id.is_empty() {
@@ -2491,6 +2495,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                             Some(current_client_name.clone())
                                         },
                                     );
+                                    history_entry.transfer_id = client_msg.transfer_id.clone();
                                     append_history_entry(&history_entry);
 
                                     let (reply_tx, reply_rx) = oneshot::channel();
@@ -2555,7 +2560,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
 
                                 if let Some(text_content) = &client_msg.text {
                                     info!("收到文字进剪贴板: {}", text_content);
-                                    let history_entry = HistoryEntry::text_entry(
+                                    let mut history_entry = HistoryEntry::text_entry(
                                         text_content,
                                         "ws-client",
                                         if current_client_id.is_empty() {
@@ -2569,6 +2574,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                             Some(current_client_name.clone())
                                         },
                                     );
+                                    history_entry.transfer_id = client_msg.transfer_id.clone();
                                     append_history_entry(&history_entry);
 
                                     let (reply_tx, reply_rx) = oneshot::channel();
@@ -2675,6 +2681,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                             item_count: None,
                                             save_target: None,
                                             items: None,
+                                            transfer_id: None,
                                         };
 
                                         if let Err(e) = set_clipboard_image(saved_image.clipboard_image) {
@@ -2777,6 +2784,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                             item_count: None,
                                             save_target: None,
                                             items: None,
+                                            transfer_id: None,
                                         };
 
                                         append_history_entry(&history_entry);
@@ -3787,6 +3795,7 @@ fn build_outbound_history_entry(
         item_count: Some(session.item_count),
         save_target: Some(session.save_target.clone()),
         items: Some(items),
+        transfer_id: None,
     }
 }
 

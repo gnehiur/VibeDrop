@@ -6161,6 +6161,7 @@ async function sendText(deviceId, buttonIdOverride = null) {
         timestamp: getLocalTimestamp(),
         text: text,
         status: 'pending',
+        transferId: newTransferId(),
         ...buildHistoryTargetMeta(deviceId),
     };
     addHistory(historyEntry);
@@ -6168,7 +6169,7 @@ async function sendText(deviceId, buttonIdOverride = null) {
     const outing = isOutingMode();
     await sendDeviceAction(deviceId, {
         action: outing ? 'clipboard_text' : 'type',
-        payload: { text },
+        payload: { text, transfer_id: historyEntry.transferId },
         buttonId: buttonIdOverride || `sendbtn-${deviceId}`,
         pendingText: outing ? '同步中...' : '发送中...',
         clearInput: true,
@@ -10151,6 +10152,15 @@ async function openHistoryMediaItemExternally(item) {
 function supportsExternalMediaOpen() {
     return supportsMediaOpenerPreferences()
         || Boolean(window.NativeMediaLibrary && typeof window.NativeMediaLibrary.openPath === 'function');
+}
+
+// 传输单号:发送方生成全局唯一ID,双方记账共用,合并展示按它精确归并
+function newTransferId() {
+    try {
+        return crypto.randomUUID();
+    } catch (error) {
+        return `tid_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+    }
 }
 
 function supportsNativeVideoPlayback() {

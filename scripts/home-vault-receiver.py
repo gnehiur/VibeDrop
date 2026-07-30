@@ -503,6 +503,8 @@ def compact_history_entry(entry: Any) -> dict[str, Any]:
         "fileName",
         "mimeType",
         "itemCount",
+        "transferId",
+        "transfer_id",
     )
     result = {key: entry[key] for key in allowed_keys if entry.get(key) not in (None, "")}
     items = entry.get("items")
