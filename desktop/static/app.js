@@ -3614,6 +3614,7 @@ function initSettingsButton() {
         renderMediaOpenerSettings();
         showView('settings-view');
         document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        $('nav-settings-btn')?.classList.add('active');
         requestAnimationFrame(() => {
             void discoverNearbyDesktops({ silent: true, syncKnownDevices: true });
         });
