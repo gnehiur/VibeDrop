@@ -2235,7 +2235,12 @@ function buildDeviceAliasMap(entries) {
 
 function getLogEntryDeviceId(entry) {
     const fallback = getSingleConnectedClientFallback();
-    const raw = entry.client_id || fallback?.id || entry.client_ip || entry.client_name || '';
+    let raw = entry.client_id || fallback?.id || entry.client_ip || entry.client_name || '';
+    // vault 同步身份与本地连接身份是同一台设备:剥掉前缀统一到真实ID,
+    // 隐藏名单/别名/设备chip 全部按同一身份生效
+    if (raw.startsWith('vault-')) {
+        raw = raw.slice('vault-'.length);
+    }
     return MANUAL_DEVICE_ALIASES.get(raw) || deviceAliasMap.get(raw) || raw;
 }
 
