@@ -3667,12 +3667,6 @@ function initSettingsButton() {
         });
     });
 
-    // 返回按钮（不保存）
-    $('settings-back-btn').addEventListener('click', () => {
-        showView('send-view');
-        $('nav-send-btn').classList.add('active');
-    });
-
     // 添加设备
     $('add-device-btn').addEventListener('click', () => {
         const current = getDevicesFromUI();
