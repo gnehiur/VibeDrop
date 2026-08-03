@@ -666,3 +666,15 @@ gh release create v0.1.4 \
 ## 许可证
 
 [MIT License](LICENSE) — 完全开源，自由使用。
+
+
+## 消息自我研究(词频统计报告)
+
+对你自己的 Home Vault 历史语料做分词词频/口头禅/高频短语/月度话题演变(TF-IDF)/行为画像分析,生成自包含 HTML 报告(全程本地,数据不外发):
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install jieba
+.venv/bin/python scripts/message-self-study.py http://<你的vault地址>:8788
+```
+
+报告输出到 `~/Downloads/`。

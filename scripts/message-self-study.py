@@ -8,7 +8,8 @@ import json, urllib.request, collections, datetime, math, pathlib, re, html
 
 import jieba
 
-VAULT = "http://127.0.0.1:8788"
+import os, sys
+VAULT = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("VIBEDROP_VAULT", "http://127.0.0.1:8788")).rstrip("/")
 
 STOPWORDS = set("""的 了 在 是 我 你 他 她 它 我们 你们 他们 这 那 这个 那个 有 和 与 或 就 都 要 也 还 不 没 没有
 很 挺 太 更 最 被 把 让 给 对 向 从 到 于 之 而 且 及 等 啊 呀 吧 吗 呢 嘛 哦 哈 嗯 呃 诶 唉 咯 啦
