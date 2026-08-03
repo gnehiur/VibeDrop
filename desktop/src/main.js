@@ -850,12 +850,44 @@ function dedupeLogEntries(entries) {
     });
 }
 
+function collapseMirrorDuplicates(entries) {
+    // 历史遗留镜像:测试身份与主身份同时在线时,同一次发送被记了两笔(时间戳同秒)。
+    // 归并后同设备+同内容+时间差≤2秒 只显示一条,优先保留主身份记录。仅展示层,不动数据。
+    const groups = new Map();
+    entries.forEach((entry) => {
+        const key = `${getLogEntryDeviceId(entry)}|${entry.kind || 'text'}|${(entry.text || '').slice(0, 80)}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push({ entry, time: new Date(entry.timestamp || 0).getTime() });
+    });
+    const dropped = new Set();
+    groups.forEach((list) => {
+        if (list.length < 2) return;
+        list.sort((a, b) => a.time - b.time);
+        let anchor = null;
+        list.forEach((item) => {
+            if (anchor && item.time - anchor.time <= 2000) {
+                const anchorPrimary = (anchor.entry.client_id || '') === getLogEntryDeviceId(anchor.entry);
+                const itemPrimary = (item.entry.client_id || '') === getLogEntryDeviceId(item.entry);
+                if (!anchorPrimary && itemPrimary) {
+                    dropped.add(anchor.entry);
+                    anchor = item;
+                } else {
+                    dropped.add(item.entry);
+                }
+            } else {
+                anchor = item;
+            }
+        });
+    });
+    return entries.filter((entry) => !dropped.has(entry));
+}
+
 function renderLog() {
-    const log = dedupeLogEntries(
+    const log = collapseMirrorDuplicates(dedupeLogEntries(
         getLog()
             .concat(vaultRemoteEntries)
             .map((entry) => normalizeLogEntry(entry))
-    ).sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+    )).sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
 
     buildDeviceAliasMap(log);
     renderDesktopHistoryDeviceFilters(log);
