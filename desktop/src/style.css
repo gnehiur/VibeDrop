@@ -1598,8 +1598,6 @@ h1 {
 }
 
 .log-item {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 110px;
     background: var(--surface-strong);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
