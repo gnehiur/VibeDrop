@@ -2,6 +2,27 @@ html {
     background: #eef1f5;
 }
 
+/* 应用壳布局:外层锁滚,内容区内部滚动——iOS 橡皮筋回弹只发生在内容区,
+   固定的标签栏钉在不动的视口上,再也不会跟着弹 */
+html, body {
+    height: 100%;
+    overflow: hidden;
+}
+
+#app {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+}
+
+#app-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+}
+
 :root {
     color-scheme: light;
     --page-bg: #eef1f5;
