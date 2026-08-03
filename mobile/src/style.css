@@ -209,7 +209,7 @@ img {
 
 .view {
     flex: 1;
-    padding: 22px 20px 118px;
+    padding: 22px 20px 24px;
     animation: fadeIn 0.28s ease;
 }
 
@@ -2613,20 +2613,14 @@ body.media-viewer-open {
 }
 
 #bottom-nav {
-    position: fixed;
-    left: 50%;
-    bottom: max(14px, env(safe-area-inset-bottom));
-    transform: translateX(-50%);
-    width: calc(100% - 24px);
-    max-width: 420px;
+    /* 通栏贴底标签栏:应用壳的固定底层,内容区直接接到栏顶 */
+    flex-shrink: 0;
     display: flex;
     gap: 8px;
-    padding: 8px;
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid rgba(15, 23, 42, 0.08);
-    border-radius: 24px;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+    background: rgba(255, 255, 255, 0.88);
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
     backdrop-filter: blur(28px);
-    box-shadow: var(--shadow-xl);
     z-index: 120;
 }
 
