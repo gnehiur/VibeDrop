@@ -499,6 +499,17 @@ class MainActivity : TauriActivity() {
       return
     }
 
+    // 把 WebView console 原始输出转发进 logcat(浏览器对跨源错误会脱敏,这里能看到真身)
+    webView.webChromeClient = object : android.webkit.WebChromeClient() {
+      override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+        Log.i(
+          "VibeDropConsole",
+          "${message.messageLevel()} ${message.message()} @${message.sourceId()}:${message.lineNumber()}"
+        )
+        return false
+      }
+    }
+
     val previousClient = webView.webViewClient
     val assetLoader = WebViewAssetLoader.Builder()
       .addPathHandler(PREVIEW_ASSET_PREFIX, PreviewMediaPathHandler())
