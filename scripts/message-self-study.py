@@ -56,6 +56,15 @@ def main():
             filler_freq[f] += text.count(f)
         kept = []
         for t in toks:
+            # 英文词单独放行(2-15位纯字母,统一小写计数),数字与混合乱码仍排除
+            if re.fullmatch(r"[A-Za-z][A-Za-z+#.]{1,14}", t):
+                t = t.lower()
+                if t in {"the", "to", "of", "and", "a", "in", "is", "it"}:
+                    kept.append(None); continue
+                word_freq[t] += 1
+                month_words[month][t] += 1
+                kept.append(t)
+                continue
             if len(t) >= 2 and t not in STOPWORDS and not re.fullmatch(r"[\d\W_a-zA-Z]+", t):
                 word_freq[t] += 1
                 month_words[month][t] += 1
