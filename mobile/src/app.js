@@ -7969,15 +7969,42 @@ function isLocalSourceEntry(entry) {
     return !src || src === getLocalSourceId();
 }
 
+// 统一去重兜底:同设备+同内容+10秒窗只显示最早一条(护住本地存量重复与任何来源异常)
+function collapseDuplicateEntries(entries) {
+    const groups = new Map();
+    entries.forEach((entry) => {
+        const text = (entry.text || '').slice(0, 80);
+        if (!text) return;
+        const key = `${entry.sourceDeviceId || 'local'}|${entry.kind || 'text'}|${text}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(entry);
+    });
+    const dropped = new Set();
+    groups.forEach((list) => {
+        if (list.length < 2) return;
+        list.sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+        let anchorTime = null;
+        list.forEach((entry) => {
+            const time = new Date(entry.timestamp || 0).getTime();
+            if (anchorTime !== null && time - anchorTime <= 10000) {
+                dropped.add(entry);
+            } else {
+                anchorTime = time;
+            }
+        });
+    });
+    return dropped.size ? entries.filter((entry) => !dropped.has(entry)) : entries;
+}
+
 function getHistoryForDisplay() {
-    if (!vaultMergedEntries.length) return getHistory();
+    if (!vaultMergedEntries.length) return collapseDuplicateEntries(getHistory());
     const combined = getHistory().concat(vaultMergedEntries);
     combined.sort((a, b) => {
         const ta = new Date(a?.timestamp || a?.timestamp_iso || 0).getTime() || 0;
         const tb = new Date(b?.timestamp || b?.timestamp_iso || 0).getTime() || 0;
         return tb - ta;
     });
-    return combined;
+    return collapseDuplicateEntries(combined);
 }
 
 // 双档拉取:平时刷新只拉最近 2000 条(轻快);每次会话另做一次全量深拉,

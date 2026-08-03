@@ -865,7 +865,7 @@ function collapseMirrorDuplicates(entries) {
         list.sort((a, b) => a.time - b.time);
         let anchor = null;
         list.forEach((item) => {
-            if (anchor && item.time - anchor.time <= 2000) {
+            if (anchor && item.time - anchor.time <= 10000) {
                 const anchorPrimary = (anchor.entry.client_id || '') === getLogEntryDeviceId(anchor.entry);
                 const itemPrimary = (item.entry.client_id || '') === getLogEntryDeviceId(item.entry);
                 if (!anchorPrimary && itemPrimary) {
