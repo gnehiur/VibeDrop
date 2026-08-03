@@ -12,9 +12,17 @@ function probe(stage, detail = '') {
     } catch (error) { /* 忽略 */ }
 }
 window.addEventListener('error', (event) => {
-    probe('js-error', `${event.message} @${(event.filename || '').split('/').pop()}:${event.lineno}`);
+    // 资源加载失败(img/script/link)不冒泡,只在捕获阶段可见;JS 错误走冒泡阶段
+    const target = event.target;
+    if (target && target !== window && target.tagName) {
+        probe('resource-error', `<${target.tagName.toLowerCase()}> ${String(target.src || target.href || '').slice(-80)}`);
+    } else {
+        // message 被脱敏成 "Script error." 时,error.stack 往往仍有真身
+        const stack = event.error && event.error.stack ? String(event.error.stack).split('\n').slice(0, 3).join(' | ') : '';
+        probe('js-error', `${event.message} @${(event.filename || '').split('/').pop()}:${event.lineno}:${event.colno} ${stack}`);
+    }
     scheduleProbeUpload(1500);
-});
+}, true);
 window.addEventListener('unhandledrejection', (event) => {
     probe('promise-rejection', String(event.reason && (event.reason.message || event.reason)).slice(0, 300));
     scheduleProbeUpload(1500);
