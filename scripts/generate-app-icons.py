@@ -12,13 +12,13 @@ from PIL import Image, ImageDraw, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ICON_SOURCE_OVERRIDE = os.environ.get("APP_ICON_SOURCE")
-APP_ICON_MASTER_OUTPUT = ROOT / "图标.png"
-APP_ICON_COLOR_REFERENCE = ROOT / "图标.jpg"
+APP_ICON_MASTER_OUTPUT = ROOT / "assets/brand/图标.png"
+APP_ICON_COLOR_REFERENCE = ROOT / "assets/brand/图标.jpg"
 LEGACY_ICON_FALLBACKS = (
-    ROOT / "图标_v2.png",
-    ROOT / "状态栏图标.png",
+    ROOT / "assets/brand/archive/图标_v2.png",
+    ROOT / "assets/brand/状态栏图标.png",
 )
-TRAY_TEMPLATE_SOURCE = ROOT / "状态栏图标.png"
+TRAY_TEMPLATE_SOURCE = ROOT / "assets/brand/状态栏图标.png"
 MOBILE_ICON_ROOT = ROOT / "mobile"
 DESKTOP_ICON_ROOT = ROOT / "desktop"
 ANDROID_MASTER_ICON = MOBILE_ICON_ROOT / "src-tauri/icons/android-launcher-source.png"
