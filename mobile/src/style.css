@@ -2807,3 +2807,11 @@ body.media-viewer-open {
     width: 100%;
     pointer-events: none;
 }
+
+/* 搜索命中高亮 */
+mark.history-hl {
+    background: rgba(255, 214, 90, 0.85);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 1px;
+}

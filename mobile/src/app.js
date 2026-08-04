@@ -10426,7 +10426,7 @@ function renderHistoryEntryContent(entry) {
             <div class="history-media-stack">
                 <div class="history-media-grid">${cells}</div>
                 <div class="history-image-meta">
-                    <div class="history-text">${escapeHtml(entry.text)}</div>
+                    <div class="history-text">${highlightHistoryText(entry.text)}</div>
                     <div class="history-image-hint">${escapeHtml(getHistoryEntryHint(entry))}</div>
                 </div>
             </div>
@@ -10448,7 +10448,7 @@ function renderHistoryEntryContent(entry) {
             <div class="history-image-row">
                 ${thumbContent}
                 <div class="history-image-meta">
-                    <div class="history-text">${escapeHtml(entry.text)}</div>
+                    <div class="history-text">${highlightHistoryText(entry.text)}</div>
                     <div class="history-image-hint">${escapeHtml(getHistoryEntryHint(entry))}</div>
                 </div>
             </div>
@@ -10460,14 +10460,26 @@ function renderHistoryEntryContent(entry) {
             <div class="history-image-row history-file-row">
                 <div class="history-file-badge">文件</div>
                 <div class="history-image-meta">
-                    <div class="history-text">${escapeHtml(entry.text)}</div>
+                    <div class="history-text">${highlightHistoryText(entry.text)}</div>
                     <div class="history-image-hint">${escapeHtml(getHistoryEntryHint(entry))}</div>
                 </div>
             </div>
         `;
     }
 
-    return `<div class="history-text">${escapeHtml(entry.text || '')}</div>`;
+    return `<div class="history-text">${highlightHistoryText(entry.text || '')}</div>`;
+}
+
+// 搜索命中高亮:先转义再按查询词包 <mark>,分词与搜索逻辑一致
+function highlightHistoryText(text) {
+    let escaped = escapeHtml(String(text || ''));
+    const queryTokens = tokenizeSearchQuery(currentHistoryFilters.query);
+    if (!queryTokens.length) return escaped;
+    queryTokens.forEach((token) => {
+        const escToken = escapeHtml(token).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        escaped = escaped.replace(new RegExp(escToken, 'gi'), (m) => `<mark class="history-hl">${m}</mark>`);
+    });
+    return escaped;
 }
 
 function formatTime(isoString) {
