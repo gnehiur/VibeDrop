@@ -2010,3 +2010,5 @@ h1 {
 .desktop-history-manage-btn {
     opacity: 0.65;
 }
+
+mark.history-hl{background:rgba(255,214,90,.85);color:inherit;border-radius:3px;padding:0 1px}

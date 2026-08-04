@@ -1400,6 +1400,17 @@ function getLogKindLabel(kind = 'text') {
     return labels[kind] || kind || '文字';
 }
 
+function highlightLogText(text, fallback = '') {
+    let escaped = escapeHtml(String(text || fallback));
+    const queryTokens = tokenizeSearchQuery(currentLogHistoryFilters.query);
+    if (!queryTokens.length) return escaped;
+    queryTokens.forEach((token) => {
+        const escToken = escapeHtml(token).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        escaped = escaped.replace(new RegExp(escToken, 'gi'), (m) => `<mark class="history-hl">${m}</mark>`);
+    });
+    return escaped;
+}
+
 function normalizeSearchText(value) {
     return String(value || '')
         .toLowerCase()
@@ -1903,7 +1914,7 @@ function createLogElement(entryOrText, timestamp) {
             <div class="log-image-row">
                 <div class="log-file-badge">文件</div>
                 <div class="log-image-meta">
-                    <div class="log-text">${escapeHtml(entry.text || '文件')}</div>
+                    <div class="log-text">${highlightLogText(entry.text, '文件')}</div>
                     <div class="log-image-hint">${escapeHtml(getLogEntryHint(entry))}</div>
                 </div>
             </div>
@@ -1924,7 +1935,7 @@ function createLogElement(entryOrText, timestamp) {
 
     item.innerHTML = `
         ${headerHtml}
-        <div class="log-text">${escapeHtml(entry.text || '')}</div>
+        <div class="log-text">${highlightLogText(entry.text)}</div>
     `;
     item.addEventListener('click', () => {
         navigator.clipboard.writeText(entry.text || '');
@@ -2103,7 +2114,7 @@ function renderLogMediaContent(entry, items) {
             <div class="log-media-stack">
                 <div class="log-media-grid">${cells}</div>
                 <div class="log-image-meta">
-                    <div class="log-text">${escapeHtml(entry.text || '媒体')}</div>
+                    <div class="log-text">${highlightLogText(entry.text, '媒体')}</div>
                     <div class="log-image-hint">${escapeHtml(getLogEntryHint(entry))}</div>
                 </div>
             </div>
@@ -2124,7 +2135,7 @@ function renderLogMediaContent(entry, items) {
         <div class="log-image-row">
             ${thumbContent}
             <div class="log-image-meta">
-                <div class="log-text">${escapeHtml(entry.text || '媒体')}</div>
+                <div class="log-text">${highlightLogText(entry.text, '媒体')}</div>
                 <div class="log-image-hint">${escapeHtml(getLogEntryHint(entry))}</div>
             </div>
         </div>
