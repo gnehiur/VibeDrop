@@ -1,11 +1,28 @@
-# VibeDrop — Mac ↔ Android 剪贴板同步 & 文字传输工具
+<div align="center">
 
-VibeDrop 是一个局域网内的 **剪贴板同步 + 文字传输** 工具，由两个独立应用组成：
+<img src="docs/logo.png" width="120" alt="VibeDrop logo">
 
-- **Mac 桌面端**（`desktop/`）
-- **Android 手机端**（`mobile/`）
+# VibeDrop
 
-两端通过 **WebSocket**（`ws://`）在局域网内通信，无需互联网，无需云服务。
+**手机与 Mac 之间的剪贴板同步、文字与文件传输工具 —— 局域网直连，无云依赖**
+
+[![release](https://img.shields.io/github/v/release/jncdke/VibeDrop?color=2f6fed)](https://github.com/jncdke/VibeDrop/releases)
+[![license](https://img.shields.io/github/license/jncdke/VibeDrop?color=green)](LICENSE)
+![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Android%20%7C%20iOS-8a63d2)
+![tauri](https://img.shields.io/badge/Tauri-2.x-ffc131?logo=tauri&logoColor=white)
+![rust](https://img.shields.io/badge/Rust-stable-e43717?logo=rust)
+
+[下载 Release](https://github.com/jncdke/VibeDrop/releases) · [功能一览](#功能一览) · [消息自我研究](#消息自我研究词频统计报告)
+
+</div>
+
+---
+
+VibeDrop 由三端组成，通过 **WebSocket** 在局域网内直连通信，无需互联网、无需云服务：
+
+- **Mac 桌面端**（`desktop/`）— 接收文字/文件、剪贴板广播、系统托盘
+- **手机端**（`mobile/`，Android + iOS）— 发送文字/图片/视频/文件、历史时间线
+- **Home Vault**（`scripts/`）— 家庭服务器:跨设备历史合并、媒体原件仓、探针日志回收
 
 ---
 
