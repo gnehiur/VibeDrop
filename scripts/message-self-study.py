@@ -136,7 +136,23 @@ td,th{{padding:7px 12px;border-bottom:1px solid #eef1f6;text-align:left;font-siz
 <h2>月度话题演变(每月特征词,TF-IDF)</h2><table><tr><th>月份</th><th>消息量</th><th>该月特征词</th></tr>{month_rows}</table>
 <h2>消息发往哪里</h2><table><tr><th>目标</th><th>条数</th></tr>{target_rows}</table>
 <h2>最长的一条(节选)</h2><p style="background:#fff;padding:14px;border-radius:10px;font-size:13px;color:#4a5468">{esc(longest['text'][:400])}…<br><small>{esc(str(longest.get('timestamp',''))[:19])} · 全长 {len(longest['text'])} 字</small></p>
-</body></html>""", encoding="utf-8")
+<script>
+document.querySelectorAll('h2').forEach(h => {{
+  const table = h.nextElementSibling && h.nextElementSibling.tagName === 'TABLE' ? h.nextElementSibling
+    : (h.nextElementSibling && h.nextElementSibling.querySelector ? h.nextElementSibling.querySelector('table') : null);
+  if (!table) return;
+  const btn = document.createElement('button');
+  btn.textContent = '复制';
+  btn.style.cssText = 'margin-left:10px;font-size:12px;padding:2px 12px;border:1px solid #c9d4e5;border-radius:6px;background:#fff;color:#2f6fed;cursor:pointer;vertical-align:middle';
+  btn.onclick = async () => {{
+    const lines = [...table.rows].map(r => [...r.cells].map(c => c.textContent.trim()).join('\t'));
+    await navigator.clipboard.writeText(h.firstChild.textContent.trim() + '\n' + lines.join('\n'));
+    btn.textContent = '已复制 ✓';
+    setTimeout(() => btn.textContent = '复制', 1500);
+  }};
+  h.appendChild(btn);
+}});
+</script></body></html>""", encoding="utf-8")
     print(out)
 
 if __name__ == "__main__":
