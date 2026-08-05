@@ -121,8 +121,7 @@ img {
     z-index: 1;
     max-width: 460px;
     margin: 0 auto;
-    /* 键盘弹出时由 JS 用 VisualViewport 实测高度覆盖,保证内容区始终可滚 */
-    height: var(--app-viewport-height, 100dvh);
+    height: 100dvh;
     display: flex;
     flex-direction: column;
 }
