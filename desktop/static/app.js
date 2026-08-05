@@ -51,6 +51,20 @@ function scheduleProbeUpload(delay) {
 }
 probe('script-start');
 
+// 键盘弹出会遮住下半屏,但 100dvh 不随之收缩 → 滚动容器下半身藏在键盘后,
+// 浏览器认为"没有溢出"于是锁死滚动。用 VisualViewport 实测可视高度覆盖壳高度。
+(function trackVisualViewport() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+        document.documentElement.style.setProperty('--app-viewport-height', `${Math.round(vv.height)}px`);
+    };
+    vv.addEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+    window.addEventListener('orientationchange', () => setTimeout(apply, 200));
+    apply();
+})();
+
 // ============================================
 // VibeDrop — 前端逻辑（动态多设备版）
 // ============================================
