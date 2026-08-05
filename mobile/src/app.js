@@ -58,8 +58,6 @@ probe('script-start');
     if (!vv) return;
     const apply = () => {
         document.documentElement.style.setProperty('--app-viewport-height', `${Math.round(vv.height)}px`);
-        // iOS 键盘把页面整体上推(offsetTop>0),壳要跟着位移,否则底部露出空白
-        document.documentElement.style.setProperty('--app-viewport-offset', `${Math.round(vv.offsetTop)}px`);
     };
     vv.addEventListener('resize', apply);
     vv.addEventListener('scroll', apply);
