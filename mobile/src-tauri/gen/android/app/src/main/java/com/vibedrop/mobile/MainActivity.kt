@@ -499,14 +499,34 @@ class MainActivity : TauriActivity() {
       return
     }
 
-    // 把 WebView console 原始输出转发进 logcat(浏览器对跨源错误会脱敏,这里能看到真身)
+    // 把 WebView console 原始输出转发进 logcat(浏览器对跨源错误会脱敏,这里能看到真身)。
+    // 关键:必须委托回 Tauri 原有的 WebChromeClient——文件选择器(onShowFileChooser)、
+    // 权限请求等都归它管,直接整体替换会把"传图/传文件"的系统选择器弄哑(踩过的坑)
+    val previousChromeClient = webView.webChromeClient
     webView.webChromeClient = object : android.webkit.WebChromeClient() {
       override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
         Log.i(
           "VibeDropConsole",
           "${message.messageLevel()} ${message.message()} @${message.sourceId()}:${message.lineNumber()}"
         )
-        return false
+        return previousChromeClient?.onConsoleMessage(message) ?: false
+      }
+
+      override fun onShowFileChooser(
+        view: android.webkit.WebView?,
+        filePathCallback: android.webkit.ValueCallback<Array<android.net.Uri>>?,
+        fileChooserParams: FileChooserParams?
+      ): Boolean {
+        return previousChromeClient?.onShowFileChooser(view, filePathCallback, fileChooserParams)
+          ?: super.onShowFileChooser(view, filePathCallback, fileChooserParams)
+      }
+
+      override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
+        previousChromeClient?.onPermissionRequest(request) ?: super.onPermissionRequest(request)
+      }
+
+      override fun onProgressChanged(view: android.webkit.WebView?, newProgress: Int) {
+        previousChromeClient?.onProgressChanged(view, newProgress) ?: super.onProgressChanged(view, newProgress)
       }
     }
 
