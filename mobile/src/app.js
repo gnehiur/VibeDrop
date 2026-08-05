@@ -65,6 +65,12 @@ probe('script-start');
     vv.addEventListener('scroll', apply);
     window.addEventListener('orientationchange', () => setTimeout(apply, 200));
     apply();
+    // 位移跟随抵消了 iOS 自带的"上推露出焦点框",改为在内部滚动器里主动把焦点框滚进视野
+    document.addEventListener('focusin', (e) => {
+        const t = e.target;
+        if (!t || (t.tagName !== 'TEXTAREA' && t.tagName !== 'INPUT')) return;
+        setTimeout(() => { try { t.scrollIntoView({ block: 'center' }); } catch (_) {} }, 300);
+    });
 })();
 
 // ============================================
