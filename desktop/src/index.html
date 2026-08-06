@@ -43,9 +43,16 @@
                         <h1>VibeDrop</h1>
                     </div>
                 </div>
-                <div class="status-badge" id="status-badge">
-                    <span class="pulse"></span>
-                    服务在线
+                <div class="header-right">
+                    <select id="display-timezone-select" class="timezone-select" title="消息时间显示时区">
+                        <option value="system">本机时区</option>
+                        <option value="Asia/Shanghai">北京时间</option>
+                        <option value="America/Los_Angeles">美西时间</option>
+                    </select>
+                    <div class="status-badge" id="status-badge">
+                        <span class="pulse"></span>
+                        服务在线
+                    </div>
                 </div>
             </header>
             <div class="desktop-shell">

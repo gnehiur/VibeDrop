@@ -2012,3 +2012,24 @@ h1 {
 }
 
 mark.history-hl{background:rgba(255,214,90,.85);color:inherit;border-radius:3px;padding:0 1px}
+
+/* 显示时区下拉:与状态胶囊同排 */
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.timezone-select {
+    appearance: none;
+    -webkit-appearance: none;
+    border: none;
+    border-radius: 999px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-family: inherit;
+    color: #4b5563;
+    background: rgba(255, 255, 255, 0.75);
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+    cursor: pointer;
+}

@@ -393,6 +393,7 @@ function formatPairRequestTime(value) {
     return time.toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
+        timeZone: getDisplayTimeZone(),
     });
 }
 
@@ -759,6 +760,15 @@ function initDesktopHistoryControls() {
         clearLogHeatmapSelection();
         renderLog();
     });
+
+    const tzSelect = document.getElementById('display-timezone-select');
+    if (tzSelect) {
+        tzSelect.value = displayTimeZone;
+        tzSelect.addEventListener('change', () => {
+            setDisplayTimeZone(tzSelect.value);
+            renderLog();
+        });
+    }
 
     document.getElementById('desktop-history-time-filter')?.addEventListener('click', (event) => {
         const button = event.target.closest('[data-time-filter]');
@@ -1300,16 +1310,14 @@ function matchesLogQuickTimeFilter(entryDate, filters = currentLogHistoryFilters
         return true;
     }
 
-    const now = new Date();
+    const todayKey = formatDateKey(new Date());
+    const entryKey = formatDateKey(entryDate);
     if (quick === 'today') {
-        return entryDate.toDateString() === now.toDateString();
+        return entryKey === todayKey;
     }
 
     const days = quick === '7d' ? 7 : 30;
-    const threshold = new Date(now);
-    threshold.setHours(0, 0, 0, 0);
-    threshold.setDate(threshold.getDate() - (days - 1));
-    return entryDate >= threshold;
+    return entryKey >= shiftDateKey(todayKey, -(days - 1));
 }
 
 function matchesLogCustomDateRange(entryDate, filters = currentLogHistoryFilters) {
@@ -1338,7 +1346,8 @@ function matchesLogTimeRange(entryDate, filters = currentLogHistoryFilters) {
         return true;
     }
 
-    const minutes = entryDate.getHours() * 60 + entryDate.getMinutes();
+    const zoned = getZonedParts(entryDate);
+    const minutes = zoned.hour * 60 + zoned.minute;
     const presets = {
         morning: [6 * 60, 11 * 60 + 59],
         afternoon: [12 * 60, 17 * 60 + 59],
@@ -1604,7 +1613,7 @@ function applyLogHeatmapSelection(entries) {
         }
 
         return formatDateKey(entryDate) === logHeatmapState.selectionDate
-            && entryDate.getHours() === logHeatmapState.selectionHour;
+            && getZonedParts(entryDate).hour === logHeatmapState.selectionHour;
     });
 }
 
@@ -1616,7 +1625,7 @@ function buildLogHeatmapCountMap(entries) {
         if (Number.isNaN(entryDate.getTime())) {
             return;
         }
-        const key = `${formatDateKey(entryDate)}|${entryDate.getHours()}`;
+        const key = `${formatDateKey(entryDate)}|${getZonedParts(entryDate).hour}`;
         counts.set(key, (counts.get(key) || 0) + 1);
     });
 
@@ -1639,7 +1648,7 @@ function buildLogHeatmapStats(entries, visibleStart, visibleEnd) {
     visibleEntries.forEach((entry) => {
         const entryDate = new Date(entry.timestamp || '');
         const dayKey = formatDateKey(entryDate);
-        const hour = entryDate.getHours();
+        const hour = getZonedParts(entryDate).hour;
         perHour.set(hour, (perHour.get(hour) || 0) + 1);
         perDay.set(dayKey, (perDay.get(dayKey) || 0) + 1);
     });
@@ -2383,18 +2392,20 @@ function formatLogTime(value) {
         return '未知时间';
     }
 
-    const now = new Date();
+    const tz = getDisplayTimeZone();
     const time = timestamp.toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
+        timeZone: tz,
     });
-    if (timestamp.toDateString() === now.toDateString()) {
+    if (formatDateKey(timestamp) === formatDateKey(new Date())) {
         return `今天 ${time}`;
     }
     const date = timestamp.toLocaleDateString('zh-CN', {
         month: '2-digit',
         day: '2-digit',
+        timeZone: tz,
     });
     return `${date} ${time}`;
 }
@@ -2456,8 +2467,53 @@ function shiftDateKey(value, deltaDays) {
     return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
 }
 
+// 显示时区:记录存的是绝对时刻,"显示成几点"由此处统一翻译(Mac mini 本机是美区时区)
+const DISPLAY_TZ_STORAGE_KEY = 'vibedrop-display-timezone';
+let displayTimeZone = localStorage.getItem(DISPLAY_TZ_STORAGE_KEY) || 'system';
+const zonedPartsFormatters = new Map();
+
+function getDisplayTimeZone() {
+    return displayTimeZone === 'system' ? undefined : displayTimeZone;
+}
+
+function setDisplayTimeZone(value) {
+    displayTimeZone = value || 'system';
+    localStorage.setItem(DISPLAY_TZ_STORAGE_KEY, displayTimeZone);
+}
+
+function getZonedParts(date) {
+    const tz = getDisplayTimeZone();
+    if (!tz) {
+        return {
+            year: date.getFullYear(),
+            month: date.getMonth() + 1,
+            day: date.getDate(),
+            hour: date.getHours(),
+            minute: date.getMinutes(),
+        };
+    }
+    let formatter = zonedPartsFormatters.get(tz);
+    if (!formatter) {
+        formatter = new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+        });
+        zonedPartsFormatters.set(tz, formatter);
+    }
+    const parts = {};
+    formatter.formatToParts(date).forEach((part) => {
+        if (part.type !== 'literal') parts[part.type] = part.value;
+    });
+    return {
+        year: Number(parts.year), month: Number(parts.month), day: Number(parts.day),
+        hour: Number(parts.hour), minute: Number(parts.minute),
+    };
+}
+
 function formatDateKey(date) {
-    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+    const p = getZonedParts(date);
+    return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
 }
 
 function formatShortDate(value) {
