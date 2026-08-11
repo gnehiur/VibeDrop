@@ -111,7 +111,8 @@ def main():
         for h in range(24))
     target_rows = "".join(f"<tr><td>{esc(t)}</td><td>{c}</td></tr>" for t, c in targets.most_common(8))
 
-    out = pathlib.Path.home() / "Downloads" / f"VibeDrop消息自我研究报告_{datetime.datetime.now():%y%m%d}.html"
+    out_arg = os.environ.get("SELF_STUDY_OUTPUT", "")
+    out = pathlib.Path(out_arg) if out_arg else (pathlib.Path.home() / "Downloads" / f"VibeDrop消息自我研究报告_{datetime.datetime.now():%y%m%d}.html")
     out.write_text(f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>VibeDrop 消息自我研究报告</title><style>
 body{{font-family:-apple-system,'PingFang SC',sans-serif;max-width:860px;margin:32px auto;padding:0 20px;color:#1a2233;background:#f7f9fc}}

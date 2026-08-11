@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 
 _device_names_lock = threading.Lock()
 import urllib.parse
@@ -615,6 +616,40 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                 finally:
                     with subscribers_lock:
                         subscribers.discard(pending)
+                return
+
+            if path == "/report/self-study":
+                # 消息自我研究完整报告:jieba 全套分析,缓存24小时,?refresh=1 立即重跑
+                report_file = vault_root / "reports" / "self-study.html"
+                query = urllib.parse.parse_qs(parsed_path.query)
+                force = query.get("refresh", ["0"])[0] == "1"
+                stale = (not report_file.exists()) or (time.time() - report_file.stat().st_mtime > 24 * 3600)
+                if force or stale:
+                    try:
+                        report_file.parent.mkdir(parents=True, exist_ok=True)
+                        script = pathlib.Path.home() / ".local/share/vibedrop-vault/app/message-self-study.py"
+                        env = dict(os.environ)
+                        env["SELF_STUDY_OUTPUT"] = str(report_file)
+                        report_python = pathlib.Path.home() / ".local/share/vibedrop-vault/venv/bin/python"
+                        subprocess.run(
+                            [str(report_python if report_python.exists() else sys.executable), str(script), "http://127.0.0.1:8788"],
+                            env=env, timeout=180, check=True,
+                        )
+                    except Exception as exc:
+                        if not report_file.exists():
+                            self.send_json(500, {"ok": False, "error": f"报告生成失败: {exc}"})
+                            return
+                try:
+                    payload = report_file.read_bytes()
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
                 return
 
             if path == "/api/device-names":

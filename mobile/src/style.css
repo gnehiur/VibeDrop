@@ -2867,29 +2867,35 @@ mark.history-hl {
     margin-bottom: 4px;
 }
 
-/* ===== 高频词卡片 ===== */
-.history-wordfreq-body {
+
+/* ===== 消息自我研究 ===== */
+.selfstudy-actions {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    gap: 10px;
 }
 
-.wordfreq-chip {
-    border: none;
-    border-radius: 999px;
-    padding: 6px 12px;
-    font-size: 13px;
-    font-family: inherit;
-    color: #1e40af;
-    background: rgba(59, 130, 246, calc(0.07 + var(--w, 0) * 0.2));
-    cursor: pointer;
-    display: inline-flex;
+.selfstudy-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+}
+
+.selfstudy-overlay.hidden { display: none; }
+
+.selfstudy-topbar {
+    display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: space-between;
+    padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    font-weight: 600;
 }
 
-.wordfreq-count {
-    font-size: 11px;
-    font-weight: 600;
-    color: #3b82f6;
+.selfstudy-frame {
+    flex: 1;
+    border: none;
+    width: 100%;
 }

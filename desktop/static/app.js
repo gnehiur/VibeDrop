@@ -362,6 +362,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initOutingModeSetting();
     initHomeCardsSetting();
     ensureDeviceNameSync();
+    initSelfStudyCard();
     initMediaOpenerSettings();
     initNearbyDesktopDiscovery();
     initConnectionDiagnostics();
@@ -5295,92 +5296,31 @@ function buildHistoryHeatmapStats(entries, visibleStart, visibleEnd) {
     ];
 }
 
-// ===== 高频词卡片:浏览器原生分词(Intl.Segmenter),跟随当前筛选口径 =====
-const WORDFREQ_STOPWORDS = new Set([
-    '的', '了', '是', '我', '你', '他', '她', '它', '这', '那', '就', '都', '和', '在', '有',
-    '不', '也', '很', '啊', '吧', '呀', '吗', '呢', '然后', '就是', '一个', '这个', '那个',
-    '什么', '没有', '现在', '可以', '这些', '那些', '还是', '但是', '因为', '所以', '如果',
-    '我们', '你们', '他们', '自己', '怎么', '为什么', '一下', '直接', '应该', '发现',
-    'the', 'a', 'an', 'of', 'to', 'and', 'is', 'in', 'it', 'on', 'for',
-]);
-const wordfreqTokenCache = new Map();
-let wordfreqSegmenter = null;
-
-function getWordSegmenter() {
-    if (wordfreqSegmenter !== null) {
-        return wordfreqSegmenter || null;
-    }
-    try {
-        wordfreqSegmenter = new Intl.Segmenter('zh', { granularity: 'word' });
-    } catch (_) {
-        wordfreqSegmenter = false;
-    }
-    return wordfreqSegmenter || null;
+// ===== 消息自我研究:vault 生成完整 jieba 报告,应用内全屏查看 =====
+function getSelfStudyReportUrl(refresh = false) {
+    const endpoint = getHomeVaultSettings().url;
+    return `${endpoint}/report/self-study${refresh ? '?refresh=1' : ''}`;
 }
 
-function tokenizeHistoryText(text) {
-    const segmenter = getWordSegmenter();
-    const tokens = [];
-    if (!segmenter) return tokens;
-    for (const part of segmenter.segment(String(text || ''))) {
-        if (!part.isWordLike) continue;
-        const word = part.segment.trim().toLowerCase();
-        if (word.length < 2) continue;
-        if (/^[\d\s._-]+$/.test(word)) continue;
-        if (WORDFREQ_STOPWORDS.has(word)) continue;
-        tokens.push(word);
-    }
-    return tokens;
+function openSelfStudyReport(refresh = false) {
+    const overlay = $('selfstudy-overlay');
+    const frame = $('selfstudy-frame');
+    if (!overlay || !frame) return;
+    overlay.classList.remove('hidden');
+    frame.src = 'about:blank';
+    if (refresh) showToast('正在用最新数据重新生成，可能要几秒…');
+    frame.src = getSelfStudyReportUrl(refresh);
 }
 
-function renderHistoryWordFreq(entries) {
-    const body = $('history-wordfreq-body');
-    const card = $('history-wordfreq-card');
-    if (!body || !card) return;
-    if (!getWordSegmenter()) {
-        card.classList.add('hidden');
-        return;
-    }
-    if (wordfreqTokenCache.size > 20000) {
-        wordfreqTokenCache.clear();
-    }
-    const counts = new Map();
-    entries.slice(0, 3000).forEach((entry) => {
-        if (entry.kind && entry.kind !== 'text') return;
-        const text = String(entry.text || '');
-        if (!text || text.startsWith('[图片]') || text.startsWith('[文件]')) return;
-        const cacheKey = String(entry.id ?? entry.transferId ?? text.slice(0, 40));
-        let tokens = wordfreqTokenCache.get(cacheKey);
-        if (!tokens) {
-            tokens = tokenizeHistoryText(text);
-            wordfreqTokenCache.set(cacheKey, tokens);
-        }
-        tokens.forEach((token) => counts.set(token, (counts.get(token) || 0) + 1));
+function initSelfStudyCard() {
+    $('selfstudy-open-btn')?.addEventListener('click', () => openSelfStudyReport(false));
+    $('selfstudy-refresh-btn')?.addEventListener('click', () => openSelfStudyReport(true));
+    $('selfstudy-close-btn')?.addEventListener('click', () => {
+        $('selfstudy-overlay')?.classList.add('hidden');
+        const frame = $('selfstudy-frame');
+        if (frame) frame.src = 'about:blank';
     });
-    const top = Array.from(counts.entries())
-        .filter(([, count]) => count >= 2)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 24);
-    if (!top.length) {
-        card.classList.add('hidden');
-        return;
-    }
-    card.classList.remove('hidden');
-    const max = top[0][1];
-    body.innerHTML = top.map(([word, count]) => `
-        <button type="button" class="wordfreq-chip" data-word="${escapeHtml(word)}" style="--w:${(count / max).toFixed(2)}">${escapeHtml(word)}<span class="wordfreq-count">${count}</span></button>
-    `).join('');
 }
-
-document.addEventListener('click', (event) => {
-    const chip = event.target.closest('.wordfreq-chip');
-    if (!chip) return;
-    const input = $('history-search-input');
-    if (!input) return;
-    // 点词即搜:复用搜索框的既有联动(高亮+过滤)
-    input.value = chip.dataset.word || '';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-});
 
 function renderHistoryHeatmap(baseEntries) {
     const viewport = $('history-heatmap-viewport');
@@ -10473,7 +10413,6 @@ function renderHistory() {
     if (history.length === 0) {
         currentRenderedHistoryEntries = [];
         renderHistoryHeatmap([]);
-        renderHistoryWordFreq([]);
         renderHistoryFilterSummary([]);
         list.innerHTML = '<p class="empty-hint">暂无发送记录</p>';
         return;
@@ -10482,7 +10421,6 @@ function renderHistory() {
     renderHistoryHeatmap(baseEntries);
     renderHistoryFilterSummary(baseEntries);
     const filtered = applyHistoryHeatmapSelection(baseEntries);
-    renderHistoryWordFreq(filtered);
     const hasSearchQuery = Boolean(normalizeSearchText(currentHistoryFilters.query));
 
     if (filtered.length === 0) {

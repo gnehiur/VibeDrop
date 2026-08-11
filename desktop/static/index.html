@@ -250,15 +250,26 @@
                     <span>多</span>
                 </div>
             </section>
-            <section id="history-wordfreq-card" class="history-heatmap-card history-wordfreq-card hidden" aria-label="高频词统计">
+            <section id="history-selfstudy-card" class="history-heatmap-card" aria-label="消息自我研究">
                 <div class="history-heatmap-header">
                     <div>
-                        <h3>高频词</h3>
-                        <p class="hint">跟随当前筛选统计，点词可直接搜索。</p>
+                        <h3>消息自我研究</h3>
+                        <p class="hint">词云、高频实义词、口头禅榜、高频短语、月度话题演变（jieba 全套分析，Mini 生成）。</p>
                     </div>
                 </div>
-                <div id="history-wordfreq-body" class="history-wordfreq-body"></div>
+                <div class="selfstudy-actions">
+                    <button type="button" class="primary-btn" id="selfstudy-open-btn">打开完整报告</button>
+                    <button type="button" class="secondary-btn" id="selfstudy-refresh-btn">用最新数据重新生成</button>
+                </div>
             </section>
+
+            <div id="selfstudy-overlay" class="selfstudy-overlay hidden">
+                <div class="selfstudy-topbar">
+                    <span>消息自我研究报告</span>
+                    <button type="button" class="secondary-btn" id="selfstudy-close-btn">关闭</button>
+                </div>
+                <iframe id="selfstudy-frame" class="selfstudy-frame" title="消息自我研究报告"></iframe>
+            </div>
             <div id="history-list" class="history-list">
                 <p class="empty-hint">暂无发送记录</p>
             </div>
