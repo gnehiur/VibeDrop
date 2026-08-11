@@ -3845,7 +3845,6 @@ function createSmartCard() {
             return;
         }
         smartPendingMediaTarget = targetId; // 锁定按下瞬间的光标目标,选图回来直接用
-        console.log('[smart-media] image click, target=', targetId);
         smartImageInput.click();
     });
     smartFileBtn.addEventListener('click', () => {
@@ -3865,7 +3864,6 @@ function createSmartCard() {
     smartImageInput.addEventListener('change', async (event) => {
         const [file] = event.target.files || [];
         event.target.value = '';
-        console.log('[smart-media] image change, file=', file ? `${file.name}/${file.size}` : 'none', 'pending=', smartPendingMediaTarget);
         const targetId = smartPendingMediaTarget || (file ? resolveSmartMediaTarget() : null);
         smartPendingMediaTarget = null;
         if (targetId && file) {
@@ -7359,7 +7357,6 @@ function createThumbnailDataUrl(sourceDataUrl, outputType = 'image/jpeg') {
 }
 
 async function sendSelectedImage(deviceId, file) {
-    console.log('[send-img] enter', deviceId, file ? `${file.name}/${file.size}` : 'none');
     if (!file) return;
     // 从系统选图器返回瞬间 WS 可能还没重连上,等它就绪再发(静默放弃是"选完图没反应"的病根)
     const conn = await ensureReadyConnectionForSend(deviceId);
