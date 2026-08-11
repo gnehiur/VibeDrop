@@ -84,6 +84,7 @@ def main():
     targets = collections.Counter()
     total_chars = 0
     longest = max(entries, key=lambda e: len(e["text"]))
+    top_longest = sorted(entries, key=lambda e: len(e["text"]), reverse=True)[:10]
 
     for e in entries:
         text = e["text"]
@@ -153,6 +154,13 @@ def main():
     hour_bars = "".join(
         f'<div class="hb"><div class="hbar" style="height:{72 * hours.get(h,0) / max_hour:.0f}px"></div><span>{h}</span></div>'
         for h in range(24))
+    longest_blocks = "".join(
+        f"<p style='background:#fff;padding:14px;border-radius:10px;font-size:13px;color:#4a5468;margin:10px 0'>"
+        f"<b style='color:#2f6fed'>No.{i + 1} · {len(e['text'])} 字</b><br>"
+        f"{esc(e['text'][:280])}…<br>"
+        f"<small>{esc(str(e.get('timestamp', ''))[:19])}</small></p>"
+        for i, e in enumerate(top_longest)
+    )
     target_rows = "".join(f"<tr><td>{esc(t)}</td><td>{c}</td></tr>" for t, c in targets.most_common(8))
 
     out_arg = os.environ.get("SELF_STUDY_OUTPUT", "")
@@ -182,7 +190,7 @@ td,th{{padding:7px 12px;border-bottom:1px solid #eef1f6;text-align:left;font-siz
 <h2>高频短语 Top 30</h2><table><tr><th>短语</th><th>次数</th></tr>{bigram_rows}</table></div></div>
 <h2>月度话题演变(每月特征词,TF-IDF)</h2><table><tr><th>月份</th><th>消息量</th><th>该月特征词</th></tr>{month_rows}</table>
 <h2>消息发往哪里</h2><table><tr><th>目标</th><th>条数</th></tr>{target_rows}</table>
-<h2>最长的一条(节选)</h2><p style="background:#fff;padding:14px;border-radius:10px;font-size:13px;color:#4a5468">{esc(longest['text'][:400])}…<br><small>{esc(str(longest.get('timestamp',''))[:19])} · 全长 {len(longest['text'])} 字</small></p>
+<h2>最长的十条(各取节选)</h2>{longest_blocks}
 <script>
 document.querySelectorAll('h2').forEach(h => {{
   const table = h.nextElementSibling && h.nextElementSibling.tagName === 'TABLE' ? h.nextElementSibling
