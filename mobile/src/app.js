@@ -3633,7 +3633,18 @@ function syncSmartCard(container, visibleDevices) {
     const want = visibleDevices.length >= 2;
     if (!smartCardProbeSent) {
         smartCardProbeSent = true;
-        probe('smart-card-sync', { want, visible: visibleDevices.length, inDom: Boolean(card) });
+        setTimeout(() => {
+            const c = document.getElementById('card-smart');
+            probe('smart-card-state', JSON.stringify({
+                want,
+                visible: visibleDevices.length,
+                inDom: Boolean(c),
+                h: c ? c.offsetHeight : -1,
+                display: c ? getComputedStyle(c).display : 'none',
+                kids: container.children.length,
+                first: container.firstChild?.id || container.firstChild?.className || 'none',
+            }));
+        }, 3000);
     }
     if (!want) {
         if (card) card.remove();
