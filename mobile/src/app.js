@@ -2444,6 +2444,8 @@ async function discoverNearbyDesktops({
     }
 }
 
+let nearbyRenameDeviceId = null;
+
 function renderNearbyDesktops() {
     const list = $('nearby-desktops-list');
     const empty = $('nearby-desktops-empty');
@@ -2499,19 +2501,31 @@ function renderNearbyDesktops() {
         const nearbyKey = getNearbyDesktopKey(desktop, devices);
         const sortableDeviceId = matched?.id || '';
         const sortableClass = sortableDeviceId ? ' is-sortable' : '';
+        const isRenaming = matched && matched.id === nearbyRenameDeviceId;
+
+        const nameBlock = isRenaming
+            ? `<input type="text" id="nearby-rename-input" class="nearby-rename-input" value="${escapeHtml(matched.name || displayName)}" maxlength="20" placeholder="给这台电脑起个短名">`
+            : `<div class="nearby-desktop-name">${escapeHtml(displayName)}</div>`;
+
+        const actionsBlock = isRenaming
+            ? `
+                    <button type="button" class="primary-btn" data-desktop-action="rename-save" data-nearby-key="${escapeHtml(nearbyKey)}">保存</button>
+                    <button type="button" class="secondary-btn" data-desktop-action="rename-cancel" data-nearby-key="${escapeHtml(nearbyKey)}">取消</button>`
+            : `
+                    <button type="button" class="${primaryClass}" data-desktop-action="${matched ? 'connect' : 'pair'}" data-nearby-key="${escapeHtml(nearbyKey)}" ${disabledAttr}>${escapeHtml(primaryLabel)}</button>
+                    <button type="button" class="secondary-btn" data-desktop-action="${matched ? 'advanced' : 'fill'}" data-nearby-key="${escapeHtml(nearbyKey)}" ${disabledAttr}>${escapeHtml(secondaryLabel)}</button>${matched ? `
+                    <button type="button" class="secondary-btn" data-desktop-action="rename" data-nearby-key="${escapeHtml(nearbyKey)}" ${disabledAttr}>改名</button>` : ''}`;
 
         return `
             <div class="nearby-desktop-item${sortableClass}" data-nearby-key="${escapeHtml(nearbyKey)}"${sortableDeviceId ? ` data-sortable-device-id="${escapeHtml(sortableDeviceId)}"` : ''}>
                 <div class="nearby-desktop-top">
                     <div>
-                        <div class="nearby-desktop-name">${escapeHtml(displayName)}</div>
+                        ${nameBlock}
                         <div class="nearby-desktop-meta">${metaLines.map((line) => escapeHtml(line)).join('<br>')}</div>
                     </div>
                     <span class="nearby-desktop-badge${matched ? ' is-paired' : ''}">${escapeHtml(badgeText)}</span>
                 </div>
-                <div class="nearby-desktop-actions">
-                    <button type="button" class="${primaryClass}" data-desktop-action="${matched ? 'connect' : 'pair'}" data-nearby-key="${escapeHtml(nearbyKey)}" ${disabledAttr}>${escapeHtml(primaryLabel)}</button>
-                    <button type="button" class="secondary-btn" data-desktop-action="${matched ? 'advanced' : 'fill'}" data-nearby-key="${escapeHtml(nearbyKey)}" ${disabledAttr}>${escapeHtml(secondaryLabel)}</button>
+                <div class="nearby-desktop-actions">${actionsBlock}
                 </div>
             </div>
         `;
@@ -2524,6 +2538,40 @@ function renderNearbyDesktops() {
             const desktop = visibleItems.find((item) => getNearbyDesktopKey(item, devices) === nearbyKey);
             if (!desktop) return;
             const matched = resolveNearbyDesktopMatch(desktop, devices);
+            if (action === 'rename') {
+                if (matched) {
+                    nearbyRenameDeviceId = matched.id;
+                    renderNearbyDesktops();
+                    const field = $('nearby-rename-input');
+                    field?.focus();
+                    field?.select();
+                }
+                return;
+            }
+            if (action === 'rename-cancel') {
+                nearbyRenameDeviceId = null;
+                renderNearbyDesktops();
+                return;
+            }
+            if (action === 'rename-save') {
+                const field = $('nearby-rename-input');
+                const newName = (field?.value || '').trim();
+                if (!newName) {
+                    showToast('名字不能为空');
+                    return;
+                }
+                const all = getDevices();
+                const target = all.find((dev) => dev.id === nearbyRenameDeviceId);
+                if (target) {
+                    target.name = newName;
+                    saveDevices(all);
+                }
+                nearbyRenameDeviceId = null;
+                rerenderAllDeviceViews();
+                updateSmartCardUI();
+                showToast(`已改名为 ${newName}`);
+                return;
+            }
             if (action === 'advanced') {
                 $('advanced-connect-panel')?.setAttribute('open', 'open');
                 return;
