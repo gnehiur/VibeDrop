@@ -30,6 +30,47 @@ def tokens_of(text):
     text = re.sub(r"https?://\S+|[a-zA-Z0-9_.:/\\-]{12,}", " ", text)  # 去链接与长串编码
     return [t for t in jieba.cut(text) if t.strip()]
 
+def machine_fingerprint(name: str) -> str:
+    """同一台电脑的历代主机名归并成一个指纹:去 .local、去尾部 -数字、小写。"""
+    n = re.sub(r"\.local$", "", str(name or "").strip(), flags=re.I)
+    n = re.sub(r"-\d+$", "", n)
+    return n.lower()
+
+
+_BOARD_NAMES = None  # serverId -> 短名(设备名公告板,全家手机改名的权威)
+_FP_LABELS = {}      # 机器指纹 -> 展示名
+
+
+def load_target_aliases():
+    global _BOARD_NAMES
+    try:
+        d = json.load(urllib.request.urlopen(f"{VAULT}/api/device-names", timeout=5))
+        _BOARD_NAMES = {sid: v.get("name") for sid, v in (d.get("names") or {}).items() if v.get("name")}
+    except Exception:
+        _BOARD_NAMES = {}
+
+
+def resolve_target_label(e) -> str:
+    raw = e.get("targetAlias") or e.get("targetName") or e.get("targetDeviceName") or e.get("target") or "未知"
+    sid = e.get("targetServerId") or ""
+    if _BOARD_NAMES and sid and _BOARD_NAMES.get(sid):
+        label = _BOARD_NAMES[sid]
+    else:
+        label = raw
+    fp = machine_fingerprint(label if "." not in str(label) else raw)
+    # 同指纹的历代名字统一用短名(公告板名或首个非主机名样式的名字)
+    known = _FP_LABELS.get(fp)
+    if known:
+        return known
+    if _BOARD_NAMES and sid and _BOARD_NAMES.get(sid):
+        _FP_LABELS[fp] = _BOARD_NAMES[sid]
+    elif "." not in str(label):
+        _FP_LABELS[fp] = str(label)
+    else:
+        return str(label)  # 暂无短名,先记原名,等遇到短名的同指纹条目再归并不了——两遍扫描解决
+    return _FP_LABELS[fp]
+
+
 def main():
     entries = fetch()
     word_freq = collections.Counter()
@@ -37,6 +78,9 @@ def main():
     bigram_freq = collections.Counter()
     month_words = collections.defaultdict(collections.Counter)
     hours = collections.Counter()
+    load_target_aliases()
+    for e in entries:
+        resolve_target_label(e)  # 预扫描:先让所有机器指纹学到短名,计数那遍才能全归并
     targets = collections.Counter()
     total_chars = 0
     longest = max(entries, key=lambda e: len(e["text"]))
@@ -50,7 +94,7 @@ def main():
             hours[datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).hour] += 1
         except Exception:
             pass
-        targets[e.get("targetAlias") or e.get("targetName") or e.get("targetDeviceName") or e.get("target") or "未知"] += 1
+        targets[resolve_target_label(e)] += 1
 
         toks = tokens_of(text)
         for f in FILLERS:
