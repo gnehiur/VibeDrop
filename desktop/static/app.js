@@ -3614,21 +3614,29 @@ async function smartDispatch(kind) {
         return;
     }
     localStorage.setItem(SMART_LAST_KEY, targetId);
-    const smartInput = $('input-smart');
-    const text = (smartInput?.value || '').trim();
-    if (kind !== 'enter') {
-        const targetInput = $(`input-${targetId}`);
-        if (targetInput) targetInput.value = text;
-        setSendDraft(targetId, text);
-        if (smartInput) smartInput.value = '';
-        localStorage.removeItem(SMART_DRAFT_KEY);
-    }
-    if (kind === 'send') {
-        await sendText(targetId, 'sendbtn-smart');
-    } else if (kind === 'send_enter') {
-        await sendTextAndEnter(targetId);
-    } else if (kind === 'enter') {
+
+    if (kind === 'enter') {
         await sendEnter(targetId);
+        return;
+    }
+
+    // 文字直传发送函数,不借道设备卡输入框(传统卡隐藏时那个框根本不存在)
+    const smartInput = $('input-smart');
+    let text = (smartInput?.value || '').trim();
+    if (!text) {
+        text = ((await readClipboardText()) || '').trim();
+    }
+    if (!text) {
+        showToast('输入框和剪贴板都没有可发送文字');
+        return;
+    }
+    if (smartInput) smartInput.value = '';
+    localStorage.removeItem(SMART_DRAFT_KEY);
+
+    if (kind === 'send') {
+        await sendText(targetId, 'sendbtn-smart', text);
+    } else if (kind === 'send_enter') {
+        await sendTextAndEnter(targetId, 'sendenterbtn-smart', text);
     }
 }
 
@@ -6418,9 +6426,9 @@ async function sendDeviceAction(deviceId, {
 
 }
 
-async function sendText(deviceId, buttonIdOverride = null) {
+async function sendText(deviceId, buttonIdOverride = null, textOverride = null) {
     debugLog('sendText:start', { deviceId });
-    const text = await resolveTextToSend(deviceId);
+    const text = textOverride != null ? String(textOverride).trim() : await resolveTextToSend(deviceId);
     if (!text) {
         debugLog('sendText:no_text', { deviceId });
         return;
@@ -6467,18 +6475,18 @@ async function sendEnter(deviceId) {
     });
 }
 
-async function sendTextAndEnter(deviceId) {
+async function sendTextAndEnter(deviceId, buttonIdOverride = null, textOverride = null) {
     if (isOutingMode()) {
         // 外出模式下没有"回车"语义（回车要在被控电脑上手动按），统一走剪贴板同步。
         // 按钮状态动画落在蓝色大按钮（此模式下唯一可见的按钮）上。
-        await sendText(deviceId, `sendenterbtn-${deviceId}`);
+        await sendText(deviceId, buttonIdOverride || `sendenterbtn-${deviceId}`, textOverride);
         return;
     }
 
     const input = $(`input-${deviceId}`);
 
     debugLog('sendTextAndEnter:start', { deviceId });
-    const text = await resolveTextToSend(deviceId);
+    const text = textOverride != null ? String(textOverride).trim() : await resolveTextToSend(deviceId);
     if (!text) {
         debugLog('sendTextAndEnter:no_text', { deviceId });
         return;
@@ -6500,14 +6508,15 @@ async function sendTextAndEnter(deviceId) {
         timestamp: getLocalTimestamp(),
         text,
         status: 'pending',
+        transferId: newTransferId(),
         ...buildHistoryTargetMeta(deviceId),
     };
     addHistory(historyEntry);
 
     const result = await sendDeviceAction(deviceId, {
         action: 'type_enter',
-        payload: { text },
-        buttonId: `sendenterbtn-${deviceId}`,
+        payload: { text, transfer_id: historyEntry.transferId },
+        buttonId: buttonIdOverride || `sendenterbtn-${deviceId}`,
         pendingText: '发送并回车中...',
         clearInput: true,
         historyEntry,
@@ -6517,8 +6526,10 @@ async function sendTextAndEnter(deviceId) {
     if (!result.ok && result.error && result.error.startsWith('文字已发送')) {
         historyEntry.status = 'success';
         updateHistory(historyEntry);
-        input.value = '';
-        setSendDraft(deviceId, '');
+        if (input) {
+            input.value = '';
+            setSendDraft(deviceId, '');
+        }
     }
 }
 
