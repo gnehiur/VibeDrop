@@ -12,6 +12,8 @@ import re
 import subprocess
 import sys
 import threading
+
+_device_names_lock = threading.Lock()
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -615,6 +617,16 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                         subscribers.discard(pending)
                 return
 
+            if path == "/api/device-names":
+                # 设备名公告板:全家手机共享的桌面端自定义名(键=serverId,LWW)
+                names_file = vault_root / "device-names.json"
+                try:
+                    doc = json.loads(names_file.read_text(encoding="utf-8")) if names_file.exists() else {}
+                except Exception:
+                    doc = {}
+                self.send_json(200, {"ok": True, "names": doc})
+                return
+
             if path == "/api/history/merged":
                 if token and self.headers.get("X-VibeDrop-Token") != token:
                     self.send_json(401, {"ok": False, "error": "unauthorized"})
@@ -753,6 +765,35 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                         "at": iso_now(),
                     })
                     self.send_json(200, {"ok": True, "appended": appended})
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
+                return
+
+            if request_path == "/api/device-names":
+                # 合并写入:每个 serverId 按 updatedAt 新者胜,免两台手机互相覆盖
+                try:
+                    body = read_json_body(self, max_bytes)
+                    incoming = body.get("names") if isinstance(body, dict) else None
+                    if not isinstance(incoming, dict):
+                        raise ValueError("names 必须是对象")
+                    names_file = vault_root / "device-names.json"
+                    with _device_names_lock:
+                        try:
+                            doc = json.loads(names_file.read_text(encoding="utf-8")) if names_file.exists() else {}
+                        except Exception:
+                            doc = {}
+                        for server_id, entry in incoming.items():
+                            if not isinstance(entry, dict):
+                                continue
+                            name = str(entry.get("name") or "").strip()
+                            updated_at = int(entry.get("updatedAt") or 0)
+                            if not server_id or not name or updated_at <= 0:
+                                continue
+                            current = doc.get(server_id) or {}
+                            if updated_at > int(current.get("updatedAt") or 0):
+                                doc[server_id] = {"name": name[:40], "updatedAt": updated_at}
+                        names_file.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+                    self.send_json(200, {"ok": True, "names": doc})
                 except Exception as exc:
                     self.send_json(500, {"ok": False, "error": str(exc)})
                 return

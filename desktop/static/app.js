@@ -361,6 +361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initSettingsButton();
     initOutingModeSetting();
     initHomeCardsSetting();
+    ensureDeviceNameSync();
     initMediaOpenerSettings();
     initNearbyDesktopDiscovery();
     initConnectionDiagnostics();
@@ -910,6 +911,7 @@ function normalizeDeviceRecord(device) {
         port: String(device?.port || DESKTOP_DISCOVERY_DEFAULT_PORT).trim() || String(DESKTOP_DISCOVERY_DEFAULT_PORT),
         pin: String(device?.pin || '').trim(),
         serverId: String(device?.serverId || '').trim(),
+        nameUpdatedAt: Number(device?.nameUpdatedAt) || 0,
         legacyIds: Array.from(new Set((Array.isArray(device?.legacyIds) ? device.legacyIds : [])
             .map((item) => String(item || '').trim())
             .filter(Boolean))),
@@ -1219,6 +1221,10 @@ function mergeDeviceRecords(primary, secondary) {
     if ((!merged.name || primaryNameIsPlaceholder) && secondaryNameIsUsable) {
         merged.name = secondary.name;
     }
+    if (secondaryNameIsUsable && (Number(secondary.nameUpdatedAt) || 0) > (Number(merged.nameUpdatedAt) || 0)) {
+        merged.name = secondary.name;
+    }
+    merged.nameUpdatedAt = Math.max(Number(merged.nameUpdatedAt) || 0, Number(secondary.nameUpdatedAt) || 0);
     if (!merged.ip && secondary.ip) {
         merged.ip = secondary.ip;
     }
@@ -2444,6 +2450,60 @@ async function discoverNearbyDesktops({
     }
 }
 
+// ===== 设备名跨手机同步:vault 公告板,serverId 为键,LWW =====
+async function pushDeviceNamesToVault() {
+    try {
+        const names = {};
+        getDevices().forEach((dev) => {
+            if (dev.serverId && dev.name && (Number(dev.nameUpdatedAt) || 0) > 0) {
+                names[dev.serverId] = { name: dev.name, updatedAt: Number(dev.nameUpdatedAt) };
+            }
+        });
+        if (!Object.keys(names).length) return;
+        const endpoint = getHomeVaultSettings().url;
+        await fetch(`${endpoint}/api/device-names`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ names }),
+        });
+    } catch (_) { /* 静默:下次再推 */ }
+}
+
+async function fetchAndApplyVaultDeviceNames() {
+    try {
+        const endpoint = getHomeVaultSettings().url;
+        const response = await fetch(`${endpoint}/api/device-names`);
+        const data = await response.json();
+        if (!data?.ok || typeof data.names !== 'object') return;
+        const all = getDevices();
+        let changed = false;
+        all.forEach((dev) => {
+            const remote = dev.serverId ? data.names[dev.serverId] : null;
+            if (!remote) return;
+            const remoteAt = Number(remote.updatedAt) || 0;
+            const localAt = Number(dev.nameUpdatedAt) || 0;
+            if (remoteAt > localAt && remote.name && remote.name !== dev.name) {
+                dev.name = String(remote.name);
+                dev.nameUpdatedAt = remoteAt;
+                changed = true;
+            }
+        });
+        if (changed) {
+            saveDevices(all);
+            rerenderAllDeviceViews();
+            updateSmartCardUI();
+        }
+        pushDeviceNamesToVault();
+    } catch (_) { /* 离线时静默 */ }
+}
+
+let deviceNameSyncTimer = null;
+function ensureDeviceNameSync() {
+    if (deviceNameSyncTimer) return;
+    setTimeout(fetchAndApplyVaultDeviceNames, 3000);
+    deviceNameSyncTimer = setInterval(fetchAndApplyVaultDeviceNames, 5 * 60 * 1000);
+}
+
 let nearbyRenameDeviceId = null;
 
 function renderNearbyDesktops() {
@@ -2564,7 +2624,9 @@ function renderNearbyDesktops() {
                 const target = all.find((dev) => dev.id === nearbyRenameDeviceId);
                 if (target) {
                     target.name = newName;
+                    target.nameUpdatedAt = Date.now();
                     saveDevices(all);
+                    pushDeviceNamesToVault();
                 }
                 nearbyRenameDeviceId = null;
                 rerenderAllDeviceViews();
