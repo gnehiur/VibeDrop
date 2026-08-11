@@ -1728,31 +1728,46 @@ mod tests {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(target_os = "ios")]
+fn apply_scroll_lock(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|webview| unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        let wk = webview.inner() as *mut AnyObject;
+        if wk.is_null() {
+            return;
+        }
+        let scroll_view: *mut AnyObject = msg_send![&*wk, scrollView];
+        if scroll_view.is_null() {
+            return;
+        }
+        let _: () = msg_send![&*scroll_view, setScrollEnabled: false];
+        let _: () = msg_send![&*scroll_view, setBounces: false];
+    });
+}
+
+#[tauri::command]
+fn apply_ios_scroll_lock(window: tauri::WebviewWindow) {
+    #[cfg(target_os = "ios")]
+    apply_scroll_lock(&window);
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = window;
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
-            // iOS:应用壳布局下外层 WebView 永远不该滚动。禁掉它,键盘弹出时
-            // 系统就不会把整页上推,头部横幅与卡片保持固定(用户 2026-08-12 定版)。
-            // 内层 #app-scroll 的滚动不受影响。
+            // iOS:应用壳布局下外层 WebView 永远不该滚动(键盘弹出才不会整页上推)。
+            // 启动上一次锁;前端还会在每次回前台时通过 apply_ios_scroll_lock 补锁,
+            // 防冷启动时序竞态导致某次会话漏锁(2026-08-12 用户实测"偶尔又上推")。
             #[cfg(target_os = "ios")]
             {
                 use tauri::Manager;
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.with_webview(|webview| unsafe {
-                        use objc2::msg_send;
-                        use objc2::runtime::AnyObject;
-                        let wk = webview.inner() as *mut AnyObject;
-                        if wk.is_null() {
-                            return;
-                        }
-                        let scroll_view: *mut AnyObject = msg_send![&*wk, scrollView];
-                        if scroll_view.is_null() {
-                            return;
-                        }
-                        let _: () = msg_send![&*scroll_view, setScrollEnabled: false];
-                        let _: () = msg_send![&*scroll_view, setBounces: false];
-                    });
+                    apply_scroll_lock(&window);
                 }
             }
             #[cfg(not(target_os = "ios"))]
@@ -1771,6 +1786,7 @@ pub fn run() {
             cancel_incoming_file,
             resolve_media_path,
             get_device_model,
+            apply_ios_scroll_lock,
             check_paths_exist,
             vault_upload_media,
             get_discovery_diagnostics,

@@ -52,6 +52,19 @@ function scheduleProbeUpload(delay) {
 probe('script-start');
 probe('appjs-build', 'smartcard-v1-20260811');
 
+// iOS 外层滚动锁:启动+每次回前台补一次(幂等),防冷启动时序漏锁
+(function ensureIosScrollLock() {
+    const apply = () => {
+        try {
+            window.__TAURI__?.core?.invoke?.('apply_ios_scroll_lock');
+        } catch (_) { /* 非 Tauri 环境忽略 */ }
+    };
+    apply();
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') apply();
+    });
+})();
+
 // ============================================
 // VibeDrop — 前端逻辑（动态多设备版）
 // ============================================
