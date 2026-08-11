@@ -3793,6 +3793,12 @@ function createSmartCard() {
                     <button class="send-btn aux-btn enter-btn" id="enterbtn-smart">回车</button>
                 </div>
                 <button class="send-btn combo-btn" id="sendenterbtn-smart">发送并回车</button>
+                <div class="send-actions media-actions">
+                    <button class="send-btn image-btn" id="imagebtn-smart">传图到剪贴板</button>
+                    <button class="send-btn image-btn" id="filebtn-smart">传到收件箱</button>
+                </div>
+                <input type="file" id="imageinput-smart" accept="image/*" class="hidden-file-input">
+                <input type="file" id="fileinput-smart" class="hidden-file-input" multiple>
             </div>
         `;
     const input = card.querySelector('#input-smart');
@@ -3804,6 +3810,69 @@ function createSmartCard() {
     card.querySelector('#sendbtn-smart').addEventListener('click', () => smartDispatch('send'));
     card.querySelector('#enterbtn-smart').addEventListener('click', () => smartDispatch('enter'));
     card.querySelector('#sendenterbtn-smart').addEventListener('click', () => smartDispatch('send_enter'));
+
+    const smartImageBtn = card.querySelector('#imagebtn-smart');
+    const smartFileBtn = card.querySelector('#filebtn-smart');
+    const smartImageInput = card.querySelector('#imageinput-smart');
+    const smartFileInput = card.querySelector('#fileinput-smart');
+
+    const resolveSmartMediaTarget = () => {
+        const targetId = resolveSmartTargetId();
+        if (!targetId) {
+            showToast('没有已连接的电脑');
+            return null;
+        }
+        localStorage.setItem(SMART_LAST_KEY, targetId);
+        return targetId;
+    };
+
+    smartImageBtn.addEventListener('click', () => {
+        const targetId = resolveSmartMediaTarget();
+        if (!targetId) return;
+        const primaryShared = getPrimaryPendingSharedContent();
+        if (pendingSharedContents.length) {
+            if (pendingSharedContents.length > 1) {
+                showToast('批量内容请使用"传到收件箱"');
+                return;
+            }
+            if (!primaryShared?.isImage) {
+                showToast('当前共享内容不是图片，请使用"传到收件箱"');
+                return;
+            }
+            sendPendingSharedImage(targetId);
+            return;
+        }
+        smartImageInput.click();
+    });
+    smartFileBtn.addEventListener('click', () => {
+        const targetId = resolveSmartMediaTarget();
+        if (!targetId) return;
+        if (pendingSharedContents.length) {
+            if (pendingSharedContents.length > 1) {
+                sendPendingSharedFilesBatch(targetId);
+            } else {
+                sendPendingSharedFile(targetId);
+            }
+            return;
+        }
+        smartFileInput.click();
+    });
+    smartImageInput.addEventListener('change', async (event) => {
+        const [file] = event.target.files || [];
+        event.target.value = '';
+        const targetId = file ? resolveSmartMediaTarget() : null;
+        if (targetId && file) {
+            await sendSelectedImage(targetId, file);
+        }
+    });
+    smartFileInput.addEventListener('change', async (event) => {
+        const files = Array.from(event.target.files || []);
+        event.target.value = '';
+        const targetId = files.length ? resolveSmartMediaTarget() : null;
+        if (targetId && files.length) {
+            await sendSelectedFilesBatch(targetId, files);
+        }
+    });
     return card;
 }
 
