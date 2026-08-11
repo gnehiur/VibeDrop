@@ -3596,6 +3596,17 @@ function getSendCardDeviceId(card) {
     return card?.dataset?.deviceId || String(card?.id || '').replace(/^card-/, '');
 }
 
+// 卡片标题的唯一取名口:自定义名优先,连接实时主机名只做兜底
+function getDeviceDisplayName(deviceId) {
+    const dev = findDeviceByAnyId(deviceId);
+    const conn = connections[deviceId];
+    const custom = String(dev?.name || '').trim();
+    if (custom && custom !== '未命名设备' && !/^设备\s+\d+$/.test(custom)) {
+        return custom;
+    }
+    return conn?.hostname || dev?.hostName || dev?.ip || '未命名设备';
+}
+
 function updateSendCardDeviceMeta(card, dev) {
     if (!card || !dev?.id) {
         return;
@@ -3606,10 +3617,7 @@ function updateSendCardDeviceMeta(card, dev) {
     if (!name) {
         return;
     }
-    const conn = connections[dev.id];
-    name.textContent = (conn?.authenticated && conn.hostname)
-        ? conn.hostname
-        : (dev.name || dev.hostName || dev.ip || '未命名设备');
+    name.textContent = getDeviceDisplayName(dev.id);
 }
 
 function syncNewSendCardConnectionState(deviceId) {
@@ -6294,7 +6302,7 @@ function updateDeviceUI(deviceId, status, detail) {
             if (sendEnterBtn) sendEnterBtn.disabled = false;
             if (imageBtn) imageBtn.disabled = false;
             if (fileBtn) fileBtn.disabled = false;
-            if (detail) name.textContent = detail;
+            if (name) name.textContent = getDeviceDisplayName(deviceId);
             break;
         case 'connecting':
             dot.classList.add('connecting');
