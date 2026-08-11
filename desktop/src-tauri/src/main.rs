@@ -2098,6 +2098,26 @@ struct QueuedFinderShareRequest {
     source: Option<String>,
 }
 
+// 距上次键鼠活动的秒数(通用控制送来的事件与本地硬件等价计入)。
+// 用相对秒数而非绝对时间戳,免疫两台 Mac 之间的时钟偏差。
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceSecondsSinceLastEventType(state_id: i32, event_type: u32) -> f64;
+}
+
+fn seconds_since_last_input() -> f64 {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        // 0 = kCGEventSourceStateCombinedSessionState, u32::MAX = kCGAnyInputEventType
+        CGEventSourceSecondsSinceLastEventType(0, u32::MAX)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        -1.0
+    }
+}
+
 async fn ws_handler(
     ws: WebSocketUpgrade,
     AxumState(state): AxumState<ServerState>,
@@ -2862,6 +2882,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
 
                             "ping" => {
                                 let reply = serde_json::json!({"action": "pong"});
+                                let _ = ws_sender.send(Message::Text(reply.to_string().into())).await;
+                            }
+
+                            "activity_query" => {
+                                let reply = serde_json::json!({
+                                    "action": "activity",
+                                    "idle_secs": seconds_since_last_input(),
+                                });
                                 let _ = ws_sender.send(Message::Text(reply.to_string().into())).await;
                             }
 

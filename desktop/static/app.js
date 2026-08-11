@@ -3484,6 +3484,165 @@ function reorderSendCards(container, orderedIds) {
     });
 }
 
+// ===== 智能发送卡:跟随光标(键鼠活动最新的那台 Mac) =====
+const SMART_LAST_KEY = 'vibedrop-smart-last-target';
+const SMART_DRAFT_KEY = 'vibedrop-smart-draft';
+const smartSend = { mode: 'auto', manualId: null };
+const smartActivity = {}; // deviceId -> { idleSecs, at }
+let smartPollTimer = null;
+
+function getSmartReadyDevices() {
+    return getDevices().filter((dev) => dev?.ip && isConnectionReady(connections[dev.id]));
+}
+
+function resolveSmartTargetId() {
+    const ready = getSmartReadyDevices();
+    if (!ready.length) return null;
+    if (ready.length === 1) return ready[0].id;
+    if (smartSend.mode === 'manual' && ready.some((d) => d.id === smartSend.manualId)) {
+        return smartSend.manualId;
+    }
+    const now = Date.now();
+    let best = null;
+    let bestIdle = Infinity;
+    ready.forEach((dev) => {
+        const a = smartActivity[dev.id];
+        if (!a || now - a.at > 15000) return;
+        const effective = a.idleSecs + (now - a.at) / 1000;
+        if (effective < bestIdle) {
+            bestIdle = effective;
+            best = dev.id;
+        }
+    });
+    if (best) return best;
+    const last = localStorage.getItem(SMART_LAST_KEY);
+    if (last && ready.some((d) => d.id === last)) return last;
+    return ready[0].id;
+}
+
+function smartTargetLabel() {
+    const id = resolveSmartTargetId();
+    if (!id) return '无可用电脑';
+    const dev = getDevices().find((d) => d.id === id);
+    const name = dev?.name || '未知';
+    return (smartSend.mode === 'manual' ? '手动 → ' : '自动 → ') + name;
+}
+
+function updateSmartCardUI() {
+    const chip = $('smart-target-chip');
+    if (chip) chip.textContent = smartTargetLabel();
+}
+
+function cycleSmartTarget() {
+    const ready = getSmartReadyDevices();
+    if (ready.length < 2) return;
+    if (smartSend.mode === 'auto') {
+        smartSend.mode = 'manual';
+        smartSend.manualId = ready[0].id;
+    } else {
+        const idx = ready.findIndex((d) => d.id === smartSend.manualId);
+        if (idx === -1 || idx === ready.length - 1) {
+            smartSend.mode = 'auto';
+            smartSend.manualId = null;
+        } else {
+            smartSend.manualId = ready[idx + 1].id;
+        }
+    }
+    updateSmartCardUI();
+}
+
+function pollSmartActivity() {
+    const ready = getSmartReadyDevices();
+    if (ready.length < 2) return;
+    ready.forEach((dev) => {
+        const conn = connections[dev.id];
+        try {
+            conn.ws.send(JSON.stringify({ action: 'activity_query' }));
+        } catch (_) { /* 断连由既有心跳处理 */ }
+    });
+}
+
+function ensureSmartPolling() {
+    if (smartPollTimer) return;
+    smartPollTimer = setInterval(() => {
+        pollSmartActivity();
+        updateSmartCardUI();
+    }, 2000);
+}
+
+async function smartDispatch(kind) {
+    const targetId = resolveSmartTargetId();
+    if (!targetId) {
+        showToast('没有已连接的电脑');
+        return;
+    }
+    localStorage.setItem(SMART_LAST_KEY, targetId);
+    const smartInput = $('input-smart');
+    const text = (smartInput?.value || '').trim();
+    if (kind !== 'enter') {
+        const targetInput = $(`input-${targetId}`);
+        if (targetInput) targetInput.value = text;
+        setSendDraft(targetId, text);
+        if (smartInput) smartInput.value = '';
+        localStorage.removeItem(SMART_DRAFT_KEY);
+    }
+    if (kind === 'send') {
+        await sendText(targetId, 'sendbtn-smart');
+    } else if (kind === 'send_enter') {
+        await sendTextAndEnter(targetId);
+    } else if (kind === 'enter') {
+        await sendEnter(targetId);
+    }
+}
+
+function createSmartCard() {
+    const card = document.createElement('div');
+    card.className = 'mac-card smart-card';
+    card.id = 'card-smart';
+    card.innerHTML = `
+            <div class="mac-header">
+                <span class="smart-badge">智能</span>
+                <span class="mac-name">跟随光标发送</span>
+                <button type="button" class="smart-target-chip" id="smart-target-chip">…</button>
+            </div>
+            <div class="input-group">
+                <textarea id="input-smart" placeholder="自动发到光标所在的电脑..." rows="3"></textarea>
+                <div class="send-actions">
+                    <button class="send-btn aux-btn" id="sendbtn-smart">发送</button>
+                    <button class="send-btn aux-btn enter-btn" id="enterbtn-smart">回车</button>
+                </div>
+                <button class="send-btn combo-btn" id="sendenterbtn-smart">发送并回车</button>
+            </div>
+        `;
+    const input = card.querySelector('#input-smart');
+    input.value = localStorage.getItem(SMART_DRAFT_KEY) || '';
+    input.addEventListener('input', () => {
+        localStorage.setItem(SMART_DRAFT_KEY, input.value);
+    });
+    card.querySelector('#smart-target-chip').addEventListener('click', cycleSmartTarget);
+    card.querySelector('#sendbtn-smart').addEventListener('click', () => smartDispatch('send'));
+    card.querySelector('#enterbtn-smart').addEventListener('click', () => smartDispatch('enter'));
+    card.querySelector('#sendenterbtn-smart').addEventListener('click', () => smartDispatch('send_enter'));
+    return card;
+}
+
+function syncSmartCard(container, visibleDevices) {
+    let card = document.getElementById('card-smart');
+    const want = visibleDevices.length >= 2;
+    if (!want) {
+        if (card) card.remove();
+        return;
+    }
+    if (!card) {
+        card = createSmartCard();
+    }
+    if (container.firstChild !== card) {
+        container.insertBefore(card, container.firstChild);
+    }
+    ensureSmartPolling();
+    updateSmartCardUI();
+}
+
 function renderSendCards(devices) {
     const container = $('send-cards');
     if (!container) return;
@@ -3492,6 +3651,7 @@ function renderSendCards(devices) {
     pruneSendDrafts(devices);
 
     const visibleDevices = devices.filter((dev) => dev?.ip);
+    syncSmartCard(container, visibleDevices);
     const visibleIds = visibleDevices.map((dev) => dev.id);
     const visibleIdSet = new Set(visibleIds);
     const protectedDeviceId = getProtectedSendComposerDeviceId();
@@ -5336,6 +5496,12 @@ function connectDevice(deviceId, ip, port, pin) {
         try { data = JSON.parse(event.data); } catch { return; }
 
         if (data.action === 'pong') {
+            return;
+        }
+
+        if (data.action === 'activity') {
+            smartActivity[deviceId] = { idleSecs: Number(data.idle_secs) || 0, at: Date.now() };
+            updateSmartCardUI();
             return;
         }
 
