@@ -50,6 +50,7 @@ function scheduleProbeUpload(delay) {
     }, delay);
 }
 probe('script-start');
+probe('appjs-build', 'smartcard-v1-20260811');
 
 // ============================================
 // VibeDrop — 前端逻辑（动态多设备版）
@@ -3626,9 +3627,14 @@ function createSmartCard() {
     return card;
 }
 
+let smartCardProbeSent = false;
 function syncSmartCard(container, visibleDevices) {
     let card = document.getElementById('card-smart');
     const want = visibleDevices.length >= 2;
+    if (!smartCardProbeSent) {
+        smartCardProbeSent = true;
+        probe('smart-card-sync', { want, visible: visibleDevices.length, inDom: Boolean(card) });
+    }
     if (!want) {
         if (card) card.remove();
         return;
