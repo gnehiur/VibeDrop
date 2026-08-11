@@ -1746,6 +1746,21 @@ mod ios_scroll_pin {
         const ENCODING: Encoding = Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
     }
 
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct UIEdgeInsets {
+        pub top: f64,
+        pub left: f64,
+        pub bottom: f64,
+        pub right: f64,
+    }
+    unsafe impl Encode for UIEdgeInsets {
+        const ENCODING: Encoding = Encoding::Struct(
+            "UIEdgeInsets",
+            &[f64::ENCODING, f64::ENCODING, f64::ENCODING, f64::ENCODING],
+        );
+    }
+
     define_class!(
         // KVO 观察者:contentOffset 一变就在渲染前归零——预防级固定,肉眼看不到任何移动
         #[unsafe(super(NSObject))]
@@ -1765,10 +1780,13 @@ mod ios_scroll_pin {
                     if object.is_null() {
                         return;
                     }
+                    // 静止位不是(0,0):安全区内嵌下 contentOffset 的自然值是负的内嵌量。
+                    // 钉在系统静止位,否则内容会被顶进状态栏(2026-08-12 实测教训)。
+                    let insets: UIEdgeInsets = msg_send![&*object, adjustedContentInset];
+                    let rest = CGPoint { x: -insets.left, y: -insets.top };
                     let offset: CGPoint = msg_send![&*object, contentOffset];
-                    if offset.x != 0.0 || offset.y != 0.0 {
-                        let zero = CGPoint { x: 0.0, y: 0.0 };
-                        let _: () = msg_send![&*object, setContentOffset: zero];
+                    if (offset.x - rest.x).abs() > 0.5 || (offset.y - rest.y).abs() > 0.5 {
+                        let _: () = msg_send![&*object, setContentOffset: rest];
                     }
                 }
             }
