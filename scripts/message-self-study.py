@@ -84,7 +84,16 @@ def main():
     targets = collections.Counter()
     total_chars = 0
     longest = max(entries, key=lambda e: len(e["text"]))
-    top_longest = sorted(entries, key=lambda e: len(e["text"]), reverse=True)[:10]
+    seen_texts = set()
+    top_longest = []
+    for e in sorted(entries, key=lambda e: len(e["text"]), reverse=True):
+        key = e["text"][:200]  # 同文发多台/多端镜像只算一条
+        if key in seen_texts:
+            continue
+        seen_texts.add(key)
+        top_longest.append(e)
+        if len(top_longest) == 10:
+            break
 
     for e in entries:
         text = e["text"]
