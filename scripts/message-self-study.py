@@ -173,6 +173,7 @@ td,th{{padding:7px 12px;border-bottom:1px solid #eef1f6;text-align:left;font-siz
 <p>语料:{len(entries)} 条文字消息 · 约 {total_chars:,} 字 · {months[0]} ~ {months[-1]} · 生成于 {datetime.datetime.now():%Y-%m-%d %H:%M}</p>
 <div class="stats"><div class="stat"><b>{len(entries)}</b>消息总数</div><div class="stat"><b>{total_chars//len(entries)}</b>平均字数/条</div>
 <div class="stat"><b>{len(longest['text'])}</b>最长一条字数</div><div class="stat"><b>{max(month_counts, key=month_counts.get)}</b>话最多的月份</div>
+<div class="stat"><b>{total_chars/230000:.2f} 本</b>相当于《三体》第一部(约23万字)</div>
 <div class="stat"><b>{total_chars/880000:.2f} 本</b>相当于《三体》三部曲(约88万字)</div></div>
 <h2>词云 · 你最常说的 60 个词</h2><div class="cloud">{cloud}</div>
 <h2>发送时段分布(24小时)</h2><div class="hours">{hour_bars}</div>
