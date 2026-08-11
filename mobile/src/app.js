@@ -4696,11 +4696,13 @@ function getHistoryDateAvailability() {
     let minDate = '';
     let maxDate = '';
 
+    const localAliasIds = getLocalAliasIdSet();
     history.forEach((entry) => {
         const hydratedEntry = entry;
         const sourceFilters = filters.sources || [];
         if (sourceFilters.length) {
-            const sourceId = String(hydratedEntry.sourceDeviceId || getLocalSourceId());
+            const rawSourceId = String(hydratedEntry.sourceDeviceId || getLocalSourceId());
+            const sourceId = localAliasIds.has(rawSourceId) ? getLocalSourceId() : rawSourceId;
             if (!sourceFilters.includes(sourceId)) {
                 return;
             }
@@ -8451,9 +8453,23 @@ function getLocalSourceId() {
     return String(clientIdentity?.id || LOCAL_SOURCE_FALLBACK_ID);
 }
 
+function getLocalAliasIdSet() {
+    // 重装/清数据会换随机身份ID,同一台手机的"前世"以同名 vault 身份存在——统一折进本机
+    const set = new Set([getLocalSourceId()]);
+    const localName = String(clientIdentity?.name || '').trim();
+    if (localName) {
+        vaultMergedDevices.forEach((device) => {
+            if (String(device.deviceName || '').trim() === localName) {
+                set.add(String(device.deviceId));
+            }
+        });
+    }
+    return set;
+}
+
 function isLocalSourceEntry(entry) {
     const src = String(entry?.sourceDeviceId || '');
-    return !src || src === getLocalSourceId();
+    return !src || getLocalAliasIdSet().has(src);
 }
 
 // 统一去重兜底:同设备+同内容+10秒窗只显示最早一条(护住本地存量重复与任何来源异常)
@@ -8638,8 +8654,12 @@ function scheduleHomeVaultAutoPush() {
 function renderHistorySourceFilters() {
     const container = $('history-source-btns');
     if (!container) return;
-    const selected = new Set(currentHistoryFilters.sources || []);
     const localId = getLocalSourceId();
+    const localAliasIds = getLocalAliasIdSet();
+    const selected = new Set(
+        (currentHistoryFilters.sources || []).map((id) => (localAliasIds.has(String(id)) ? localId : String(id)))
+    );
+    currentHistoryFilters.sources = Array.from(selected);
 
     if (!vaultMergedDevices.length && selected.size === 0) {
         container.innerHTML = '';
@@ -8650,10 +8670,12 @@ function renderHistorySourceFilters() {
     const options = [
         { value: '', label: '全部' },
         { value: localId, label: '本机' },
-        ...vaultMergedDevices.map((device) => ({
-            value: String(device.deviceId),
-            label: device.deviceName || device.deviceId,
-        })),
+        ...vaultMergedDevices
+            .filter((device) => !localAliasIds.has(String(device.deviceId)))
+            .map((device) => ({
+                value: String(device.deviceId),
+                label: device.deviceName || device.deviceId,
+            })),
     ];
 
     container.classList.remove('hidden');
@@ -10980,11 +11002,13 @@ function formatTime(isoString) {
 }
 
 function filterHistoryEntries(history, filters = currentHistoryFilters) {
+    const localAliasIds = getLocalAliasIdSet();
     return history.filter((entry) => {
         const hydratedEntry = entry;
         const sourceFilters = filters.sources || [];
         if (sourceFilters.length) {
-            const sourceId = String(hydratedEntry.sourceDeviceId || getLocalSourceId());
+            const rawSourceId = String(hydratedEntry.sourceDeviceId || getLocalSourceId());
+            const sourceId = localAliasIds.has(rawSourceId) ? getLocalSourceId() : rawSourceId;
             if (!sourceFilters.includes(sourceId)) {
                 return false;
             }
