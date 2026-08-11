@@ -1728,6 +1728,84 @@ mod tests {
 }
 
 #[cfg(target_os = "ios")]
+mod ios_scroll_pin {
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyObject, NSObject};
+    use objc2::{define_class, msg_send, AllocAnyThread, Encode, Encoding};
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::OnceLock;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct CGPoint {
+        pub x: f64,
+        pub y: f64,
+    }
+    unsafe impl Encode for CGPoint {
+        const ENCODING: Encoding = Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+    }
+
+    define_class!(
+        // KVO 观察者:contentOffset 一变就在渲染前归零——预防级固定,肉眼看不到任何移动
+        #[unsafe(super(NSObject))]
+        #[name = "VDScrollPin"]
+        pub struct VDScrollPin;
+
+        impl VDScrollPin {
+            #[unsafe(method(observeValueForKeyPath:ofObject:change:context:))]
+            fn observe_value(
+                &self,
+                _key_path: *mut AnyObject,
+                object: *mut AnyObject,
+                _change: *mut AnyObject,
+                _context: *mut c_void,
+            ) {
+                unsafe {
+                    if object.is_null() {
+                        return;
+                    }
+                    let offset: CGPoint = msg_send![&*object, contentOffset];
+                    if offset.x != 0.0 || offset.y != 0.0 {
+                        let zero = CGPoint { x: 0.0, y: 0.0 };
+                        let _: () = msg_send![&*object, setContentOffset: zero];
+                    }
+                }
+            }
+        }
+    );
+
+    static PIN: OnceLock<usize> = OnceLock::new();
+    static OBSERVING: AtomicBool = AtomicBool::new(false);
+
+    pub unsafe fn attach(scroll_view: *mut AnyObject) {
+        // 观察者进程级只挂一次;泄漏一个小对象无妨(与 App 同寿命)
+        if OBSERVING.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let pin: Retained<VDScrollPin> = msg_send![VDScrollPin::alloc(), init];
+        let pin_ptr = Retained::into_raw(pin) as usize;
+        let _ = PIN.set(pin_ptr);
+        let key = objc2_key_path();
+        let _: () = msg_send![
+            &*scroll_view,
+            addObserver: pin_ptr as *mut AnyObject,
+            forKeyPath: &*key,
+            options: 0x01u64, // NSKeyValueObservingOptionNew
+            context: std::ptr::null_mut::<c_void>()
+        ];
+    }
+
+    fn objc2_key_path() -> Retained<objc2::runtime::AnyObject> {
+        unsafe {
+            let cls = objc2::runtime::AnyClass::get(c"NSString").unwrap();
+            let s: *mut AnyObject = msg_send![cls, stringWithUTF8String: c"contentOffset".as_ptr()];
+            Retained::retain(s).unwrap()
+        }
+    }
+}
+
+#[cfg(target_os = "ios")]
 fn apply_scroll_lock(window: &tauri::WebviewWindow) {
     let _ = window.with_webview(|webview| unsafe {
         use objc2::msg_send;
@@ -1742,6 +1820,7 @@ fn apply_scroll_lock(window: &tauri::WebviewWindow) {
         }
         let _: () = msg_send![&*scroll_view, setScrollEnabled: false];
         let _: () = msg_send![&*scroll_view, setBounces: false];
+        ios_scroll_pin::attach(scroll_view);
     });
 }
 

@@ -63,24 +63,6 @@ probe('appjs-build', 'smartcard-v1-20260811');
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') apply();
     });
-
-    // 第二道闩:isScrollEnabled=false 只挡用户手势,WebKit 键盘揭示走"程序化滚动"不受它管。
-    // 把窗口滚动位置钉死在 0——谁推离原点就立刻拉回(仅 iOS,应用壳布局下窗口本就不该滚)。
-    const pin = () => {
-        if (window.scrollY !== 0 || window.scrollX !== 0) {
-            window.scrollTo(0, 0);
-        }
-        const vv = window.visualViewport;
-        if (vv && vv.offsetTop > 0.5) {
-            window.scrollTo(0, 0);
-        }
-    };
-    window.addEventListener('scroll', pin, { passive: true });
-    window.visualViewport?.addEventListener('scroll', pin);
-    document.addEventListener('focusin', () => {
-        // 键盘揭示动画期间连追几拍,把推出去的都拉回来
-        [80, 200, 400, 700].forEach((ms) => setTimeout(pin, ms));
-    });
 })();
 
 // ============================================
