@@ -3432,6 +3432,9 @@ function createSendCard(dev) {
 }
 
 function getSendCardDeviceId(card) {
+    if (card?.id === 'card-smart') {
+        return ''; // 智能卡不属于任何设备,不能落进孤儿设备卡清理
+    }
     return card?.dataset?.deviceId || String(card?.id || '').replace(/^card-/, '');
 }
 
