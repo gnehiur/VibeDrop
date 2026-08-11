@@ -1306,12 +1306,13 @@ body:not(.plat-ios) .history-item {
 .history-labeled-filter::before {
     content: attr(data-row-label);
     align-self: center;
-    padding: 0 4px 0 10px;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    color: #98a2b3;
+    padding: 0 6px 0 10px;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.18em;
+    color: #aab4c4;
     user-select: none;
+    flex: none;
 }
 
 .filter-btn {
