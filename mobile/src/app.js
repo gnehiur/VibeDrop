@@ -11278,12 +11278,8 @@ function getHistoryPrimaryTargetLabel(entry) {
 }
 
 function getHistorySecondaryTargetLabel(entry) {
-    const primary = getHistoryPrimaryTargetLabel(entry);
-    const secondary = entry.targetDeviceName || '';
-    if (!secondary || secondary === primary) {
-        return '';
-    }
-    return secondary;
+    // 2026-08-12 用户定版:目标主机全名不作第二行展示——设备改短名后它冒了出来,还原单行样式
+    return '';
 }
 
 function escapeHtml(text) {
