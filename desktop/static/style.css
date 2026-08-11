@@ -2843,3 +2843,14 @@ mark.history-hl {
     padding: 4px 10px;
     cursor: pointer;
 }
+
+.cards-empty-hint {
+    text-align: center;
+    padding: 32px 16px;
+}
+
+.settings-card .outing-mode-row + .outing-mode-row {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+}

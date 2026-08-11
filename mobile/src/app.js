@@ -360,6 +360,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initNavigation();
     initSettingsButton();
     initOutingModeSetting();
+    initHomeCardsSetting();
     initMediaOpenerSettings();
     initNearbyDesktopDiscovery();
     initConnectionDiagnostics();
@@ -790,6 +791,35 @@ function applySendCardMode(card) {
 
 function refreshSendCardModeUI() {
     document.querySelectorAll('#send-cards .mac-card').forEach(applySendCardMode);
+}
+
+function isSmartCardEnabled() {
+    return getStoredSettingsObject().showSmartCard !== false;
+}
+
+function isDeviceCardsEnabled() {
+    return getStoredSettingsObject().showDeviceCards !== false;
+}
+
+function initHomeCardsSetting() {
+    const smartToggle = $('smart-card-toggle');
+    const deviceToggle = $('device-cards-toggle');
+    if (smartToggle) {
+        smartToggle.checked = isSmartCardEnabled();
+        smartToggle.addEventListener('change', () => {
+            saveStoredSettingsObject({ ...getStoredSettingsObject(), showSmartCard: smartToggle.checked });
+            renderSendCards(getDevices());
+            showToast(smartToggle.checked ? '智能发送卡已显示' : '智能发送卡已隐藏');
+        });
+    }
+    if (deviceToggle) {
+        deviceToggle.checked = isDeviceCardsEnabled();
+        deviceToggle.addEventListener('change', () => {
+            saveStoredSettingsObject({ ...getStoredSettingsObject(), showDeviceCards: deviceToggle.checked });
+            renderSendCards(getDevices());
+            showToast(deviceToggle.checked ? '传统设备卡已显示' : '传统设备卡已隐藏');
+        });
+    }
 }
 
 function initOutingModeSetting() {
@@ -3432,8 +3462,8 @@ function createSendCard(dev) {
 }
 
 function getSendCardDeviceId(card) {
-    if (card?.id === 'card-smart') {
-        return ''; // 智能卡不属于任何设备,不能落进孤儿设备卡清理
+    if (card?.id === 'card-smart' || card?.id === 'cards-empty-hint') {
+        return ''; // 智能卡/占位提示不属于任何设备,不能落进孤儿设备卡清理
     }
     return card?.dataset?.deviceId || String(card?.id || '').replace(/^card-/, '');
 }
@@ -3475,6 +3505,9 @@ function isSendCardOrderAligned(container, orderedIds) {
 
 function reorderSendCards(container, orderedIds) {
     let cursor = container.firstElementChild;
+    if (cursor?.id === 'card-smart') {
+        cursor = cursor.nextElementSibling; // 智能卡固定在顶部,设备卡在其后排序
+    }
     orderedIds.forEach((deviceId) => {
         const card = $(`card-${deviceId}`);
         if (!card || card.parentElement !== container) {
@@ -3633,7 +3666,7 @@ function createSmartCard() {
 let smartCardProbeSent = false;
 function syncSmartCard(container, visibleDevices) {
     let card = document.getElementById('card-smart');
-    const want = visibleDevices.length >= 2;
+    const want = visibleDevices.length >= 2 && isSmartCardEnabled();
     if (!smartCardProbeSent) {
         smartCardProbeSent = true;
         setTimeout(() => {
@@ -3670,8 +3703,9 @@ function renderSendCards(devices) {
     captureSendDraftsFromDom();
     pruneSendDrafts(devices);
 
-    const visibleDevices = devices.filter((dev) => dev?.ip);
-    syncSmartCard(container, visibleDevices);
+    const allVisibleDevices = devices.filter((dev) => dev?.ip);
+    syncSmartCard(container, allVisibleDevices);
+    const visibleDevices = isDeviceCardsEnabled() ? allVisibleDevices : [];
     const visibleIds = visibleDevices.map((dev) => dev.id);
     const visibleIdSet = new Set(visibleIds);
     const protectedDeviceId = getProtectedSendComposerDeviceId();
@@ -3729,6 +3763,18 @@ function renderSendCards(devices) {
     } else {
         reorderSendCards(container, visibleIds);
         restoreSendDraftFocus();
+    }
+
+    const hasAnyCard = container.querySelector('.mac-card') !== null;
+    let emptyHint = document.getElementById('cards-empty-hint');
+    if (!hasAnyCard && !emptyHint) {
+        emptyHint = document.createElement('p');
+        emptyHint.id = 'cards-empty-hint';
+        emptyHint.className = 'hint cards-empty-hint';
+        emptyHint.textContent = '首页卡片已全部隐藏，可在“设置”里重新开启。';
+        container.appendChild(emptyHint);
+    } else if (hasAnyCard && emptyHint) {
+        emptyHint.remove();
     }
 
     if (layoutPending) {
