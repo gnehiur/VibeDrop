@@ -2497,9 +2497,27 @@ async function fetchAndApplyVaultDeviceNames() {
     } catch (_) { /* 离线时静默 */ }
 }
 
+// 存量迁移:同步功能上线前改的名字没有时间戳,推送会跳过它们。
+// 启动时把"明显是自定义名(不像主机名)且无戳"的补盖当前戳,让它们能上公告板。
+function stampLegacyCustomNames() {
+    const all = getDevices();
+    let changed = false;
+    all.forEach((dev) => {
+        if (!dev.serverId) return;
+        if ((Number(dev.nameUpdatedAt) || 0) > 0) return;
+        const name = String(dev.name || '').trim();
+        if (!name || name === '未命名设备' || /^设备\s+\d+$/.test(name)) return;
+        if (looksLikeTargetHost(name)) return;
+        dev.nameUpdatedAt = Date.now();
+        changed = true;
+    });
+    if (changed) saveDevices(all);
+}
+
 let deviceNameSyncTimer = null;
 function ensureDeviceNameSync() {
     if (deviceNameSyncTimer) return;
+    stampLegacyCustomNames();
     setTimeout(fetchAndApplyVaultDeviceNames, 3000);
     deviceNameSyncTimer = setInterval(fetchAndApplyVaultDeviceNames, 5 * 60 * 1000);
 }
