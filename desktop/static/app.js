@@ -3816,6 +3816,8 @@ function createSmartCard() {
     const smartImageInput = card.querySelector('#imageinput-smart');
     const smartFileInput = card.querySelector('#fileinput-smart');
 
+    let smartPendingMediaTarget = null;
+
     const resolveSmartMediaTarget = () => {
         const targetId = resolveSmartTargetId();
         if (!targetId) {
@@ -3842,6 +3844,7 @@ function createSmartCard() {
             sendPendingSharedImage(targetId);
             return;
         }
+        smartPendingMediaTarget = targetId; // 锁定按下瞬间的光标目标,选图回来直接用
         smartImageInput.click();
     });
     smartFileBtn.addEventListener('click', () => {
@@ -3855,12 +3858,14 @@ function createSmartCard() {
             }
             return;
         }
+        smartPendingMediaTarget = targetId;
         smartFileInput.click();
     });
     smartImageInput.addEventListener('change', async (event) => {
         const [file] = event.target.files || [];
         event.target.value = '';
-        const targetId = file ? resolveSmartMediaTarget() : null;
+        const targetId = smartPendingMediaTarget || (file ? resolveSmartMediaTarget() : null);
+        smartPendingMediaTarget = null;
         if (targetId && file) {
             await sendSelectedImage(targetId, file);
         }
@@ -3868,9 +3873,13 @@ function createSmartCard() {
     smartFileInput.addEventListener('change', async (event) => {
         const files = Array.from(event.target.files || []);
         event.target.value = '';
-        const targetId = files.length ? resolveSmartMediaTarget() : null;
-        if (targetId && files.length) {
+        const targetId = smartPendingMediaTarget || (files.length ? resolveSmartMediaTarget() : null);
+        smartPendingMediaTarget = null;
+        if (!targetId || !files.length) return;
+        if (files.length > 1) {
             await sendSelectedFilesBatch(targetId, files);
+        } else {
+            await sendSelectedFile(targetId, files[0]);
         }
     });
     return card;
@@ -7348,8 +7357,10 @@ function createThumbnailDataUrl(sourceDataUrl, outputType = 'image/jpeg') {
 }
 
 async function sendSelectedImage(deviceId, file) {
-    const conn = connections[deviceId];
-    if (!file || !conn || !conn.authenticated || !conn.ws) return;
+    if (!file) return;
+    // 从系统选图器返回瞬间 WS 可能还没重连上,等它就绪再发(静默放弃是"选完图没反应"的病根)
+    const conn = await ensureReadyConnectionForSend(deviceId);
+    if (!isConnectionReady(conn)) return;
 
     if (!file.type || !file.type.startsWith('image/')) {
         showToast('请选择图片文件');
@@ -7415,8 +7426,9 @@ async function sendSelectedImage(deviceId, file) {
 }
 
 async function sendSelectedFile(deviceId, file) {
-    const conn = connections[deviceId];
-    if (!file || !conn || !conn.authenticated || !conn.ws) return;
+    if (!file) return;
+    const conn = await ensureReadyConnectionForSend(deviceId);
+    if (!isConnectionReady(conn)) return;
 
     const historyEntry = {
         id: Date.now(),
@@ -7451,11 +7463,11 @@ async function sendSelectedFile(deviceId, file) {
 }
 
 async function sendSelectedFilesBatch(deviceId, files) {
-    const conn = connections[deviceId];
     const normalizedFiles = Array.from(files || []).filter(Boolean);
-    if (normalizedFiles.length <= 1 || !conn || !conn.authenticated || !conn.ws) {
-        return;
-    }
+    if (normalizedFiles.length <= 1) return;
+    // 从系统选择器返回瞬间 WS 可能没重连上,等就绪再发
+    const conn = await ensureReadyConnectionForSend(deviceId);
+    if (!isConnectionReady(conn)) return;
 
     const batchItems = normalizedFiles.map((file) => ({
         fileName: file.name || 'file.bin',
