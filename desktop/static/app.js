@@ -3714,7 +3714,7 @@ function ensureSmartPolling() {
     smartPollTimer = setInterval(() => {
         pollSmartActivity();
         updateSmartCardUI();
-    }, 2000);
+    }, 1000);
 }
 
 async function smartDispatch(kind) {
