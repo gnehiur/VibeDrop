@@ -3555,6 +3555,9 @@ function createSendCard(dev) {
     sendBtn.addEventListener('click', () => sendText(dev.id));
     enterBtn.addEventListener('click', () => sendEnter(dev.id));
     sendEnterBtn.addEventListener('click', () => sendTextAndEnter(dev.id));
+    keepKeyboardOnPress(sendBtn);
+    keepKeyboardOnPress(enterBtn);
+    keepKeyboardOnPress(sendEnterBtn);
     imageBtn.addEventListener('click', () => {
         const primaryShared = getPrimaryPendingSharedContent();
         if (pendingSharedContents.length) {
@@ -3790,6 +3793,13 @@ async function smartDispatch(kind) {
     }
 }
 
+// 发送类按钮拒绝抢焦点:按下时 preventDefault,输入框不失焦→键盘/语音输入不收起,
+// 连续口述省掉"重新点框+点语音"两个动作(2026-08-12 用户要求)
+function keepKeyboardOnPress(btn) {
+    if (!btn) return;
+    btn.addEventListener('mousedown', (event) => event.preventDefault());
+}
+
 function createSmartCard() {
     const card = document.createElement('div');
     card.className = 'mac-card smart-card';
@@ -3824,6 +3834,9 @@ function createSmartCard() {
     card.querySelector('#sendbtn-smart').addEventListener('click', () => smartDispatch('send'));
     card.querySelector('#enterbtn-smart').addEventListener('click', () => smartDispatch('enter'));
     card.querySelector('#sendenterbtn-smart').addEventListener('click', () => smartDispatch('send_enter'));
+    keepKeyboardOnPress(card.querySelector('#sendbtn-smart'));
+    keepKeyboardOnPress(card.querySelector('#enterbtn-smart'));
+    keepKeyboardOnPress(card.querySelector('#sendenterbtn-smart'));
 
     const smartImageBtn = card.querySelector('#imagebtn-smart');
     const smartFileBtn = card.querySelector('#filebtn-smart');
