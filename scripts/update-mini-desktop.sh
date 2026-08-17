@@ -7,7 +7,7 @@ MB="overlord@overlorddeMacBook-Air-4.local"
 echo "[update-mini] 从 MacBook 拉取已签名成品..."
 TMP=$(mktemp -d)
 ssh "$MB" 'cd /Applications && tar cf - VibeDrop.app' | tar xf - -C "$TMP"
-codesign -dv "$TMP/VibeDrop.app" 2>&1 | grep -q "VibeTech" || {
+codesign -dvv "$TMP/VibeDrop.app" 2>&1 | grep -q "VibeTech" || {
   echo "[update-mini] ⚠️ 成品不是 VibeTech 签名,中止(先在 MacBook 跑 deploy-desktop.sh)"; exit 1; }
 echo "[update-mini] 停旧进程并替换..."
 pkill -f "VibeDrop.app/Contents/MacOS" 2>/dev/null || true
