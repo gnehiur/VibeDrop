@@ -33,6 +33,9 @@ VibeDrop 由三端组成，通过 **WebSocket** 在局域网内直连通信，�
 <div align="center">
 <table>
   <tr>
+    <td align="center" colspan="2"><img src="assets/screenshots/desktop-overview.jpg" width="680" alt="macOS 桌面端概览"><br><sub>macOS 桌面端 — 设备总览 · 配对 · 拖入即发</sub></td>
+  </tr>
+  <tr>
     <td align="center"><img src="assets/screenshots/ios-smart-card.png" width="320" alt="iOS 智能发送卡"><br><sub>iOS (iPhone 17 Pro Max)</sub></td>
     <td align="center"><img src="assets/screenshots/android-smart-card.jpg" width="320" alt="Android 智能发送卡"><br><sub>Android (一加 Ace 5)</sub></td>
   </tr>
