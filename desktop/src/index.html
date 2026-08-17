@@ -44,11 +44,6 @@
                     </div>
                 </div>
                 <div class="header-right">
-                    <select id="display-timezone-select" class="timezone-select" title="消息时间显示时区" data-i18n-title>
-                        <option value="system" data-i18n>本机时区</option>
-                        <option value="Asia/Shanghai" data-i18n>北京时间</option>
-                        <option value="America/Los_Angeles" data-i18n>美西时间</option>
-                    </select>
                     <div class="status-badge" id="status-badge">
                         <span class="pulse"></span>
                         <span data-i18n>服务在线</span>
@@ -59,6 +54,7 @@
                 <div class="desktop-tabbar" role="tablist" aria-label="桌面视图切换">
                     <button type="button" class="desktop-tab is-active" id="desktop-tab-overview" data-tab="overview" role="tab" aria-selected="true" data-i18n>概览</button>
                     <button type="button" class="desktop-tab" id="desktop-tab-history" data-tab="history" role="tab" aria-selected="false" data-i18n>历史</button>
+                    <button type="button" class="desktop-tab" id="desktop-tab-settings" data-tab="settings" role="tab" aria-selected="false" data-i18n>设置</button>
                 </div>
 
                 <div class="desktop-scroll" id="desktop-scroll">
@@ -282,6 +278,58 @@
                 </div>
             </div>
         </section>
+                    <section class="desktop-page hidden" id="desktop-page-settings" data-page="settings">
+                        <div class="overview-card">
+                            <h2 data-i18n>设置</h2>
+                            <div class="settings-row">
+                                <div class="settings-copy">
+                                    <h3 data-i18n>语言</h3>
+                                    <p class="hint" data-i18n>界面显示语言，翻译缺失处回退中文。</p>
+                                </div>
+                                <select id="language-select" class="timezone-select">
+                                    <option value="system" data-i18n>跟随系统</option>
+                                    <option value="zh-CN">简体中文 (Simplified Chinese)</option>
+                                    <option value="zh-TW">繁體中文 (Traditional Chinese)</option>
+                                    <option value="en">English (英语)</option>
+                                    <option value="ja">日本語 (日语 | Japanese)</option>
+                                    <option value="ko">한국어 (韩语 | Korean)</option>
+                                    <option value="es">Español (西班牙语 | Spanish)</option>
+                                    <option value="fr">Français (法语 | French)</option>
+                                    <option value="de">Deutsch (德语 | German)</option>
+                                    <option value="ru">Русский (俄语 | Russian)</option>
+                                    <option value="sw">Kiswahili (斯瓦希里语 | Swahili)</option>
+                                    <option value="qu">Runasimi (克丘亚语 | Quechua)</option>
+                                </select>
+                            </div>
+                            <div class="settings-row">
+                                <div class="settings-copy">
+                                    <h3 data-i18n>显示时区</h3>
+                                    <p class="hint" data-i18n>消息时间与热力图统计使用的时区。</p>
+                                </div>
+                                <select id="display-timezone-select" class="timezone-select">
+                                    <option value="system" data-i18n>本机时区</option>
+                                    <option value="Asia/Shanghai" data-i18n>北京时间</option>
+                                    <option value="America/Los_Angeles" data-i18n>美西时间</option>
+                                </select>
+                            </div>
+                            <div class="settings-row">
+                                <div class="settings-copy">
+                                    <h3 data-i18n>辅助功能权限</h3>
+                                    <p class="hint" data-i18n>模拟键盘输入必需。更新后若失效，请在系统设置中重新勾选。</p>
+                                </div>
+                                <div class="settings-actions">
+                                    <span id="a11y-status" class="hint">…</span>
+                                    <button type="button" class="secondary-btn" id="a11y-open-btn" data-i18n>打开系统设置</button>
+                                </div>
+                            </div>
+                            <div class="settings-row">
+                                <div class="settings-copy">
+                                    <h3 data-i18n>版本</h3>
+                                </div>
+                                <span id="app-version" class="hint">—</span>
+                            </div>
+                        </div>
+                    </section>
     </div>
 
     <div id="window-drop-overlay" class="window-drop-overlay hidden" aria-hidden="true">

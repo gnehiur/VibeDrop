@@ -2033,3 +2033,17 @@ mark.history-hl{background:rgba(255,214,90,.85);color:inherit;border-radius:3px;
     box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
     cursor: pointer;
 }
+
+/* ===== 设置页 ===== */
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-copy h3 { margin: 0 0 4px; font-size: 15px; }
+.settings-copy .hint { margin: 0; max-width: 420px; }
+.settings-actions { display: flex; align-items: center; gap: 10px; }

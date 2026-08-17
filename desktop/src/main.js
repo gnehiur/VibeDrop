@@ -217,11 +217,12 @@ function initDesktopTabs() {
     });
 
     desktopTabsInitialized = true;
+    initDesktopSettingsPage();
     renderDesktopTabState();
 }
 
 async function showDesktopTab(tab, { resetScroll = false } = {}) {
-    currentDesktopTab = tab === 'history' ? 'history' : 'overview';
+    currentDesktopTab = ['history', 'settings'].includes(tab) ? tab : 'overview';
     renderDesktopTabState();
 
     if (resetScroll) {
@@ -233,6 +234,38 @@ async function showDesktopTab(tab, { resetScroll = false } = {}) {
 
     if (currentDesktopTab === 'history') {
         await restoreLog();
+    }
+}
+
+function initDesktopSettingsPage() {
+    const langSelect = document.getElementById('language-select');
+    if (langSelect && window.vibeI18n) {
+        langSelect.value = localStorage.getItem(window.vibeI18n.LANG_KEY) || 'system';
+        langSelect.addEventListener('change', () => {
+            window.vibeI18n.setLanguage(langSelect.value); // 内部整页重载
+        });
+    }
+    const a11yStatus = document.getElementById('a11y-status');
+    const a11yBtn = document.getElementById('a11y-open-btn');
+    const refreshA11y = async () => {
+        try {
+            const ok = await invoke('check_accessibility');
+            if (a11yStatus) {
+                a11yStatus.textContent = ok ? t('已授权 ✓') : t('未授权 ✗');
+                a11yStatus.style.color = ok ? '#10a35a' : '#d64545';
+            }
+        } catch (_) { /* 忽略 */ }
+    };
+    a11yBtn?.addEventListener('click', async () => {
+        try { await invoke('open_accessibility_settings'); } catch (_) { /* 忽略 */ }
+    });
+    refreshA11y();
+    setInterval(refreshA11y, 5000);
+    const versionEl = document.getElementById('app-version');
+    if (versionEl) {
+        try {
+            window.__TAURI__?.app?.getVersion?.().then((v) => { versionEl.textContent = v; });
+        } catch (_) { /* 保持占位 */ }
     }
 }
 
