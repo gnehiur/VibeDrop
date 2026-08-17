@@ -89,47 +89,54 @@ TREND_JS = """
     while (k <= D.latestDay) { out.push(k); k = shiftDay(k, 1); }
     return out;
   }
+  function hourBars(days, m, tickEvery) {
+    var arr = [];
+    days.forEach(function (k) {
+      var hs = D.hours[k] || {};
+      for (var h = 0; h < 24; h++) {
+        var v = hs[h] || hs[String(h)] || [0, 0];
+        arr.push({
+          label: k.slice(5) + " " + h + "时",
+          value: v[m],
+          tick: h === 0 ? k.slice(5) : "",
+        });
+      }
+    });
+    return arr;
+  }
+  function dayBars(days, m, tickFn) {
+    return days.map(function (k, i) {
+      var v = D.days[k] || [0, 0];
+      return { label: k.slice(5), value: v[m], tick: tickFn(k, i) };
+    });
+  }
   function buckets() {
     var m = state.metric;
     if (state.range === "today") {
-      var hs = D.todayHours, arr = [];
-      for (var h = 0; h < 24; h++) {
-        var v = hs[h] || hs[String(h)] || [0, 0];
-        arr.push({ label: h + "时", value: v[m], tick: h % 6 === 0 ? String(h) : "" });
-      }
-      return { bars: arr, caption: D.latestDay + " 每小时" };
+      return { bars: hourBars([D.latestDay], m).map(function (b, h) {
+        b.tick = h % 6 === 0 ? String(h) : "";
+        return b;
+      }), caption: D.latestDay + " · 每小时" };
     }
-    if (state.range === "7d" || state.range === "30d") {
-      var n = state.range === "7d" ? 7 : 30;
-      var days = sumRangeDays(shiftDay(D.latestDay, -(n - 1)));
-      var step = state.range === "7d" ? 1 : 5;
-      return { bars: days.map(function (k, i) {
-        var v = D.days[k] || [0, 0];
-        return { label: k.slice(5), value: v[m], tick: i % step === 0 ? k.slice(5) : "" };
-      }), caption: "近 " + n + " 天,每天" };
+    if (state.range === "7d") {
+      var d7 = sumRangeDays(shiftDay(D.latestDay, -6));
+      return { bars: hourBars(d7, m), caption: "近 7 天 · 每小时" };
+    }
+    if (state.range === "30d") {
+      var d30 = sumRangeDays(shiftDay(D.latestDay, -29));
+      return { bars: dayBars(d30, m, function (k, i) { return i % 5 === 0 ? k.slice(5) : ""; }),
+               caption: "近 30 天 · 每天" };
     }
     if (state.range === "3m") {
-      var days3 = sumRangeDays(shiftDay(D.latestDay, -89));
-      var weeks = {};
-      days3.forEach(function (k) {
-        var d = new Date(k + "T00:00:00Z");
-        var monday = shiftDay(k, -((d.getUTCDay() + 6) % 7));
-        weeks[monday] = (weeks[monday] || 0) + ((D.days[k] || [0, 0])[m]);
-      });
-      var wk = Object.keys(weeks).sort();
-      return { bars: wk.map(function (k, i) {
-        return { label: k.slice(5) + "周", value: weeks[k], tick: i % 2 === 0 ? k.slice(5) : "" };
-      }), caption: "近 3 个月,每周" };
+      var d90 = sumRangeDays(shiftDay(D.latestDay, -89));
+      return { bars: dayBars(d90, m, function (k, i) { return i % 15 === 0 ? k.slice(5) : ""; }),
+               caption: "近 3 个月 · 每天" };
     }
-    var months = {};
-    dayKeysSorted().forEach(function (k) {
-      var mo = k.slice(0, 7);
-      months[mo] = (months[mo] || 0) + ((D.days[k] || [0, 0])[m]);
-    });
-    var mk = Object.keys(months).sort();
-    return { bars: mk.map(function (k) {
-      return { label: k, value: months[k], tick: k.slice(2) };
-    }), caption: "全部时间,每月" };
+    var all = dayKeysSorted();
+    var first = all[0];
+    var span = sumRangeDays(first);
+    return { bars: dayBars(span, m, function (k) { return k.slice(8) === "01" ? k.slice(2, 7) : ""; }),
+             caption: "全部时间 · 每天" };
   }
 
   function fmt(n) { return n >= 10000 ? (n / 10000).toFixed(1) + "万" : String(n); }
@@ -182,11 +189,11 @@ TREND_JS = """
   padding: 4px 10px; border-radius: 999px; cursor: pointer; margin-right: 4px; }
 .trend-group button.on { background: #2f6fed; border-color: #2f6fed; color: #fff; }
 .trend-caption { font-size: 12px; color: #8a94a6; margin: 10px 0 6px; }
-.trend-chart { display: flex; align-items: flex-end; gap: 2px; height: 150px; }
-.trend-bar { flex: 1; background: #9db9f4; border-radius: 3px 3px 0 0; min-height: 2px; }
+.trend-chart { display: flex; align-items: flex-end; gap: 1px; height: 150px; }
+.trend-bar { flex: 1; min-width: 0; background: #9db9f4; border-radius: 2px 2px 0 0; min-height: 2px; }
 .trend-bar.max { background: #2f6fed; }
-.trend-xaxis { display: flex; gap: 2px; margin-top: 4px; }
-.trend-xaxis span { flex: 1; font-size: 10px; color: #8a94a6; text-align: center; overflow: visible; white-space: nowrap; }
+.trend-xaxis { display: flex; gap: 1px; margin-top: 4px; }
+.trend-xaxis span { flex: 1; min-width: 0; font-size: 10px; color: #8a94a6; text-align: left; overflow: visible; white-space: nowrap; }
 </style>
 """
 
@@ -307,7 +314,7 @@ def main():
     latest_day = max(day_stats) if day_stats else ""
     trend_data_json = json.dumps({
         "days": day_stats,
-        "todayHours": hour_stats.get(latest_day, {}),
+        "hours": hour_stats,
         "latestDay": latest_day,
     }, ensure_ascii=False)
     trend_section = (
