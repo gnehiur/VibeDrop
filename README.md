@@ -9,6 +9,7 @@
 [![release](https://img.shields.io/github/v/release/jncdke/VibeDrop?color=2f6fed)](https://github.com/jncdke/VibeDrop/releases)
 [![license](https://img.shields.io/github/license/jncdke/VibeDrop?color=green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Android%20%7C%20iOS-8a63d2)
+![i18n](https://img.shields.io/badge/languages-11-2f6fed)
 ![tauri](https://img.shields.io/badge/Tauri-2.x-ffc131?logo=tauri&logoColor=white)
 ![rust](https://img.shields.io/badge/Rust-stable-e43717?logo=rust)
 
@@ -46,20 +47,21 @@ VibeDrop 由三端组成，通过 **WebSocket** 在局域网内直连通信，�
 
 ## 功能一览
 
-| 功能 | Mac 端 | Android 端 |
-|------|--------|-----------|
-| 📝 文字传输（手机 → Mac） | ✅ 接收并模拟键盘输入 | ✅ 发送 |
-| 📋 剪贴板同步（Mac → 手机） | ✅ 每 500ms 监听变化广播 | ✅ 原生后台服务写入剪贴板 |
-| 🔒 PIN 码认证 | ✅ 随机生成，持久化到文件 | ✅ 输入连接 |
-| 🤝 自动发现与配对 | ✅ 展示待确认配对、已连接设备 | ✅ 扫描附近电脑、验证码配对 |
-| 📜 历史记录 | ✅ localStorage + 文件导出 | ✅ 双重持久化（localStorage + 文件） |
-| 📈 活跃热力图 | ✅ 历史页顶部接收热力图 + 精确筛选 | ✅ 历史页 5 天窗口发送热力图 |
-| 📁 文件传输（Mac → Android） | ✅ 拖拽 / Finder 服务 / Finder 共享 | ✅ 保存到 `Download` |
-| 📎 点击复制 | ✅ Toast 浮层提示 | ✅ Toast 浮层提示 |
-| 🔍 测试连接 | — | ✅ 设置页内直接测试 |
-| 📡 前台保活服务 | — | ✅ 通知栏常驻，后台不被杀 |
-| 🖥 系统托盘 | ✅ 菜单栏图标 + 状态显示 | — |
-| 🚀 开机自启 | ✅ macOS 登录项（兼容清理旧 LaunchAgent） | — |
+| 功能 | Mac 端 | 手机端 (Android + iOS) |
+|------|--------|------------------------|
+| 🎯 智能发送卡「跟随光标发送」 | ✅ 上报键鼠活动（`CGEventSource`，零权限） | ✅ 文字/图片/文件自动发往光标所在的 Mac，1 秒跟随，可手动切换 |
+| 📝 文字传输（手机 → Mac） | ✅ 接收并模拟键盘输入 | ✅ 发送后键盘与语音输入保持，连续口述零多余动作 |
+| 📋 剪贴板同步（Mac → 手机） | ✅ 监听变化广播 | ✅ 原生后台服务写入剪贴板 |
+| 🌍 多语言 | ✅ 跟随系统 | ✅ 11 门语言（简繁中/英/日/韩/西/法/德/俄/斯瓦希里/克丘亚），gettext 式缺译回退中文 |
+| 🤝 自动发现与配对 | ✅ 展示待确认配对、已连接设备 | ✅ 扫描附近电脑、验证码配对；设备可改名并跨手机自动同步 |
+| 📜 历史时间线 | ✅ 合并全设备视图 + 缩略图 | ✅ 全设备合并、筛选（来源/目标/类型/原件/时间）、搜索高亮 |
+| 📈 活跃热力图 | ✅ 接收热力图 + 点格筛选 | ✅ 发送热力图 + 点格筛选 |
+| 🔬 消息自我研究 | —（报告由 Home Vault 生成） | ✅ 历史页内嵌完整报告：词云/口头禅/发送趋势柱状图（scrub 查明细） |
+| 📁 文件传输（双向） | ✅ 拖拽 / Finder 服务 / Finder 共享 | ✅ 传到收件箱 / 图片进相册，批量自动打包 |
+| 🗄 Home Vault | 家庭服务器：跨设备历史合并 · 媒体原件仓（哈希去重 + Range 流式） · 探针日志回收 | ✅ 增量推送 + SSE 实时同步 |
+| 🔒 PIN 码认证 | ✅ 随机生成，持久化到文件 | ✅ 验证码配对后自动保存 |
+| 🕰 显示时区设置 | ✅ 本机/北京/美西，显示与统计口径统一 | — |
+| 📡 前台保活 / 托盘 | ✅ 系统托盘 + 开机自启 | ✅ Android 通知栏常驻 |
 
 ---
 
@@ -705,11 +707,15 @@ gh release create v0.1.4 \
 
 ## 消息自我研究(词频统计报告)
 
-对你自己的 Home Vault 历史语料做分词词频/口头禅/高频短语/月度话题演变(TF-IDF)/行为画像分析,生成自包含 HTML 报告(全程本地,数据不外发):
+对你自己的 Home Vault 历史语料做分词词频/口头禅/高频短语/月度话题演变(TF-IDF)/发送趋势(时/天粒度柱状图,手指 scrub 查明细)分析,生成自包含 HTML 报告(全程本地,数据不外发)。
+
+**App 内直接看**:历史页 →「消息自我研究」卡 → 打开完整报告(Home Vault 端点 `/report/self-study`,SWR 缓存秒开,过期后台重算,`?refresh=1` 强制重跑)。
+
+也可手动生成:
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install jieba
 .venv/bin/python scripts/message-self-study.py http://<你的vault地址>:8788
 ```
 
-报告输出到 `~/Downloads/`。
+报告输出到 `~/Downloads/`。多语言施工契约见 `docs/i18n-规范.md`。
