@@ -147,6 +147,9 @@ TREND_JS = """
     var cap = document.getElementById("trend-caption");
     if (!chart) return;
     var b = buckets();
+    currentBars = b.bars;
+    var detail = document.getElementById("trend-detail");
+    if (detail) detail.textContent = "点或滑动柱子查看明细";
     var unit = state.metric === 0 ? "条" : "字";
     var max = 1, total = 0;
     b.bars.forEach(function (x) { if (x.value > max) max = x.value; total += x.value; });
@@ -165,6 +168,30 @@ TREND_JS = """
     });
   }
 
+  var currentBars = [];
+  function scrubTo(clientX) {
+    var chart = document.getElementById("trend-chart");
+    var detail = document.getElementById("trend-detail");
+    if (!chart || !currentBars.length) return;
+    var rect = chart.getBoundingClientRect();
+    var idx = Math.floor((clientX - rect.left) / rect.width * currentBars.length);
+    idx = Math.max(0, Math.min(currentBars.length - 1, idx));
+    var kids = chart.children;
+    for (var i = 0; i < kids.length; i++) kids[i].classList.remove("sel");
+    if (kids[idx]) kids[idx].classList.add("sel");
+    var b = currentBars[idx];
+    var unit = state.metric === 0 ? "条" : "字";
+    detail.textContent = b.label + " · " + fmt(b.value) + " " + unit;
+  }
+  function wireScrub() {
+    var chart = document.getElementById("trend-chart");
+    if (!chart) return;
+    var down = false;
+    chart.addEventListener("pointerdown", function (e) { down = true; scrubTo(e.clientX); });
+    chart.addEventListener("pointermove", function (e) { if (down || e.pointerType === "mouse") scrubTo(e.clientX); });
+    window.addEventListener("pointerup", function () { down = false; });
+  }
+
   function wire(groupId, key) {
     var el = document.getElementById(groupId);
     if (!el) return;
@@ -179,6 +206,7 @@ TREND_JS = """
   }
   wire("trend-ranges", "range");
   wire("trend-metrics", "metric");
+  wireScrub();
   render();
 })();
 </script>
@@ -189,7 +217,9 @@ TREND_JS = """
   padding: 4px 10px; border-radius: 999px; cursor: pointer; margin-right: 4px; }
 .trend-group button.on { background: #2f6fed; border-color: #2f6fed; color: #fff; }
 .trend-caption { font-size: 12px; color: #8a94a6; margin: 10px 0 6px; }
-.trend-chart { display: flex; align-items: flex-end; gap: 1px; height: 150px; }
+.trend-chart { display: flex; align-items: flex-end; gap: 1px; height: 150px; touch-action: none; }
+.trend-detail { font-size: 14px; font-weight: 700; color: #1d3557; margin: 2px 0 8px; min-height: 20px; }
+.trend-bar.sel { background: #1d4ed8; outline: 1px solid #1d4ed8; }
 .trend-bar { flex: 1; min-width: 0; background: #9db9f4; border-radius: 2px 2px 0 0; min-height: 2px; }
 .trend-bar.max { background: #2f6fed; }
 .trend-xaxis { display: flex; gap: 1px; margin-top: 4px; }
@@ -334,6 +364,7 @@ def main():
         "</span>"
         "</div>"
         "<div class='trend-caption' id='trend-caption'></div>"
+        "<div class='trend-detail' id='trend-detail'>点或滑动柱子查看明细</div>"
         "<div class='trend-chart' id='trend-chart'></div>"
         "<div class='trend-xaxis' id='trend-xaxis'></div>"
         "</div>"
