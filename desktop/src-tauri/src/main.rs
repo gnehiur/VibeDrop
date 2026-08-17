@@ -72,6 +72,8 @@ struct ClientMessage {
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
+    relay_to: Option<String>,
+    #[serde(default)]
     file_name: Option<String>,
     #[serde(default)]
     mime_type: Option<String>,
@@ -2141,6 +2143,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
     let mut current_client_name = String::new();
     let mut current_receives_clipboard = false;
     let mut active_incoming_file_transfers = std::collections::HashSet::new();
+    // 手机互传:transfer_id → 目标手机 client_id(上传完成后经现有出站管线转投)
+    let mut relay_targets: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
     // 拆分 WebSocket 为 sender/receiver，以便同时接收客户端消息和广播剪贴板
     let (mut ws_sender, mut ws_receiver) = socket.split();
@@ -2357,6 +2361,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                     Ok(()) => {
                                         active_incoming_file_transfers
                                             .insert(transfer_id.to_string());
+                                        if let Some(rt) = client_msg.relay_to.as_deref() {
+                                            if !rt.is_empty() {
+                                                relay_targets.insert(transfer_id.to_string(), rt.to_string());
+                                            }
+                                        }
                                         ServerMessage {
                                             status: "ok".to_string(),
                                             hostname: None,
@@ -2469,6 +2478,60 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                             "saved_path": saved_file_path,
                                         });
                                         let _ = ws_sender.send(Message::Text(reply.to_string().into())).await;
+
+                                        // 手机互传:落盘完成即经出站管线转投目标手机(相册/下载目录路由复用)
+                                        if let Some(target_id) = relay_targets.remove(transfer_id) {
+                                            let target = state
+                                                .clients
+                                                .lock()
+                                                .ok()
+                                                .and_then(|clients| clients.get(&target_id).cloned());
+                                            let app_for_relay = state
+                                                .app_handle
+                                                .lock()
+                                                .ok()
+                                                .and_then(|guard| guard.clone());
+                                            match (target, app_for_relay) {
+                                                (Some(target_client), Some(app_handle)) if target_client.can_receive_files => {
+                                                    let relay_tid = format!("relay-{}", transfer_id);
+                                                    match resolve_desktop_drop_paths(
+                                                        &app_handle,
+                                                        &relay_tid,
+                                                        vec![saved_file_path.clone()],
+                                                    ) {
+                                                        Ok(resolved) => {
+                                                            let state_clone = state.clone();
+                                                            tauri::async_runtime::spawn(async move {
+                                                                run_desktop_outbound_transfer(
+                                                                    state_clone,
+                                                                    app_handle,
+                                                                    target_client,
+                                                                    relay_tid,
+                                                                    resolved,
+                                                                )
+                                                                .await;
+                                                            });
+                                                        }
+                                                        Err(error) => {
+                                                            let err_reply = serde_json::json!({
+                                                                "action": "relay_error",
+                                                                "transfer_id": transfer_id,
+                                                                "error": error,
+                                                            });
+                                                            let _ = ws_sender.send(Message::Text(err_reply.to_string().into())).await;
+                                                        }
+                                                    }
+                                                }
+                                                _ => {
+                                                    let err_reply = serde_json::json!({
+                                                        "action": "relay_error",
+                                                        "transfer_id": transfer_id,
+                                                        "error": "目标手机已断开或不支持接收文件",
+                                                    });
+                                                    let _ = ws_sender.send(Message::Text(err_reply.to_string().into())).await;
+                                                }
+                                            }
+                                        }
                                     }
                                     Err(error) => {
                                         let reply = serde_json::json!({
@@ -2882,6 +2945,74 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
 
                             "ping" => {
                                 let reply = serde_json::json!({"action": "pong"});
+                                let _ = ws_sender.send(Message::Text(reply.to_string().into())).await;
+                            }
+
+                            "list_peer_phones" => {
+                                if !authenticated {
+                                    continue;
+                                }
+                                let phones: Vec<serde_json::Value> = state
+                                    .clients
+                                    .lock()
+                                    .map(|clients| {
+                                        clients
+                                            .values()
+                                            .filter(|c| c.id != current_client_id)
+                                            .map(|c| {
+                                                serde_json::json!({
+                                                    "id": c.id,
+                                                    "name": c.name,
+                                                    "can_receive_files": c.can_receive_files,
+                                                })
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let reply = serde_json::json!({
+                                    "action": "peer_phones",
+                                    "phones": phones,
+                                });
+                                let _ = ws_sender.send(Message::Text(reply.to_string().into())).await;
+                            }
+
+                            "relay_text" => {
+                                if !authenticated {
+                                    continue;
+                                }
+                                let target_id = client_msg.relay_to.clone().unwrap_or_default();
+                                let text = client_msg.text.clone().unwrap_or_default();
+                                let transfer_id = client_msg.transfer_id.clone().unwrap_or_default();
+                                let target = state
+                                    .clients
+                                    .lock()
+                                    .ok()
+                                    .and_then(|clients| clients.get(&target_id).cloned());
+                                let reply = match target {
+                                    Some(target_client) if !text.is_empty() => {
+                                        let push = serde_json::json!({
+                                            "action": "clipboard",
+                                            "text": text,
+                                        });
+                                        if target_client.sender.send(push.to_string()).is_ok() {
+                                            serde_json::json!({
+                                                "action": "relay_ok",
+                                                "transfer_id": transfer_id,
+                                            })
+                                        } else {
+                                            serde_json::json!({
+                                                "action": "relay_error",
+                                                "transfer_id": transfer_id,
+                                                "error": "目标手机连接已失效",
+                                            })
+                                        }
+                                    }
+                                    _ => serde_json::json!({
+                                        "action": "relay_error",
+                                        "transfer_id": transfer_id,
+                                        "error": "目标手机不在线",
+                                    }),
+                                };
                                 let _ = ws_sender.send(Message::Text(reply.to_string().into())).await;
                             }
 

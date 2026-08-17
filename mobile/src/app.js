@@ -859,6 +859,14 @@ function initHomeCardsSetting() {
             showToast(smartToggle.checked ? t('智能发送卡已显示') : t('智能发送卡已隐藏'));
         });
     }
+    const p2pToggle = $('p2p-card-toggle');
+    if (p2pToggle) {
+        p2pToggle.checked = isP2pCardEnabled();
+        p2pToggle.addEventListener('change', () => {
+            saveStoredSettingsObject({ ...getStoredSettingsObject(), showP2pCard: p2pToggle.checked });
+            renderSendCards(getDevices());
+        });
+    }
     if (deviceToggle) {
         deviceToggle.checked = isDeviceCardsEnabled();
         deviceToggle.addEventListener('change', () => {
@@ -3654,7 +3662,7 @@ function createSendCard(dev) {
 }
 
 function getSendCardDeviceId(card) {
-    if (card?.id === 'card-smart' || card?.id === 'cards-empty-hint') {
+    if (card?.id === 'card-smart' || card?.id === 'card-p2p' || card?.id === 'cards-empty-hint') {
         return ''; // 智能卡/占位提示不属于任何设备,不能落进孤儿设备卡清理
     }
     return card?.dataset?.deviceId || String(card?.id || '').replace(/^card-/, '');
@@ -3705,8 +3713,8 @@ function isSendCardOrderAligned(container, orderedIds) {
 
 function reorderSendCards(container, orderedIds) {
     let cursor = container.firstElementChild;
-    if (cursor?.id === 'card-smart') {
-        cursor = cursor.nextElementSibling; // 智能卡固定在顶部,设备卡在其后排序
+    while (cursor && (cursor.id === 'card-smart' || cursor.id === 'card-p2p')) {
+        cursor = cursor.nextElementSibling; // 智能卡/互传卡固定在顶部,设备卡在其后排序
     }
     orderedIds.forEach((deviceId) => {
         const card = $(`card-${deviceId}`);
@@ -3838,6 +3846,207 @@ async function smartDispatch(kind) {
     } else if (kind === 'send_enter') {
         await sendTextAndEnter(targetId, 'sendenterbtn-smart', text);
     }
+}
+
+// ===== 手机互传卡:经 Mac 中转,文字进对方剪贴板,图片进相册,文件进下载 =====
+const P2P_TARGET_KEY = 'vibedrop-p2p-target';
+let p2pPeers = [];
+let p2pPollTimer = null;
+const p2pPendingText = new Map();
+
+function isP2pCardEnabled() {
+    return getStoredSettingsObject().showP2pCard !== false;
+}
+
+function getP2pRelayConnId() {
+    const dev = getDevices().find((d) => d?.ip && isConnectionReady(connections[d.id]));
+    return dev ? dev.id : null;
+}
+
+function pollPeerPhones() {
+    const relayId = getP2pRelayConnId();
+    if (!relayId) return;
+    try {
+        connections[relayId].ws.send(JSON.stringify({ action: 'list_peer_phones' }));
+    } catch (_) { /* 下轮再试 */ }
+}
+
+function ensureP2pPolling() {
+    if (p2pPollTimer) return;
+    setTimeout(pollPeerPhones, 1500);
+    p2pPollTimer = setInterval(pollPeerPhones, 5000);
+}
+
+function getP2pTargetPeer() {
+    if (!p2pPeers.length) return null;
+    const saved = localStorage.getItem(P2P_TARGET_KEY);
+    return p2pPeers.find((x) => x.id === saved) || p2pPeers[0];
+}
+
+function syncP2pTargetOptions() {
+    const select = $('p2p-target');
+    if (!select) return;
+    const current = getP2pTargetPeer();
+    select.innerHTML = '';
+    p2pPeers.forEach((peer) => {
+        const opt = document.createElement('option');
+        opt.value = peer.id;
+        opt.textContent = peer.name;
+        select.appendChild(opt);
+    });
+    if (current) select.value = current.id;
+}
+
+function buildP2pHistoryMeta(peer) {
+    return {
+        target: peer.id,
+        targetName: peer.name,
+        targetAlias: peer.name,
+        targetDeviceName: '',
+        targetServerId: '',
+    };
+}
+
+async function p2pSendText() {
+    const peer = getP2pTargetPeer();
+    const relayId = getP2pRelayConnId();
+    const input = $('input-p2p');
+    const text = (input?.value || '').trim();
+    if (!peer || !relayId) {
+        showToast(t('没有其他在线手机'));
+        return;
+    }
+    if (!text) {
+        showToast(t('输入框和剪贴板都没有可发送文字'));
+        return;
+    }
+    const entry = {
+        id: Date.now(),
+        timestamp: getLocalTimestamp(),
+        text,
+        status: 'pending',
+        transferId: newTransferId(),
+        ...buildP2pHistoryMeta(peer),
+    };
+    addHistory(entry);
+    p2pPendingText.set(entry.transferId, entry);
+    setTimeout(() => {
+        const pending = p2pPendingText.get(entry.transferId);
+        if (pending) {
+            p2pPendingText.delete(entry.transferId);
+            pending.status = 'failed';
+            updateHistory(pending);
+            showToast(t('发送失败'));
+        }
+    }, 8000);
+    try {
+        connections[relayId].ws.send(JSON.stringify({
+            action: 'relay_text',
+            relay_to: peer.id,
+            text,
+            transfer_id: entry.transferId,
+        }));
+        if (input) input.value = '';
+    } catch (error) {
+        showToast(t('发送失败：{error}', { error: error.message }));
+    }
+}
+
+async function p2pSendFiles(files, buttonId) {
+    const peer = getP2pTargetPeer();
+    const relayId = getP2pRelayConnId();
+    if (!peer || !relayId) {
+        showToast(t('没有其他在线手机'));
+        return;
+    }
+    for (const file of files) {
+        const entry = {
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            timestamp: getLocalTimestamp(),
+            text: `[${file.type.startsWith('image/') ? t('图片') : t('文件')}] ${file.name}`,
+            status: 'pending',
+            kind: file.type.startsWith('image/') ? 'image' : 'file',
+            fileName: file.name,
+            mimeType: file.type,
+            transferId: newTransferId(),
+            ...buildP2pHistoryMeta(peer),
+        };
+        addHistory(entry);
+        await sendFileToDesktopInChunks(relayId, {
+            fileName: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            sizeBytes: file.size,
+            buttonId,
+            pendingText: t('发送中...'),
+            historyEntry: entry,
+            failureToast: true,
+            successToast: t('已发送到 {name}', { name: peer.name }),
+            relayTo: peer.id,
+            readChunkBase64: (offsetBytes, lengthBytes) => readBlobChunkAsBase64(file, offsetBytes, lengthBytes),
+        });
+    }
+}
+
+function createP2pCard() {
+    const card = document.createElement('div');
+    card.className = 'mac-card p2p-card';
+    card.id = 'card-p2p';
+    card.innerHTML = `
+            <div class="mac-header">
+                <span class="p2p-badge">${t('互传')}</span>
+                <span class="mac-name">${t('手机互传')}</span>
+                <select id="p2p-target" class="p2p-target-select" title="${t('选择目标手机')}"></select>
+            </div>
+            <div class="input-group">
+                <textarea id="input-p2p" placeholder="${t('发到对方剪贴板...')}" rows="3"></textarea>
+                <button class="send-btn combo-btn" id="p2pbtn-send">${t('发送')}</button>
+                <div class="send-actions media-actions">
+                    <button class="send-btn image-btn" id="p2pbtn-image">${t('传图到相册')}</button>
+                    <button class="send-btn image-btn" id="p2pbtn-file">${t('传文件到下载')}</button>
+                </div>
+                <input type="file" id="p2pimageinput" accept="image/*" class="hidden-file-input" multiple>
+                <input type="file" id="p2pfileinput" class="hidden-file-input" multiple>
+            </div>
+        `;
+    card.querySelector('#p2p-target').addEventListener('change', (e) => {
+        localStorage.setItem(P2P_TARGET_KEY, e.target.value);
+    });
+    card.querySelector('#p2pbtn-send').addEventListener('click', p2pSendText);
+    keepKeyboardOnPress(card.querySelector('#p2pbtn-send'));
+    const imageInput = card.querySelector('#p2pimageinput');
+    const fileInput = card.querySelector('#p2pfileinput');
+    card.querySelector('#p2pbtn-image').addEventListener('click', () => imageInput.click());
+    card.querySelector('#p2pbtn-file').addEventListener('click', () => fileInput.click());
+    imageInput.addEventListener('change', async (e) => {
+        const files = Array.from(e.target.files || []);
+        e.target.value = '';
+        if (files.length) await p2pSendFiles(files, 'p2pbtn-image');
+    });
+    fileInput.addEventListener('change', async (e) => {
+        const files = Array.from(e.target.files || []);
+        e.target.value = '';
+        if (files.length) await p2pSendFiles(files, 'p2pbtn-file');
+    });
+    return card;
+}
+
+function syncP2pCard(container) {
+    let card = document.getElementById('card-p2p');
+    const want = isP2pCardEnabled() && p2pPeers.length > 0;
+    if (!want) {
+        if (card) card.remove();
+        return;
+    }
+    if (!card) {
+        card = createP2pCard();
+    }
+    const smart = document.getElementById('card-smart');
+    const anchorNode = smart ? smart.nextSibling : container.firstChild;
+    if (card.parentElement !== container || card.previousElementSibling !== smart) {
+        container.insertBefore(card, anchorNode);
+    }
+    syncP2pTargetOptions();
+    ensureP2pPolling();
 }
 
 // 发送类按钮拒绝抢焦点:按下时 preventDefault,输入框不失焦→键盘/语音输入不收起,
@@ -4001,6 +4210,7 @@ function renderSendCards(devices) {
 
     const allVisibleDevices = devices.filter((dev) => dev?.ip);
     syncSmartCard(container, allVisibleDevices);
+    syncP2pCard(container);
     const visibleDevices = isDeviceCardsEnabled() ? allVisibleDevices : [];
     const visibleIds = visibleDevices.map((dev) => dev.id);
     const visibleIdSet = new Set(visibleIds);
@@ -5895,6 +6105,28 @@ function connectDevice(deviceId, ip, port, pin) {
             return;
         }
 
+        if (data.action === 'peer_phones') {
+            p2pPeers = Array.isArray(data.phones) ? data.phones : [];
+            const container = $('send-cards');
+            if (container) syncP2pCard(container);
+            return;
+        }
+
+        if (data.action === 'relay_ok' || data.action === 'relay_error') {
+            const pending = p2pPendingText.get(String(data.transfer_id || ''));
+            if (pending) {
+                p2pPendingText.delete(String(data.transfer_id));
+                pending.status = data.action === 'relay_ok' ? 'success' : 'failed';
+                updateHistory(pending);
+                showToast(data.action === 'relay_ok'
+                    ? t('已发送到 {name}', { name: pending.targetName || '' })
+                    : (data.error || t('发送失败')));
+            } else if (data.action === 'relay_error' && data.error) {
+                showToast(String(data.error));
+            }
+            return;
+        }
+
         if (data.action === 'clipboard') {
             if (data.text) {
                 writeClipboard(data.text).then(() => {
@@ -7090,6 +7322,7 @@ async function transferFileToDesktop(deviceId, {
     historyEntry = null,
     readChunkBase64,
     onProgress = null,
+    relayTo = null,
 }) {
     const conn = connections[deviceId];
 
@@ -7111,6 +7344,7 @@ async function transferFileToDesktop(deviceId, {
             mime_type: safeMimeType,
             size_bytes: totalBytes,
             is_archive: false,
+            ...(relayTo ? { relay_to: relayTo } : {}),
         }, FILE_TRANSFER_START_TIMEOUT_MS);
 
         if (startResult.status !== 'ok') {
@@ -7203,6 +7437,7 @@ async function sendFileToDesktopInChunks(deviceId, {
     failureToast = false,
     successToast = '',
     readChunkBase64,
+    relayTo = null,
 }) {
     const conn = connections[deviceId];
     const btn = $(buttonId);
@@ -7223,6 +7458,7 @@ async function sendFileToDesktopInChunks(deviceId, {
             sizeBytes,
             historyEntry,
             readChunkBase64,
+            relayTo,
             onProgress: ({ stage, progress }) => {
                 if (btn) btn.textContent = stage === 'saving' ? t('保存中...') : `${progress}%`;
             },
