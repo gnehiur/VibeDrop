@@ -15,6 +15,7 @@ import threading
 import time
 
 _device_names_lock = threading.Lock()
+_report_regen_running = threading.Event()
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -619,26 +620,48 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                 return
 
             if path == "/report/self-study":
-                # 消息自我研究完整报告:jieba 全套分析,缓存24小时,?refresh=1 立即重跑
+                # SWR:打开永远秒出缓存;过期只在后台重算,下次打开即新。
+                # ?refresh=1 例外(用户明确要新数据,同步等)。写临时文件+原子替换,防半张报告被读走。
                 report_file = vault_root / "reports" / "self-study.html"
                 query = urllib.parse.parse_qs(parsed_path.query)
                 force = query.get("refresh", ["0"])[0] == "1"
                 stale = (not report_file.exists()) or (time.time() - report_file.stat().st_mtime > 24 * 3600)
-                if force or stale:
+
+                def regenerate() -> None:
                     try:
                         report_file.parent.mkdir(parents=True, exist_ok=True)
+                        tmp_file = report_file.with_suffix(".html.tmp")
                         script = pathlib.Path.home() / ".local/share/vibedrop-vault/app/message-self-study.py"
                         env = dict(os.environ)
-                        env["SELF_STUDY_OUTPUT"] = str(report_file)
+                        env["SELF_STUDY_OUTPUT"] = str(tmp_file)
                         report_python = pathlib.Path.home() / ".local/share/vibedrop-vault/venv/bin/python"
                         subprocess.run(
                             [str(report_python if report_python.exists() else sys.executable), str(script), "http://127.0.0.1:8788"],
                             env=env, timeout=180, check=True,
                         )
-                    except Exception as exc:
-                        if not report_file.exists():
-                            self.send_json(500, {"ok": False, "error": f"报告生成失败: {exc}"})
-                            return
+                        os.replace(tmp_file, report_file)
+                    finally:
+                        _report_regen_running.clear()
+
+                need_sync = force or not report_file.exists()
+                if need_sync:
+                    if _report_regen_running.is_set():
+                        # 后台已在算,等它出锅(最多90秒)
+                        deadline = time.time() + 90
+                        while _report_regen_running.is_set() and time.time() < deadline:
+                            time.sleep(0.5)
+                    else:
+                        _report_regen_running.set()
+                        try:
+                            regenerate()
+                        except Exception as exc:
+                            if not report_file.exists():
+                                self.send_json(500, {"ok": False, "error": f"报告生成失败: {exc}"})
+                                return
+                elif stale and not _report_regen_running.is_set():
+                    _report_regen_running.set()
+                    threading.Thread(target=regenerate, daemon=True).start()
+
                 try:
                     payload = report_file.read_bytes()
                 except Exception as exc:
