@@ -26,6 +26,21 @@ VibeDrop 由三端组成，通过 **WebSocket** 在局域网内直连通信，�
 
 ---
 
+## 截图
+
+**智能发送卡「跟随光标发送」**——手机说话,文字自动落到光标所在的那台电脑(通用控制场景):
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center"><img src="assets/screenshots/ios-smart-card.png" width="320" alt="iOS 智能发送卡"><br><sub>iOS (iPhone 17 Pro Max)</sub></td>
+    <td align="center"><img src="assets/screenshots/android-smart-card.jpg" width="320" alt="Android 智能发送卡"><br><sub>Android (一加 Ace 5)</sub></td>
+  </tr>
+</table>
+</div>
+
+---
+
 ## 功能一览
 
 | 功能 | Mac 端 | Android 端 |
