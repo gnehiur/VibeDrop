@@ -7,7 +7,9 @@ MB="overlord@overlorddeMacBook-Air-4.local"
 echo "[update-mini] 从 MacBook 拉取已签名成品..."
 TMP=$(mktemp -d)
 ssh "$MB" 'cd /Applications && tar cf - VibeDrop.app' | tar xf - -C "$TMP"
-codesign -dvv "$TMP/VibeDrop.app" 2>&1 | grep -q "VibeTech" || {
+# 注意:pipefail 下 grep -q 提前关管道会让 codesign 吃 SIGPIPE 误判失败,先落变量再查
+SIG=$(codesign -dvv "$TMP/VibeDrop.app" 2>&1 || true)
+echo "$SIG" | grep -q "VibeTech" || {
   echo "[update-mini] ⚠️ 成品不是 VibeTech 签名,中止(先在 MacBook 跑 deploy-desktop.sh)"; exit 1; }
 echo "[update-mini] 停旧进程并替换..."
 pkill -f "VibeDrop.app/Contents/MacOS" 2>/dev/null || true
