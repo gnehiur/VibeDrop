@@ -3797,7 +3797,7 @@ async function smartDispatch(kind) {
 // 连续口述省掉"重新点框+点语音"两个动作(2026-08-12 用户要求)
 function keepKeyboardOnPress(btn) {
     if (!btn) return;
-    btn.addEventListener('mousedown', (event) => event.preventDefault());
+    if (btn) btn.addEventListener('mousedown', (event) => event.preventDefault());
 }
 
 function createSmartCard() {
@@ -3894,7 +3894,7 @@ function createSmartCard() {
         const targetId = smartPendingMediaTarget || (file ? resolveSmartMediaTarget() : null);
         smartPendingMediaTarget = null;
         if (targetId && file) {
-            await sendSelectedImage(targetId, file);
+            await sendSelectedImage(targetId, file, 'imagebtn-smart');
         }
     });
     smartFileInput.addEventListener('change', async (event) => {
@@ -3904,9 +3904,9 @@ function createSmartCard() {
         smartPendingMediaTarget = null;
         if (!targetId || !files.length) return;
         if (files.length > 1) {
-            await sendSelectedFilesBatch(targetId, files);
+            await sendSelectedFilesBatch(targetId, files, 'filebtn-smart');
         } else {
-            await sendSelectedFile(targetId, files[0]);
+            await sendSelectedFile(targetId, files[0], 'filebtn-smart');
         }
     });
     return card;
@@ -4048,15 +4048,15 @@ function renderHistoryFilters(devices) {
 
     options.forEach((option) => {
         const btn = document.createElement('button');
-        btn.className = 'filter-btn';
-        btn.dataset.filter = option.value;
-        btn.textContent = option.label;
+        if (btn) btn.className = 'filter-btn';
+        if (btn) btn.dataset.filter = option.value;
+        if (btn) btn.textContent = option.label;
         container.appendChild(btn);
     });
 
     // 绑定事件
     container.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
+        if (btn) btn.addEventListener('click', () => {
             currentHistoryFilters.device = btn.dataset.filter;
             clearHistoryHeatmapSelection();
             renderDeviceFilterState();
@@ -4103,11 +4103,11 @@ function getHistoryDeviceOptions(history = getHistory(), devices = getDevices())
 
 function initNavigation() {
     document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
+        if (btn) btn.addEventListener('click', () => {
             const viewId = btn.dataset.view;
             showView(viewId);
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+            if (btn) btn.classList.add('active');
             if (viewId === 'history-view') {
                 refreshVaultMergedHistory();
                 void refreshLocalMediaExistence();
@@ -4462,7 +4462,7 @@ function initHistoryFilterControls() {
     const timeContainer = $('history-time-filter-btns');
     if (timeContainer) {
         timeContainer.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
+            if (btn) btn.addEventListener('click', () => {
                 const value = btn.dataset.timeFilter;
                 if (value === 'custom') {
                     openHistoryFilterSheet();
@@ -4479,7 +4479,7 @@ function initHistoryFilterControls() {
     const availabilityContainer = $('history-availability-filter-btns');
     if (availabilityContainer) {
         availabilityContainer.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
+            if (btn) btn.addEventListener('click', () => {
                 currentHistoryFilters.availability = btn.dataset.availabilityFilter || 'available';
                 clearHistoryHeatmapSelection();
                 renderAvailabilityFilterState();
@@ -4492,7 +4492,7 @@ function initHistoryFilterControls() {
     const kindContainer = $('history-kind-filter-btns');
     if (kindContainer) {
         kindContainer.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
+            if (btn) btn.addEventListener('click', () => {
                 currentHistoryFilters.kind = btn.dataset.kindFilter || 'all';
                 clearHistoryHeatmapSelection();
                 renderKindFilterState();
@@ -4644,25 +4644,25 @@ function applyHistoryFilterForm() {
 
 function renderDeviceFilterState() {
     $('history-filter-btns')?.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.filter === currentHistoryFilters.device);
+        if (btn) btn.classList.toggle('active', btn.dataset.filter === currentHistoryFilters.device);
     });
 }
 
 function renderTimeFilterState() {
     $('history-time-filter-btns')?.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.timeFilter === currentHistoryFilters.quickTime);
+        if (btn) btn.classList.toggle('active', btn.dataset.timeFilter === currentHistoryFilters.quickTime);
     });
 }
 
 function renderKindFilterState() {
     $('history-kind-filter-btns')?.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.kindFilter === (currentHistoryFilters.kind || 'all'));
+        if (btn) btn.classList.toggle('active', btn.dataset.kindFilter === (currentHistoryFilters.kind || 'all'));
     });
 }
 
 function renderAvailabilityFilterState() {
     $('history-availability-filter-btns')?.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.availabilityFilter === (currentHistoryFilters.availability || 'available'));
+        if (btn) btn.classList.toggle('active', btn.dataset.availabilityFilter === (currentHistoryFilters.availability || 'available'));
     });
 }
 
@@ -6628,9 +6628,9 @@ async function sendDeviceAction(deviceId, {
 
     debugLog('sendAction:ready', { deviceId, action });
 
-    const originalText = btn.textContent;
-    btn.classList.add('sending');
-    btn.textContent = pendingText;
+    const originalText = btn ? btn.textContent : '';
+    if (btn) btn.classList.add('sending');
+    if (btn) btn.textContent = pendingText;
     setActionButtonsDisabled(deviceId, true);
 
     try {
@@ -6650,8 +6650,8 @@ async function sendDeviceAction(deviceId, {
             if (successToast) {
                 showToast(successToast);
             }
-            btn.classList.add('success');
-            btn.textContent = '✓';
+            if (btn) btn.classList.add('success');
+            if (btn) btn.textContent = '✓';
             if (clearInput && input) {
                 input.value = '';
                 setSendDraft(deviceId, '');
@@ -6666,8 +6666,8 @@ async function sendDeviceAction(deviceId, {
         if (failureToast) {
             showToast(result.error || '操作失败');
         }
-        btn.classList.add('fail');
-        btn.textContent = '✗';
+        if (btn) btn.classList.add('fail');
+        if (btn) btn.textContent = '✗';
         return { ok: false, error: result.error || '操作失败' };
     } catch (e) {
         debugLog('sendAction:catch', {
@@ -6682,13 +6682,13 @@ async function sendDeviceAction(deviceId, {
         if (failureToast) {
             showToast(e.message || '操作失败');
         }
-        btn.classList.add('fail');
-        btn.textContent = '✗';
+        if (btn) btn.classList.add('fail');
+        if (btn) btn.textContent = '✗';
         return { ok: false, error: e.message || '操作失败' };
     } finally {
         setTimeout(() => {
-            btn.classList.remove('sending', 'success', 'fail');
-            btn.textContent = originalText;
+            if (btn) btn.classList.remove('sending', 'success', 'fail');
+            if (btn) btn.textContent = originalText;
             setActionButtonsDisabled(deviceId, !conn.authenticated);
         }, 800);
     }
@@ -7164,9 +7164,9 @@ async function sendFileToDesktopInChunks(deviceId, {
         return { ok: false, error: '未连接' };
     }
 
-    const originalText = btn.textContent;
-    btn.classList.add('sending');
-    btn.textContent = pendingText;
+    const originalText = btn ? btn.textContent : '';
+    if (btn) btn.classList.add('sending');
+    if (btn) btn.textContent = pendingText;
     setActionButtonsDisabled(deviceId, true);
 
     try {
@@ -7177,7 +7177,7 @@ async function sendFileToDesktopInChunks(deviceId, {
             historyEntry,
             readChunkBase64,
             onProgress: ({ stage, progress }) => {
-                btn.textContent = stage === 'saving' ? '保存中...' : `${progress}%`;
+                if (btn) btn.textContent = stage === 'saving' ? '保存中...' : `${progress}%`;
             },
         });
 
@@ -7185,21 +7185,21 @@ async function sendFileToDesktopInChunks(deviceId, {
             if (successToast) {
                 showToast(successToast);
             }
-            btn.classList.add('success');
-            btn.textContent = '✓';
+            if (btn) btn.classList.add('success');
+            if (btn) btn.textContent = '✓';
             return result;
         }
 
         if (failureToast) {
             showToast(result.error || '文件传输失败');
         }
-        btn.classList.add('fail');
-        btn.textContent = '✗';
+        if (btn) btn.classList.add('fail');
+        if (btn) btn.textContent = '✗';
         return result;
     } finally {
         setTimeout(() => {
-            btn.classList.remove('sending', 'success', 'fail');
-            btn.textContent = originalText;
+            if (btn) btn.classList.remove('sending', 'success', 'fail');
+            if (btn) btn.textContent = originalText;
             setActionButtonsDisabled(deviceId, !conn.authenticated);
         }, 800);
     }
@@ -7278,13 +7278,13 @@ async function sendFilesToDesktopBatch(deviceId, items, {
     }
 
     const historyEntry = createOutboundBatchHistoryEntry(deviceId, normalizedItems);
-    const originalText = btn.textContent;
+    const originalText = btn ? btn.textContent : '';
     let successCount = 0;
     let failedCount = 0;
     const failedIndexes = [];
 
-    btn.classList.add('sending');
-    btn.textContent = pendingText;
+    if (btn) btn.classList.add('sending');
+    if (btn) btn.textContent = pendingText;
     setActionButtonsDisabled(deviceId, true);
 
     try {
@@ -7299,7 +7299,7 @@ async function sendFilesToDesktopBatch(deviceId, items, {
                 sizeBytes: item.sizeBytes,
                 readChunkBase64: item.readChunkBase64,
                 onProgress: ({ stage, progress }) => {
-                    btn.textContent = stage === 'saving'
+                    if (btn) btn.textContent = stage === 'saving'
                         ? `${prefix} · 保存中`
                         : `${prefix} · ${progress}%`;
                 },
@@ -7334,14 +7334,14 @@ async function sendFilesToDesktopBatch(deviceId, items, {
         }));
 
         if (failedCount === 0) {
-            btn.classList.add('success');
-            btn.textContent = '✓';
+            if (btn) btn.classList.add('success');
+            if (btn) btn.textContent = '✓';
         } else if (successCount === 0) {
-            btn.classList.add('fail');
-            btn.textContent = '✗';
+            if (btn) btn.classList.add('fail');
+            if (btn) btn.textContent = '✗';
         } else {
-            btn.classList.add('success');
-            btn.textContent = `${successCount}/${normalizedItems.length}`;
+            if (btn) btn.classList.add('success');
+            if (btn) btn.textContent = `${successCount}/${normalizedItems.length}`;
         }
 
         return {
@@ -7353,8 +7353,8 @@ async function sendFilesToDesktopBatch(deviceId, items, {
         };
     } finally {
         setTimeout(() => {
-            btn.classList.remove('sending', 'success', 'fail');
-            btn.textContent = originalText;
+            if (btn) btn.classList.remove('sending', 'success', 'fail');
+            if (btn) btn.textContent = originalText;
             setActionButtonsDisabled(deviceId, !conn.authenticated);
         }, 900);
     }
@@ -7411,7 +7411,7 @@ function createThumbnailDataUrl(sourceDataUrl, outputType = 'image/jpeg') {
     });
 }
 
-async function sendSelectedImage(deviceId, file) {
+async function sendSelectedImage(deviceId, file, buttonIdOverride = null) {
     if (!file) return;
     // 从系统选图器返回瞬间 WS 可能还没重连上,等它就绪再发(静默放弃是"选完图没反应"的病根)
     const conn = await ensureReadyConnectionForSend(deviceId);
@@ -7466,7 +7466,7 @@ async function sendSelectedImage(deviceId, file) {
                 mime_type: file.type,
                 image_base64: imageBase64,
             },
-            buttonId: `imagebtn-${deviceId}`,
+            buttonId: buttonIdOverride || `imagebtn-${deviceId}`,
             pendingText: '传图中...',
             historyEntry,
             failureToast: true,
@@ -7480,7 +7480,7 @@ async function sendSelectedImage(deviceId, file) {
     }
 }
 
-async function sendSelectedFile(deviceId, file) {
+async function sendSelectedFile(deviceId, file, buttonIdOverride = null) {
     if (!file) return;
     const conn = await ensureReadyConnectionForSend(deviceId);
     if (!isConnectionReady(conn)) return;
@@ -7503,7 +7503,7 @@ async function sendSelectedFile(deviceId, file) {
             fileName: file.name,
             mimeType: file.type || 'application/octet-stream',
             sizeBytes: file.size,
-            buttonId: `filebtn-${deviceId}`,
+            buttonId: buttonIdOverride || `filebtn-${deviceId}`,
             pendingText: '传文件中...',
             historyEntry,
             failureToast: true,
@@ -7517,7 +7517,7 @@ async function sendSelectedFile(deviceId, file) {
     }
 }
 
-async function sendSelectedFilesBatch(deviceId, files) {
+async function sendSelectedFilesBatch(deviceId, files, buttonIdOverride = null) {
     const normalizedFiles = Array.from(files || []).filter(Boolean);
     if (normalizedFiles.length <= 1) return;
     // 从系统选择器返回瞬间 WS 可能没重连上,等就绪再发
@@ -7533,7 +7533,7 @@ async function sendSelectedFilesBatch(deviceId, files) {
     }));
 
     await sendFilesToDesktopBatch(deviceId, batchItems, {
-        buttonId: `filebtn-${deviceId}`,
+        buttonId: buttonIdOverride || `filebtn-${deviceId}`,
         pendingText: '批量传输中...',
     });
 }
@@ -8708,11 +8708,11 @@ function renderHistorySourceFilters() {
     container.innerHTML = '';
     options.forEach((option) => {
         const btn = document.createElement('button');
-        btn.className = 'filter-btn';
+        if (btn) btn.className = 'filter-btn';
         const active = option.value === '' ? selected.size === 0 : selected.has(option.value);
         if (active) btn.classList.add('active');
-        btn.textContent = option.label;
-        btn.addEventListener('click', () => {
+        if (btn) btn.textContent = option.label;
+        if (btn) btn.addEventListener('click', () => {
             const current = new Set(currentHistoryFilters.sources || []);
             if (option.value === '') {
                 current.clear();
@@ -9524,10 +9524,10 @@ function showMediaViewerSlideError(slide, message) {
     error.appendChild(text);
     if (supportsExternalMediaOpen() && (slide.viewItem.item.savedPath || slide.viewItem.item.filePath)) {
         const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'media-viewer-error-btn';
-        btn.textContent = '用其他应用打开';
-        btn.addEventListener('click', (event) => {
+        if (btn) btn.type = 'button';
+        if (btn) btn.className = 'media-viewer-error-btn';
+        if (btn) btn.textContent = '用其他应用打开';
+        if (btn) btn.addEventListener('click', (event) => {
             event.stopPropagation();
             closeMediaViewer({ instant: true });
             openHistoryMediaItemExternally(slide.viewItem.item);
