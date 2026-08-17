@@ -17,6 +17,9 @@
         { prefix: ['es'], lang: 'es' },
         { prefix: ['fr'], lang: 'fr' },
         { prefix: ['de'], lang: 'de' },
+        { prefix: ['ru'], lang: 'ru' },
+        { prefix: ['sw'], lang: 'sw' },
+        { prefix: ['qu'], lang: 'qu' },
     ];
 
     function detectLang() {
