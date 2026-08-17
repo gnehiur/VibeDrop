@@ -374,6 +374,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initSettingsButton();
     initOutingModeSetting();
     initHomeCardsSetting();
+    initLanguageSetting();
     ensureDeviceNameSync();
     initSelfStudyCard();
     initMediaOpenerSettings();
@@ -835,6 +836,15 @@ function initHomeCardsSetting() {
             showToast(deviceToggle.checked ? '传统设备卡已显示' : '传统设备卡已隐藏');
         });
     }
+}
+
+function initLanguageSetting() {
+    const select = $('language-select');
+    if (!select || !window.vibeI18n) return;
+    select.value = localStorage.getItem(window.vibeI18n.LANG_KEY) || 'system';
+    select.addEventListener('change', () => {
+        window.vibeI18n.setLanguage(select.value); // 内部会整页重载
+    });
 }
 
 function initOutingModeSetting() {
@@ -3712,10 +3722,10 @@ function resolveSmartTargetId() {
 
 function smartTargetLabel() {
     const id = resolveSmartTargetId();
-    if (!id) return '无可用电脑';
+    if (!id) return t('无可用电脑');
     const dev = getDevices().find((d) => d.id === id);
-    const name = dev?.name || '未知';
-    return (smartSend.mode === 'manual' ? '手动 → ' : '自动 → ') + name;
+    const name = dev?.name || t('未知');
+    return (smartSend.mode === 'manual' ? t('手动 → ') : t('自动 → ')) + name;
 }
 
 function updateSmartCardUI() {
@@ -3763,7 +3773,7 @@ function ensureSmartPolling() {
 async function smartDispatch(kind) {
     const targetId = resolveSmartTargetId();
     if (!targetId) {
-        showToast('没有已连接的电脑');
+        showToast(t('没有已连接的电脑'));
         return;
     }
     localStorage.setItem(SMART_LAST_KEY, targetId);
@@ -3806,20 +3816,20 @@ function createSmartCard() {
     card.id = 'card-smart';
     card.innerHTML = `
             <div class="mac-header">
-                <span class="smart-badge">智能</span>
-                <span class="mac-name">跟随光标发送</span>
+                <span class="smart-badge">${t('智能')}</span>
+                <span class="mac-name">${t('跟随光标发送')}</span>
                 <button type="button" class="smart-target-chip" id="smart-target-chip">…</button>
             </div>
             <div class="input-group">
-                <textarea id="input-smart" placeholder="自动发到光标所在的电脑..." rows="3"></textarea>
+                <textarea id="input-smart" placeholder="${t('自动发到光标所在的电脑...')}" rows="3"></textarea>
                 <div class="send-actions">
-                    <button class="send-btn aux-btn" id="sendbtn-smart">发送</button>
-                    <button class="send-btn aux-btn enter-btn" id="enterbtn-smart">回车</button>
+                    <button class="send-btn aux-btn" id="sendbtn-smart">${t('发送')}</button>
+                    <button class="send-btn aux-btn enter-btn" id="enterbtn-smart">${t('回车')}</button>
                 </div>
-                <button class="send-btn combo-btn" id="sendenterbtn-smart">发送并回车</button>
+                <button class="send-btn combo-btn" id="sendenterbtn-smart">${t('发送并回车')}</button>
                 <div class="send-actions media-actions">
-                    <button class="send-btn image-btn" id="imagebtn-smart">传图到剪贴板</button>
-                    <button class="send-btn image-btn" id="filebtn-smart">传到收件箱</button>
+                    <button class="send-btn image-btn" id="imagebtn-smart">${t('传图到剪贴板')}</button>
+                    <button class="send-btn image-btn" id="filebtn-smart">${t('传到收件箱')}</button>
                 </div>
                 <input type="file" id="imageinput-smart" accept="image/*" class="hidden-file-input">
                 <input type="file" id="fileinput-smart" class="hidden-file-input" multiple>
@@ -3848,7 +3858,7 @@ function createSmartCard() {
     const resolveSmartMediaTarget = () => {
         const targetId = resolveSmartTargetId();
         if (!targetId) {
-            showToast('没有已连接的电脑');
+            showToast(t('没有已连接的电脑'));
             return null;
         }
         localStorage.setItem(SMART_LAST_KEY, targetId);

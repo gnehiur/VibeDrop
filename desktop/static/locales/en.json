@@ -1,0 +1,18 @@
+{
+  "发送": "Send",
+  "回车": "Enter",
+  "发送并回车": "Send & Enter",
+  "传图到剪贴板": "Image → Clipboard",
+  "传到收件箱": "Send to Inbox",
+  "自动发到光标所在的电脑...": "Auto-sends to the Mac where your cursor is...",
+  "自动 → ": "Auto → ",
+  "手动 → ": "Manual → ",
+  "无可用电脑": "No Mac available",
+  "没有已连接的电脑": "No Mac connected",
+  "跟随光标发送": "Follow-Cursor Send",
+  "智能": "Smart",
+  "未知": "Unknown",
+  "语言": "Language",
+  "界面显示语言，翻译缺失处回退中文。": "UI language. Untranslated text falls back to Chinese.",
+  "跟随系统": "Follow system"
+}
