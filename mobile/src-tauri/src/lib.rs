@@ -1856,6 +1856,7 @@ fn apply_ios_scroll_lock(window: tauri::WebviewWindow) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // iOS:应用壳布局下外层 WebView 永远不该滚动(键盘弹出才不会整页上推)。
             // 启动上一次锁;前端还会在每次回前台时通过 apply_ios_scroll_lock 补锁,

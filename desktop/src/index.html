@@ -276,54 +276,57 @@
                         </div>
                     </section>
                     <section class="desktop-page hidden" id="desktop-page-settings" data-page="settings">
-                        <div class="overview-card">
-                            <h2 data-i18n>设置</h2>
-                            <div class="settings-row">
-                                <div class="settings-copy">
-                                    <h3 data-i18n>语言</h3>
-                                    <p class="hint" data-i18n>界面显示语言，翻译缺失处回退中文。</p>
-                                </div>
-                                <select id="language-select" class="timezone-select">
-                                    <option value="system" data-i18n>跟随系统</option>
-                                    <option value="zh-CN">简体中文 (Simplified Chinese)</option>
-                                    <option value="zh-TW">繁體中文 (Traditional Chinese)</option>
-                                    <option value="en">English (英语)</option>
-                                    <option value="ja">日本語 (日语 | Japanese)</option>
-                                    <option value="ko">한국어 (韩语 | Korean)</option>
-                                    <option value="es">Español (西班牙语 | Spanish)</option>
-                                    <option value="fr">Français (法语 | French)</option>
-                                    <option value="de">Deutsch (德语 | German)</option>
-                                    <option value="ru">Русский (俄语 | Russian)</option>
-                                    <option value="sw">Kiswahili (斯瓦希里语 | Swahili)</option>
-                                    <option value="qu">Runasimi (克丘亚语 | Quechua)</option>
-                                </select>
+                        <div class="overview-top-grid">
+                            <div class="overview-left-column">
+                                <section class="info-card">
+                                    <h2 data-i18n>语言</h2>
+                                    <p class="host-card-caption" data-i18n>界面显示语言，翻译缺失处回退中文。</p>
+                                    <select id="language-select" class="timezone-select">
+                                        <option value="system" data-i18n>跟随系统</option>
+                                        <option value="zh-CN">简体中文 (Simplified Chinese)</option>
+                                        <option value="zh-TW">繁體中文 (Traditional Chinese)</option>
+                                        <option value="en">English (英语)</option>
+                                        <option value="ja">日本語 (日语 | Japanese)</option>
+                                        <option value="ko">한국어 (韩语 | Korean)</option>
+                                        <option value="es">Español (西班牙语 | Spanish)</option>
+                                        <option value="fr">Français (法语 | French)</option>
+                                        <option value="de">Deutsch (德语 | German)</option>
+                                        <option value="ru">Русский (俄语 | Russian)</option>
+                                        <option value="sw">Kiswahili (斯瓦希里语 | Swahili)</option>
+                                        <option value="qu">Runasimi (克丘亚语 | Quechua)</option>
+                                    </select>
+                                </section>
+                                <section class="info-card">
+                                    <h2 data-i18n>显示时区</h2>
+                                    <p class="host-card-caption" data-i18n>消息时间与热力图统计使用的时区。</p>
+                                    <select id="display-timezone-select" class="timezone-select">
+                                        <option value="system" data-i18n>本机时区</option>
+                                        <option value="Asia/Shanghai" data-i18n>北京时间</option>
+                                        <option value="America/Los_Angeles" data-i18n>美西时间</option>
+                                    </select>
+                                </section>
+                                <section class="info-card">
+                                    <h2 data-i18n>辅助功能权限</h2>
+                                    <p class="host-card-caption" data-i18n>模拟键盘输入必需。更新后若失效，请在系统设置中重新勾选。</p>
+                                    <div class="settings-inline">
+                                        <span id="a11y-status" class="host-card-caption">…</span>
+                                        <button type="button" class="secondary-btn" id="a11y-open-btn" data-i18n>打开系统设置</button>
+                                    </div>
+                                </section>
                             </div>
-                            <div class="settings-row">
-                                <div class="settings-copy">
-                                    <h3 data-i18n>显示时区</h3>
-                                    <p class="hint" data-i18n>消息时间与热力图统计使用的时区。</p>
-                                </div>
-                                <select id="display-timezone-select" class="timezone-select">
-                                    <option value="system" data-i18n>本机时区</option>
-                                    <option value="Asia/Shanghai" data-i18n>北京时间</option>
-                                    <option value="America/Los_Angeles" data-i18n>美西时间</option>
-                                </select>
-                            </div>
-                            <div class="settings-row">
-                                <div class="settings-copy">
-                                    <h3 data-i18n>辅助功能权限</h3>
-                                    <p class="hint" data-i18n>模拟键盘输入必需。更新后若失效，请在系统设置中重新勾选。</p>
-                                </div>
-                                <div class="settings-actions">
-                                    <span id="a11y-status" class="hint">…</span>
-                                    <button type="button" class="secondary-btn" id="a11y-open-btn" data-i18n>打开系统设置</button>
-                                </div>
-                            </div>
-                            <div class="settings-row">
-                                <div class="settings-copy">
-                                    <h3 data-i18n>版本</h3>
-                                </div>
-                                <span id="app-version" class="hint">—</span>
+                            <div class="overview-right-column">
+                                <section class="info-card">
+                                    <h2 data-i18n>关于</h2>
+                                    <div class="info-row">
+                                        <span class="info-label" data-i18n>版本</span>
+                                        <span class="info-value" id="app-version">—</span>
+                                    </div>
+                                    <div class="settings-inline">
+                                        <button type="button" class="secondary-btn" id="github-open-btn" data-i18n>GitHub 项目主页</button>
+                                        <button type="button" class="secondary-btn" id="check-update-btn" data-i18n>检查更新</button>
+                                    </div>
+                                    <p class="host-card-caption" id="update-result"></p>
+                                </section>
                             </div>
                         </div>
                     </section>

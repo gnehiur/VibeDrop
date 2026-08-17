@@ -262,11 +262,55 @@ function initDesktopSettingsPage() {
     refreshA11y();
     setInterval(refreshA11y, 5000);
     const versionEl = document.getElementById('app-version');
+    let currentVersion = '';
     if (versionEl) {
         try {
-            window.__TAURI__?.app?.getVersion?.().then((v) => { versionEl.textContent = v; });
+            window.__TAURI__?.app?.getVersion?.().then((v) => {
+                currentVersion = v;
+                versionEl.textContent = v;
+            });
         } catch (_) { /* 保持占位 */ }
     }
+
+    const GITHUB_REPO_URL = 'https://github.com/jncdke/VibeDrop';
+    document.getElementById('github-open-btn')?.addEventListener('click', async () => {
+        try { await invoke('plugin:shell|open', { path: GITHUB_REPO_URL }); } catch (_) { /* 忽略 */ }
+    });
+
+    const updateResult = document.getElementById('update-result');
+    document.getElementById('check-update-btn')?.addEventListener('click', async () => {
+        if (!updateResult) return;
+        updateResult.textContent = t('检查中...');
+        try {
+            const res = await fetch('https://api.github.com/repos/jncdke/VibeDrop/releases/latest');
+            const data = await res.json();
+            const latest = String(data.tag_name || '').replace(/^v/, '');
+            if (!latest) throw new Error('no tag');
+            const cmp = compareVersions(latest, currentVersion || '0.0.0');
+            if (cmp > 0) {
+                updateResult.textContent = t('发现新版 {version}，点此打开下载页', { version: latest });
+                updateResult.style.cursor = 'pointer';
+                updateResult.onclick = async () => {
+                    try { await invoke('plugin:shell|open', { path: data.html_url || GITHUB_REPO_URL + '/releases' }); } catch (_) { /* 忽略 */ }
+                };
+            } else {
+                updateResult.textContent = t('当前已是最新版本');
+                updateResult.onclick = null;
+            }
+        } catch (_) {
+            updateResult.textContent = t('检查失败，请稍后再试');
+        }
+    });
+}
+
+function compareVersions(a, b) {
+    const pa = String(a).split('.').map(Number);
+    const pb = String(b).split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d !== 0) return d;
+    }
+    return 0;
 }
 
 function renderDesktopTabState() {

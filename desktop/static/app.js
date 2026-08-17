@@ -386,6 +386,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initOutingModeSetting();
     initHomeCardsSetting();
     initLanguageSetting();
+    initAboutSection();
     ensureDeviceNameSync();
     initSelfStudyCard();
     initMediaOpenerSettings();
@@ -875,6 +876,57 @@ function initHomeCardsSetting() {
             showToast(deviceToggle.checked ? t('传统设备卡已显示') : t('传统设备卡已隐藏'));
         });
     }
+}
+
+function compareAppVersions(a, b) {
+    const pa = String(a).split('.').map(Number);
+    const pb = String(b).split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d !== 0) return d;
+    }
+    return 0;
+}
+
+function openExternalUrl(url) {
+    return invokeNative('plugin:opener|open_url', { url }).catch(() => {
+        window.open(url, '_blank'); // 兜底
+    });
+}
+
+function initAboutSection() {
+    const GITHUB_REPO_URL = 'https://github.com/jncdke/VibeDrop';
+    let currentVersion = '';
+    const versionEl = $('app-version');
+    try {
+        window.__TAURI__?.app?.getVersion?.().then((v) => {
+            currentVersion = v;
+            if (versionEl) versionEl.textContent = v;
+        });
+    } catch (_) { /* 占位 */ }
+
+    $('github-open-btn')?.addEventListener('click', () => openExternalUrl(GITHUB_REPO_URL));
+
+    const updateResult = $('update-result');
+    $('check-update-btn')?.addEventListener('click', async () => {
+        if (!updateResult) return;
+        updateResult.textContent = t('检查中...');
+        try {
+            const res = await fetch('https://api.github.com/repos/jncdke/VibeDrop/releases/latest');
+            const data = await res.json();
+            const latest = String(data.tag_name || '').replace(/^v/, '');
+            if (!latest) throw new Error('no tag');
+            if (compareAppVersions(latest, currentVersion || '0.0.0') > 0) {
+                updateResult.textContent = t('发现新版 {version}，点此打开下载页', { version: latest });
+                updateResult.onclick = () => openExternalUrl(data.html_url || GITHUB_REPO_URL + '/releases');
+            } else {
+                updateResult.textContent = t('当前已是最新版本');
+                updateResult.onclick = null;
+            }
+        } catch (_) {
+            updateResult.textContent = t('检查失败，请稍后再试');
+        }
+    });
 }
 
 function initLanguageSetting() {

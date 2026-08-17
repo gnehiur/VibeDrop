@@ -2047,3 +2047,7 @@ mark.history-hl{background:rgba(255,214,90,.85);color:inherit;border-radius:3px;
 .settings-copy h3 { margin: 0 0 4px; font-size: 15px; }
 .settings-copy .hint { margin: 0; max-width: 420px; }
 .settings-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ===== 设置页 ===== */
+.settings-inline { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+#desktop-page-settings .timezone-select { margin-top: 10px; }
