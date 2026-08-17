@@ -1,3 +1,5 @@
+[简体中文](README.md) | [English](README.en.md) | [日本語](README.ja.md)
+
 <div align="center">
 
 <img src="docs/logo.png" width="120" alt="VibeDrop logo">
