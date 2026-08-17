@@ -359,10 +359,21 @@ const $ = (id) => document.getElementById(id);
 let clientIdentity = getClientIdentity();
 let nativeCapabilityWatcherStarted = false;
 let lastNativeCapabilityState = supportsNativeFileReceive();
+const i18nDictionaryReadyAtBoot = window.vibeI18n?.lang === 'zh-CN'
+    || Boolean(localStorage.getItem(`vibedrop-i18n-cache-${window.vibeI18n?.lang || 'en'}`));
+
+// 首次切到非中文时词典可能晚于动态 UI 到达；词典落盘后仅补一次重载，
+// 第二次启动会由 i18n.js 的同步缓存路径在任何渲染前填好 dict。
+window.addEventListener('i18n-updated', () => {
+    if (!i18nDictionaryReadyAtBoot && window.vibeI18n?.lang !== 'zh-CN') {
+        window.location.reload();
+    }
+});
 
 // ---- 初始化 ----
 document.addEventListener('DOMContentLoaded', async () => {
     clientIdentity = getClientIdentity();
+    localizeStaticAttributes();
     // 先把 UI 和连接跑起来（都是毫秒级操作），几千条历史的大加载放到后面，
     // 否则冷启动时首页要白屏等待历史初始化完成。
     nativeHistoryStoreEnabled = supportsNativeHistoryStore();
@@ -400,6 +411,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadPendingSharedContent();
     }, 50);
 });
+
+function localizeStaticAttributes() {
+    document.documentElement.lang = window.vibeI18n?.lang === 'zh-CN' ? 'zh-CN' : 'en';
+    const metaDescription = document.querySelector('meta[name="description"]');
+    if (metaDescription) metaDescription.content = t('VibeDrop - 从手机发送文字到 Mac 电脑');
+    const rowLabels = [
+        ['history-source-btns', t('来源')],
+        ['history-filter-btns', t('目标')],
+        ['history-kind-filter-btns', t('类型')],
+        ['history-availability-filter-btns', t('原件')],
+        ['history-time-filter-btns', t('时间')],
+    ];
+    rowLabels.forEach(([id, label]) => $(id)?.setAttribute('data-row-label', label));
+    $('history-heatmap-card')?.setAttribute('aria-label', t('发送活跃热力图'));
+    $('history-selfstudy-card')?.setAttribute('aria-label', t('消息自我研究'));
+    $('history-date-picker-prev-btn')?.setAttribute('aria-label', t('上个月'));
+    $('history-date-picker-next-btn')?.setAttribute('aria-label', t('下个月'));
+    $('media-viewer-close')?.setAttribute('aria-label', t('关闭'));
+    $('media-viewer-external')?.setAttribute('aria-label', t('用其他应用打开'));
+}
 
 // ---- 持久化存储（Android SQLite 优先，旧文件/localStorage 兜底）----
 function supportsNativeHistoryStore() {
@@ -531,7 +562,7 @@ async function initializeHistoryStorage() {
         try {
             const result = JSON.parse(window.NativeHistory.replaceHistory(raw) || '{}');
             if (result.ok === false) {
-                throw new Error(result.error || 'SQLite 保存失败');
+                throw new Error(result.error || t('SQLite 保存失败'));
             }
             localStorage.setItem(HISTORY_MIGRATION_FLAG_KEY, '1');
         } catch (error) {
@@ -631,7 +662,7 @@ function buildNativeBackgroundClipboardDevices(devices = getDevices()) {
         .filter((device) => device && device.id && device.ip && device.pin && isUsableDesktopEndpoint(device))
         .map((device) => ({
             id: device.id,
-            name: device.name || '设备',
+            name: device.name || t('设备'),
             ip: String(device.ip || '').trim(),
             port: String(device.port || '9001').trim() || '9001',
             pin: String(device.pin || '').trim(),
@@ -671,7 +702,7 @@ function getDevices() {
         if (settings.mac1Ip) {
             devices.push({
                 id: 'dev_migrated_1',
-                name: '设备 1',
+                name: t('设备 {number}', { number: 1 }),
                 ip: settings.mac1Ip,
                 port: settings.mac1Port || '9001',
                 pin: settings.mac1Pin || '',
@@ -682,7 +713,7 @@ function getDevices() {
         if (settings.mac2Ip) {
             devices.push({
                 id: 'dev_migrated_2',
-                name: '设备 2',
+                name: t('设备 {number}', { number: 2 }),
                 ip: settings.mac2Ip,
                 port: settings.mac2Port || '9001',
                 pin: settings.mac2Pin || '',
@@ -801,7 +832,7 @@ function applySendCardMode(card) {
     });
     const comboBtn = card.querySelector('.combo-btn');
     if (comboBtn && !comboBtn.classList.contains('sending')) {
-        comboBtn.textContent = outing ? '同步剪贴板' : '发送并回车';
+        comboBtn.textContent = outing ? t('同步剪贴板') : t('发送并回车');
     }
 }
 
@@ -825,7 +856,7 @@ function initHomeCardsSetting() {
         smartToggle.addEventListener('change', () => {
             saveStoredSettingsObject({ ...getStoredSettingsObject(), showSmartCard: smartToggle.checked });
             renderSendCards(getDevices());
-            showToast(smartToggle.checked ? '智能发送卡已显示' : '智能发送卡已隐藏');
+            showToast(smartToggle.checked ? t('智能发送卡已显示') : t('智能发送卡已隐藏'));
         });
     }
     if (deviceToggle) {
@@ -833,7 +864,7 @@ function initHomeCardsSetting() {
         deviceToggle.addEventListener('change', () => {
             saveStoredSettingsObject({ ...getStoredSettingsObject(), showDeviceCards: deviceToggle.checked });
             renderSendCards(getDevices());
-            showToast(deviceToggle.checked ? '传统设备卡已显示' : '传统设备卡已隐藏');
+            showToast(deviceToggle.checked ? t('传统设备卡已显示') : t('传统设备卡已隐藏'));
         });
     }
 }
@@ -855,7 +886,7 @@ function initOutingModeSetting() {
     toggle.checked = isOutingMode();
     toggle.addEventListener('change', () => {
         setOutingMode(toggle.checked);
-        showToast(toggle.checked ? '外出模式已开启：发送将写入 Mac 剪贴板' : '外出模式已关闭：恢复键盘输入');
+        showToast(toggle.checked ? t('外出模式已开启：发送将写入 Mac 剪贴板') : t('外出模式已关闭：恢复键盘输入'));
     });
 }
 
@@ -929,7 +960,7 @@ function normalizeDeviceRecord(device) {
     const rawHostName = String(device?.hostName || device?.hostname || '').trim();
     return {
         id: String(device?.id || newDeviceId()),
-        name: String(device?.name || '未命名设备').trim() || '未命名设备',
+        name: String(device?.name || t('未命名设备')).trim() || t('未命名设备'),
         hostName: looksLikeTargetHost(rawHostName) ? rawHostName : '',
         ip: String(device?.ip || '').trim(),
         port: String(device?.port || DESKTOP_DISCOVERY_DEFAULT_PORT).trim() || String(DESKTOP_DISCOVERY_DEFAULT_PORT),
@@ -1034,7 +1065,7 @@ function setStoredHistoryRaw(raw, {
             try {
                 const result = JSON.parse(window.NativeHistory.replaceHistory(nextRaw) || '{}');
                 if (result.ok === false) {
-                    throw new Error(result.error || 'SQLite 保存失败');
+                    throw new Error(result.error || t('SQLite 保存失败'));
                 }
             } catch (error) {
                 console.warn('写入 SQLite 历史失败', error);
@@ -1072,7 +1103,7 @@ function clearStoredHistory() {
         try {
             const result = JSON.parse(window.NativeHistory.deleteHistory() || '{}');
             if (result.ok === false) {
-                throw new Error(result.error || 'SQLite 清空失败');
+                throw new Error(result.error || t('SQLite 清空失败'));
             }
         } catch (error) {
             console.warn('清空 SQLite 历史失败', error);
@@ -1526,15 +1557,15 @@ function isIOSNativeApp() {
 function getNativeMobileDefaultLabel() {
     const platform = getNativeMobilePlatform();
     if (platform === 'android') {
-        return 'Android 手机';
+        return t('Android 手机');
     }
     if (platform === 'ios') {
         return 'iPhone';
     }
     if (platform === 'native') {
-        return '移动 App';
+        return t('移动 App');
     }
-    return '移动浏览器';
+    return t('移动浏览器');
 }
 
 function buildClientDisplayName(clientId, nativeInfo = null) {
@@ -1588,7 +1619,7 @@ function supportsNativeFileReceive() {
 function invokeNative(command, payload = {}) {
     const invoke = getNativeInvoker();
     if (!invoke) {
-        return Promise.reject(new Error('当前环境不支持原生命令'));
+        return Promise.reject(new Error(t('当前环境不支持原生命令')));
     }
     return invoke(command, payload);
 }
@@ -1618,7 +1649,7 @@ function loadSettings() {
         return true;
     } else {
         // 首次打开：创建一个空设备
-        const defaultDevices = [{ id: newDeviceId(), name: '设备 1', ip: '', port: '9001', pin: '' }];
+        const defaultDevices = [{ id: newDeviceId(), name: t('设备 {number}', { number: 1 }), ip: '', port: '9001', pin: '' }];
 
         // 自动填充当前页面的 host（浏览器模式）
         const currentHost = window.location.hostname;
@@ -1648,7 +1679,7 @@ function saveSettingsFromUI() {
             hostName: card.dataset.hostName || '',
             serverId: card.dataset.serverId || '',
             legacyIds: parseDeviceLegacyIds(card.dataset.legacyIds),
-            name: card.querySelector('.device-name-input').value.trim() || '未命名设备',
+            name: card.querySelector('.device-name-input').value.trim() || t('未命名设备'),
             ip: card.querySelector('.device-ip-input').value.trim(),
             port: card.querySelector('.device-port-input').value.trim() || '9001',
             pin: card.querySelector('.device-pin-input').value.trim(),
@@ -1667,7 +1698,7 @@ function getDevicesFromUI() {
             hostName: card.dataset.hostName || '',
             serverId: card.dataset.serverId || '',
             legacyIds: parseDeviceLegacyIds(card.dataset.legacyIds),
-            name: card.querySelector('.device-name-input').value.trim() || '未命名设备',
+            name: card.querySelector('.device-name-input').value.trim() || t('未命名设备'),
             ip: card.querySelector('.device-ip-input').value.trim(),
             port: card.querySelector('.device-port-input').value.trim() || '9001',
             pin: card.querySelector('.device-pin-input').value.trim(),
@@ -1693,20 +1724,20 @@ function renderDeviceCards(devices) {
         card.dataset.legacyIds = JSON.stringify(Array.isArray(dev.legacyIds) ? dev.legacyIds : []);
         card.innerHTML = `
             <div class="device-card-header">
-                <input type="text" class="device-name-input" value="${escapeHtml(dev.name)}" placeholder="设备名称">
-                <button class="device-delete-btn danger-btn-sm" title="删除">删除</button>
+                <input type="text" class="device-name-input" value="${escapeHtml(dev.name)}" placeholder="${t('设备名称')}">
+                <button class="device-delete-btn danger-btn-sm" title="${t('删除')}">${t('删除')}</button>
             </div>
             <div class="setting-row">
-                <label>IP 地址</label>
+                <label>${t('IP 地址')}</label>
                 <input type="text" class="device-ip-input" value="${escapeHtml(dev.ip)}" placeholder="192.168.1.10">
             </div>
             <div class="setting-row">
-                <label>端口</label>
+                <label>${t('端口')}</label>
                 <input type="number" class="device-port-input" value="${escapeHtml(dev.port)}" placeholder="9001">
             </div>
             <div class="setting-row">
-                <label>PIN 码</label>
-                <input type="text" class="device-pin-input" value="${escapeHtml(dev.pin)}" placeholder="输入 PIN">
+                <label>${t('PIN 码')}</label>
+                <input type="text" class="device-pin-input" value="${escapeHtml(dev.pin)}" placeholder="${t('输入 PIN')}">
             </div>
         `;
         container.appendChild(card);
@@ -1715,10 +1746,10 @@ function renderDeviceCards(devices) {
         card.querySelector('.device-delete-btn').addEventListener('click', () => {
             const allCards = document.querySelectorAll('#device-cards .settings-card');
             if (allCards.length <= 1) {
-                showToast('至少保留一个设备');
+                showToast(t('至少保留一个设备'));
                 return;
             }
-            if (confirm(`确定删除"${dev.name}"？`)) {
+            if (confirm(t('确定删除"{name}"？', { name: dev.name }))) {
                 card.remove();
             }
         });
@@ -1816,13 +1847,13 @@ async function refreshConnectionDiagnostics() {
             : null;
 
         if (backgroundResult.status === 'rejected') {
-            errors.push(`后台状态读取失败：${backgroundResult.reason?.message || backgroundResult.reason}`);
+            errors.push(t('后台状态读取失败：{error}', { error: backgroundResult.reason?.message || backgroundResult.reason }));
         } else if (backgroundResult.value?.error) {
-            errors.push(`后台状态异常：${backgroundResult.value.error}`);
+            errors.push(t('后台状态异常：{error}', { error: backgroundResult.value.error }));
         }
 
         if (discoveryResult.status === 'rejected') {
-            errors.push(`发现状态读取失败：${discoveryResult.reason?.message || discoveryResult.reason}`);
+            errors.push(t('发现状态读取失败：{error}', { error: discoveryResult.reason?.message || discoveryResult.reason }));
         }
 
         connectionDiagnosticsState.error = errors.join('；');
@@ -1891,7 +1922,7 @@ function renderConnectionDiagnostics() {
     }
 
     if (!panel.open) {
-        summary.textContent = '展开后加载诊断信息。';
+        summary.textContent = t('展开后加载诊断信息。');
         error.classList.add('hidden');
         error.textContent = '';
         sections.innerHTML = '';
@@ -1922,16 +1953,16 @@ function renderConnectionDiagnostics() {
 
 function buildConnectionDiagnosticsSummary(frontend, background, discovery) {
     const frontendText = frontend
-        ? `前台已认证 ${frontend.authenticatedCount}/${frontend.deviceCount || 0}`
-        : '前台状态未加载';
+        ? t('前台已认证 {authenticated}/{total}', { authenticated: frontend.authenticatedCount, total: frontend.deviceCount || 0 })
+        : t('前台状态未加载');
     const backgroundAuthenticated = Array.isArray(background?.connections)
         ? background.connections.filter((item) => item.authenticated).length
         : 0;
     const backgroundText = background
-        ? `后台已认证 ${backgroundAuthenticated}/${Number(background.configuredDeviceCount || 0)}`
-        : '后台状态未加载';
+        ? t('后台已认证 {authenticated}/{total}', { authenticated: backgroundAuthenticated, total: Number(background.configuredDeviceCount || 0) })
+        : t('后台状态未加载');
     const eventCount = collectConnectionDiagnosticsEvents(background).length;
-    const eventText = eventCount ? `最近事件 ${eventCount} 条` : '最近事件暂无';
+    const eventText = eventCount ? t('最近事件 {count} 条', { count: eventCount }) : t('最近事件暂无');
     const discoveryText = summarizeDiscoveryPath(discovery);
     return [frontendText, backgroundText, eventText, discoveryText].filter(Boolean).join('；');
 }
@@ -1940,7 +1971,7 @@ function renderConnectionEventLogSection(frontend, background) {
     const events = collectConnectionDiagnosticsEvents(background)
         .sort((a, b) => b.ts - a.ts)
         .slice(0, CONNECTION_EVENT_LOG_RENDER_LIMIT);
-    const pillText = events.length ? `最近 ${events.length} 条` : '暂无';
+    const pillText = events.length ? t('最近 {count} 条', { count: events.length }) : t('暂无');
     const items = events.length
         ? events.map((event) => {
             const tone = toneForConnectionEvent(event);
@@ -1949,19 +1980,19 @@ function renderConnectionEventLogSection(frontend, background) {
                 <div class="diagnostics-event ${tone}">
                     <div class="diagnostics-item-head">
                         <div class="diagnostics-item-title">${escapeHtml(formatConnectionEventTitle(event))}</div>
-                        ${diagnosticsPillHtml(event.source === 'background' ? '后台' : '前台', tone === 'is-error' ? 'is-error' : '')}
+                        ${diagnosticsPillHtml(event.source === 'background' ? t('后台') : t('前台'), tone === 'is-error' ? 'is-error' : '')}
                     </div>
                     <div class="diagnostics-item-meta">${escapeHtml(formatDiagnosticsWhen(event.ts))}</div>
-                    <div class="diagnostics-item-subtle">${escapeHtml(detailText || '无附加信息')}</div>
+                    <div class="diagnostics-item-subtle">${escapeHtml(detailText || t('无附加信息'))}</div>
                 </div>
             `;
         }).join('')
-        : '<div class="diagnostics-empty">还没有连接事件。保持这个面板展开后，断开、重连、认证失败和发送失败都会记录在这里。</div>';
+        : `<div class="diagnostics-empty">${t('还没有连接事件。保持这个面板展开后，断开、重连、认证失败和发送失败都会记录在这里。')}</div>`;
 
     return `
         <section class="diagnostics-section">
             <div class="diagnostics-section-title">
-                <strong>最近连接事件</strong>
+                <strong>${t('最近连接事件')}</strong>
                 ${diagnosticsPillHtml(pillText, events.some((event) => toneForConnectionEvent(event) === 'is-error') ? 'is-error' : '')}
             </div>
             <div class="diagnostics-list">${items}</div>
@@ -1994,46 +2025,46 @@ function collectConnectionDiagnosticsEvents(background) {
 
 function formatConnectionEventTitle(event) {
     const labelMap = {
-        'connect:start': '开始连接',
-        'connect:open': 'WebSocket 已打开',
-        'connect:auth_ok': '认证成功',
-        'connect:auth_fail': '认证失败',
-        'connect:error': '连接出错',
-        'connect:create_error': '创建连接失败',
-        'connect:close': '连接关闭',
-        'heartbeat:timeout': '心跳超时',
-        'heartbeat:send_error': '心跳发送失败',
-        'reconnect:scheduled': '计划重连',
-        'recovery:scheduled': '计划自愈',
-        'recovery:start': '开始自愈',
-        'recovery:done': '自愈完成',
-        'recovery:error': '自愈失败',
-        'recovery:cooldown': '自愈冷却中',
-        'recovery:join_inflight': '合并到进行中的自愈',
-        'recovery:skip_healthy': '连接健康，跳过自愈',
-        'recovery:page_hidden': '页面进入后台',
-        'network:online': '网络恢复',
-        'network:offline': '网络离线',
-        'ensureReady:timeout': '发送前重连超时',
-        'ensureReady:ready_after_recovery': '自愈后发送连接就绪',
-        'ensureReady:recovery_error': '发送前自愈失败',
-        'sendAction:not_ready_after_ensure': '发送前仍未连接',
-        'sendAction:catch': '发送异常',
-        'desktopRequest:timeout': '桌面请求超时',
-        'desktopRequest:send_error': '桌面请求发送失败',
-        'background:config_reloaded': '后台配置刷新',
-        'background:clipboard_applied': '后台剪贴板写入',
-        'background:connecting': '后台连接中',
-        'background:open': '后台已打开',
-        'background:authenticated': '后台认证成功',
-        'background:failed': '后台连接失败',
-        'background:closed': '后台连接关闭',
-        'background:scheduled_reconnect': '后台等待重连',
-        'background:idle': '后台空闲',
-        'background:connection_removed': '后台设备移除',
-        'background:connections_cleared': '后台连接清空',
+        'connect:start': t('开始连接'),
+        'connect:open': t('WebSocket 已打开'),
+        'connect:auth_ok': t('认证成功'),
+        'connect:auth_fail': t('认证失败'),
+        'connect:error': t('连接出错'),
+        'connect:create_error': t('创建连接失败'),
+        'connect:close': t('连接关闭'),
+        'heartbeat:timeout': t('心跳超时'),
+        'heartbeat:send_error': t('心跳发送失败'),
+        'reconnect:scheduled': t('计划重连'),
+        'recovery:scheduled': t('计划自愈'),
+        'recovery:start': t('开始自愈'),
+        'recovery:done': t('自愈完成'),
+        'recovery:error': t('自愈失败'),
+        'recovery:cooldown': t('自愈冷却中'),
+        'recovery:join_inflight': t('合并到进行中的自愈'),
+        'recovery:skip_healthy': t('连接健康，跳过自愈'),
+        'recovery:page_hidden': t('页面进入后台'),
+        'network:online': t('网络恢复'),
+        'network:offline': t('网络离线'),
+        'ensureReady:timeout': t('发送前重连超时'),
+        'ensureReady:ready_after_recovery': t('自愈后发送连接就绪'),
+        'ensureReady:recovery_error': t('发送前自愈失败'),
+        'sendAction:not_ready_after_ensure': t('发送前仍未连接'),
+        'sendAction:catch': t('发送异常'),
+        'desktopRequest:timeout': t('桌面请求超时'),
+        'desktopRequest:send_error': t('桌面请求发送失败'),
+        'background:config_reloaded': t('后台配置刷新'),
+        'background:clipboard_applied': t('后台剪贴板写入'),
+        'background:connecting': t('后台连接中'),
+        'background:open': t('后台已打开'),
+        'background:authenticated': t('后台认证成功'),
+        'background:failed': t('后台连接失败'),
+        'background:closed': t('后台连接关闭'),
+        'background:scheduled_reconnect': t('后台等待重连'),
+        'background:idle': t('后台空闲'),
+        'background:connection_removed': t('后台设备移除'),
+        'background:connections_cleared': t('后台连接清空'),
     };
-    return labelMap[event.type] || event.type || '连接事件';
+    return labelMap[event.type] || event.type || t('连接事件');
 }
 
 function formatConnectionEventDetails(event, frontend) {
@@ -2041,22 +2072,22 @@ function formatConnectionEventDetails(event, frontend) {
     const parts = [];
     const deviceName = details.deviceName || resolveDiagnosticsDeviceName(details.deviceId, frontend);
     if (deviceName) {
-        parts.push(`设备：${deviceName}`);
+        parts.push(t('设备：{name}', { name: deviceName }));
     }
     if (details.endpoint) {
-        parts.push(`地址：${details.endpoint}`);
+        parts.push(t('地址：{value}', { value: details.endpoint }));
     }
     if (details.status) {
-        parts.push(`状态：${details.status}`);
+        parts.push(t('状态：{value}', { value: details.status }));
     }
     if (details.reason) {
-        parts.push(`原因：${details.reason}`);
+        parts.push(t('原因：{value}', { value: details.reason }));
     }
     if (details.error) {
-        parts.push(`错误：${details.error}`);
+        parts.push(t('错误：{value}', { value: details.error }));
     }
     if (details.action) {
-        parts.push(`动作：${details.action}`);
+        parts.push(t('动作：{value}', { value: details.action }));
     }
     if (details.readyState !== undefined) {
         parts.push(`readyState：${details.readyState}`);
@@ -2065,19 +2096,19 @@ function formatConnectionEventDetails(event, frontend) {
         parts.push(`authenticated：${details.authenticated ? 'true' : 'false'}`);
     }
     if (details.textLength !== undefined) {
-        parts.push(`文本长度：${details.textLength}`);
+        parts.push(t('文本长度：{value}', { value: details.textLength }));
     }
     if (details.unhealthyCount !== undefined || details.deviceCount !== undefined) {
-        parts.push(`异常设备：${details.unhealthyCount ?? 0}/${details.deviceCount ?? 0}`);
+        parts.push(t('异常设备：{unhealthy}/{total}', { unhealthy: details.unhealthyCount ?? 0, total: details.deviceCount ?? 0 }));
     }
     if (details.forceDiscovery !== undefined || details.requestedForceDiscovery !== undefined) {
-        parts.push(`强制发现：${details.forceDiscovery || details.requestedForceDiscovery ? 'true' : 'false'}`);
+        parts.push(t('强制发现：{value}', { value: details.forceDiscovery || details.requestedForceDiscovery ? 'true' : 'false' }));
     }
     if (details.delay !== undefined || details.delayMs !== undefined) {
-        parts.push(`延迟：${formatDurationMs(details.delay ?? details.delayMs)}`);
+        parts.push(t('延迟：{value}', { value: formatDurationMs(details.delay ?? details.delayMs) }));
     }
     if (details.detail) {
-        parts.push(`详情：${details.detail}`);
+        parts.push(t('详情：{value}', { value: details.detail }));
     }
     return parts.join(' · ');
 }
@@ -2108,26 +2139,26 @@ function toneForConnectionEvent(event) {
 function renderFrontendDiagnosticsSection(frontend) {
     const pillTone = frontend?.authenticatedCount > 0 ? '' : 'is-warn';
     const pillText = frontend
-        ? `已认证 ${frontend.authenticatedCount}/${frontend.deviceCount || 0}`
-        : '未加载';
+        ? t('已认证 {authenticated}/{total}', { authenticated: frontend.authenticatedCount, total: frontend.deviceCount || 0 })
+        : t('未加载');
     const items = frontend?.devices?.length
         ? frontend.devices.map((device) => `
             <div class="diagnostics-item">
                 <div class="diagnostics-item-head">
-                    <div class="diagnostics-item-title">${escapeHtml(device.name || '未命名设备')}</div>
-                    ${diagnosticsPillHtml(device.authenticated ? '前台已认证' : (device.hasSocket ? '前台已连通' : '前台未连接'), device.authenticated ? '' : 'is-warn')}
+                    <div class="diagnostics-item-title">${escapeHtml(device.name || t('未命名设备'))}</div>
+                    ${diagnosticsPillHtml(device.authenticated ? t('前台已认证') : (device.hasSocket ? t('前台已连通') : t('前台未连接')), device.authenticated ? '' : 'is-warn')}
                 </div>
-                <div class="diagnostics-item-meta">保存地址：${escapeHtml(device.ip ? `${device.ip}:${device.port}` : '未配置')}</div>
-                <div class="diagnostics-item-subtle">hostName：${escapeHtml(device.hostName || '未记录')} · serverId：${escapeHtml(device.serverId || '未记录')}</div>
-                <div class="diagnostics-item-subtle">最近前台主机名：${escapeHtml(device.currentHost || '暂无')}</div>
+                <div class="diagnostics-item-meta">${t('保存地址：{value}', { value: escapeHtml(device.ip ? `${device.ip}:${device.port}` : t('未配置')) })}</div>
+                <div class="diagnostics-item-subtle">${t('hostName：{hostName} · serverId：{serverId}', { hostName: escapeHtml(device.hostName || t('未记录')), serverId: escapeHtml(device.serverId || t('未记录')) })}</div>
+                <div class="diagnostics-item-subtle">${t('最近前台主机名：{value}', { value: escapeHtml(device.currentHost || t('暂无')) })}</div>
             </div>
         `).join('')
-        : '<div class="diagnostics-empty">当前没有已保存设备。</div>';
+        : `<div class="diagnostics-empty">${t('当前没有已保存设备。')}</div>`;
 
     return `
         <section class="diagnostics-section">
             <div class="diagnostics-section-title">
-                <strong>前端主连接</strong>
+                <strong>${t('前端主连接')}</strong>
                 ${diagnosticsPillHtml(pillText, pillTone)}
             </div>
             <div class="diagnostics-list">${items}</div>
@@ -2140,10 +2171,10 @@ function renderBackgroundDiagnosticsSection(background) {
         return `
             <section class="diagnostics-section">
                 <div class="diagnostics-section-title">
-                    <strong>原生后台剪贴板</strong>
-                    ${diagnosticsPillHtml('未加载', 'is-warn')}
+                    <strong>${t('原生后台剪贴板')}</strong>
+                    ${diagnosticsPillHtml(t('未加载'), 'is-warn')}
                 </div>
-                <div class="diagnostics-empty">当前环境未暴露后台诊断接口，或诊断信息尚未返回。</div>
+                <div class="diagnostics-empty">${t('当前环境未暴露后台诊断接口，或诊断信息尚未返回。')}</div>
             </section>
         `;
     }
@@ -2155,38 +2186,38 @@ function renderBackgroundDiagnosticsSection(background) {
             const connection = connectionMap.get(device.id) || null;
             const status = connection?.status || 'idle';
             const tone = toneForDiagnosticsStatus(status, Boolean(connection?.authenticated), Boolean(connection?.lastError));
-            const lastUpdate = connection?.lastStateAtMs ? formatDiagnosticsWhen(connection.lastStateAtMs) : '暂无';
+            const lastUpdate = connection?.lastStateAtMs ? formatDiagnosticsWhen(connection.lastStateAtMs) : t('暂无');
             return `
                 <div class="diagnostics-item">
                     <div class="diagnostics-item-head">
-                        <div class="diagnostics-item-title">${escapeHtml(device.name || '未命名设备')}</div>
+                        <div class="diagnostics-item-title">${escapeHtml(device.name || t('未命名设备'))}</div>
                         ${diagnosticsPillHtml(formatBackgroundStatusLabel(status, connection), tone)}
                     </div>
-                    <div class="diagnostics-item-meta">后台目标：${escapeHtml(device.ip ? `${device.ip}:${device.port}` : '未配置')}</div>
-                    <div class="diagnostics-item-subtle">PIN：${device.pinPresent ? '已配置' : '未配置'} · 最近状态更新时间：${escapeHtml(lastUpdate)}</div>
-                    <div class="diagnostics-item-subtle">最近错误：${escapeHtml(connection?.lastError || '无')}</div>
+                    <div class="diagnostics-item-meta">${t('后台目标：{value}', { value: escapeHtml(device.ip ? `${device.ip}:${device.port}` : t('未配置')) })}</div>
+                    <div class="diagnostics-item-subtle">${t('PIN：{pin} · 最近状态更新时间：{time}', { pin: device.pinPresent ? t('已配置') : t('未配置'), time: escapeHtml(lastUpdate) })}</div>
+                    <div class="diagnostics-item-subtle">${t('最近错误：{error}', { error: escapeHtml(connection?.lastError || t('无')) })}</div>
                 </div>
             `;
         }).join('')
-        : '<div class="diagnostics-empty">后台当前没有已配置设备。</div>';
+        : `<div class="diagnostics-empty">${t('后台当前没有已配置设备。')}</div>`;
 
     const gateLabel = background.gateActive
-        ? `门控中，剩余 ${formatDurationMs(background.gateRemainingMs || 0)}`
-        : '门控已解除';
+        ? t('门控中，剩余 {time}', { time: formatDurationMs(background.gateRemainingMs || 0) })
+        : t('门控已解除');
     const gateTone = background.gateActive ? 'is-warn' : '';
     const appliedText = background.lastClipboardAppliedAtMs
-        ? `最近后台剪贴板写入：${formatDiagnosticsWhen(background.lastClipboardAppliedAtMs)}`
-        : '最近后台剪贴板写入：暂无';
+        ? t('最近后台剪贴板写入：{time}', { time: formatDiagnosticsWhen(background.lastClipboardAppliedAtMs) })
+        : t('最近后台剪贴板写入：暂无');
 
     return `
         <section class="diagnostics-section">
             <div class="diagnostics-section-title">
-                <strong>原生后台剪贴板</strong>
+                <strong>${t('原生后台剪贴板')}</strong>
                 ${diagnosticsPillHtml(gateLabel, gateTone)}
             </div>
             <div class="diagnostics-item">
-                <div class="diagnostics-item-meta">最近配置刷新：${escapeHtml(formatDiagnosticsWhen(background.lastReloadAtMs || 0))}</div>
-                <div class="diagnostics-item-subtle">${escapeHtml(appliedText)}${background.lastClipboardSourceName ? ` · 来源：${escapeHtml(background.lastClipboardSourceName)}` : ''}</div>
+                <div class="diagnostics-item-meta">${t('最近配置刷新：{time}', { time: escapeHtml(formatDiagnosticsWhen(background.lastReloadAtMs || 0)) })}</div>
+                <div class="diagnostics-item-subtle">${escapeHtml(appliedText)}${background.lastClipboardSourceName ? t(' · 来源：{name}', { name: escapeHtml(background.lastClipboardSourceName) }) : ''}</div>
             </div>
             <div class="diagnostics-list">${items}</div>
         </section>
@@ -2198,10 +2229,10 @@ function renderDiscoveryDiagnosticsSection(discovery) {
         return `
             <section class="diagnostics-section">
                 <div class="diagnostics-section-title">
-                    <strong>智能发现</strong>
-                    ${diagnosticsPillHtml('未加载', 'is-warn')}
+                    <strong>${t('智能发现')}</strong>
+                    ${diagnosticsPillHtml(t('未加载'), 'is-warn')}
                 </div>
-                <div class="diagnostics-empty">最近一次发现快照尚未返回。</div>
+                <div class="diagnostics-empty">${t('最近一次发现快照尚未返回。')}</div>
             </section>
         `;
     }
@@ -2219,34 +2250,40 @@ function renderDiscoveryDiagnosticsSection(discovery) {
             <div class="diagnostics-item">
                 <div class="diagnostics-item-head">
                     <div class="diagnostics-item-title">${escapeHtml(item.interface_name || 'unknown')}</div>
-                    ${diagnosticsPillHtml(item.allow_http_sweep ? '参与 HTTP 扫描' : '不扫 HTTP', item.allow_http_sweep ? '' : 'is-warn')}
+                    ${diagnosticsPillHtml(item.allow_http_sweep ? t('参与 HTTP 扫描') : t('不扫 HTTP'), item.allow_http_sweep ? '' : 'is-warn')}
                 </div>
                 <div class="diagnostics-item-meta">${escapeHtml(item.ip || '')}</div>
                 <div class="diagnostics-item-subtle">priority=${escapeHtml(String(item.priority ?? ''))} · directed_broadcast=${item.allow_directed_broadcast ? 'true' : 'false'} · http_sweep=${item.allow_http_sweep ? 'true' : 'false'}</div>
             </div>
         `).join('')
-        : '<div class="diagnostics-empty">最近一次发现没有记录接口快照。</div>';
+        : `<div class="diagnostics-empty">${t('最近一次发现没有记录接口快照。')}</div>`;
     const directTargets = Array.isArray(discovery.direct_targets) ? discovery.direct_targets : [];
     const directTargetSummary = directTargets.length
         ? directTargets.map((target) => `${target.target_host}:${target.port} (${target.target_kind})`).join('，')
-        : '无';
+        : t('无');
     const mergedResults = Array.isArray(discovery.merged_results) ? discovery.merged_results : [];
     const mergedResultSummary = mergedResults.length
-        ? mergedResults.map((item) => `${item.hostname || '未命名电脑'} -> ${item.ip}:${item.port}`).join('，')
-        : '无';
+        ? mergedResults.map((item) => `${item.hostname || t('未命名电脑')} -> ${item.ip}:${item.port}`).join('，')
+        : t('无');
 
     return `
         <section class="diagnostics-section">
             <div class="diagnostics-section-title">
-                <strong>智能发现</strong>
+                <strong>${t('智能发现')}</strong>
                 ${diagnosticsPillHtml(strategyText, summaryTone)}
             </div>
             <div class="diagnostics-item">
-                <div class="diagnostics-item-meta">开始：${escapeHtml(formatDiagnosticsWhen(discovery.last_started_at_ms || 0))} · 结束：${escapeHtml(formatDiagnosticsWhen(discovery.last_finished_at_ms || 0))}</div>
-                <div class="diagnostics-item-subtle">耗时：${escapeHtml(formatDurationMs(discovery.last_duration_ms || 0))} · UDP 结果：${escapeHtml(String(discovery.udp_result_count || 0))} · 定向命中：${escapeHtml(`${discovery.direct_http_result_count || 0}/${discovery.expected_direct_devices || 0}`)} · 全量 HTTP 目标：${escapeHtml(String(discovery.full_http_target_count || 0))} · 合并结果：${escapeHtml(String(discovery.merged_result_count || 0))}</div>
-                <div class="diagnostics-item-subtle">定向目标：${escapeHtml(directTargetSummary)}</div>
-                <div class="diagnostics-item-subtle">发现结果：${escapeHtml(mergedResultSummary)}</div>
-                <div class="diagnostics-item-subtle">最近错误：${escapeHtml(discovery.last_error || '无')}</div>
+                <div class="diagnostics-item-meta">${t('开始：{start} · 结束：{end}', { start: escapeHtml(formatDiagnosticsWhen(discovery.last_started_at_ms || 0)), end: escapeHtml(formatDiagnosticsWhen(discovery.last_finished_at_ms || 0)) })}</div>
+                <div class="diagnostics-item-subtle">${t('耗时：{duration} · UDP 结果：{udp} · 定向命中：{direct} · 全量 HTTP 目标：{http} · 合并结果：{merged}', {
+                    duration: escapeHtml(formatDurationMs(discovery.last_duration_ms || 0)),
+                    udp: escapeHtml(String(discovery.udp_result_count || 0)),
+                    direct: escapeHtml(`${discovery.direct_http_result_count || 0}/${discovery.expected_direct_devices || 0}`),
+                    http: escapeHtml(String(discovery.full_http_target_count || 0)),
+                    merged: escapeHtml(String(discovery.merged_result_count || 0)),
+                })}</div>
+                <div class="diagnostics-item-subtle">${t('定向目标：{value}', { value: escapeHtml(directTargetSummary) })}</div>
+                <div class="diagnostics-item-subtle">${t('发现结果：{value}', { value: escapeHtml(mergedResultSummary) })}</div>
+                <div class="diagnostics-item-subtle">${t('最近错误：{error}', { error: escapeHtml(discovery.last_error || t('无')) })}</div>
             </div>
             <div class="diagnostics-list">${interfaceItems}</div>
         </section>
@@ -2255,21 +2292,21 @@ function renderDiscoveryDiagnosticsSection(discovery) {
 
 function summarizeDiscoveryPath(discovery) {
     if (!discovery) {
-        return '发现状态未加载';
+        return t('发现状态未加载');
     }
     if (discovery.in_progress) {
-        return '发现进行中';
+        return t('发现进行中');
     }
     if (discovery.last_error) {
-        return '最近发现失败';
+        return t('最近发现失败');
     }
     if (discovery.skip_http_sweep) {
-        return '定向探测命中，已跳过子网扫描';
+        return t('定向探测命中，已跳过子网扫描');
     }
     if (Number(discovery.full_http_target_count || 0) > 0) {
-        return `回退子网扫描 ${discovery.full_http_target_count} 个目标`;
+        return t('回退子网扫描 {count} 个目标', { count: discovery.full_http_target_count });
     }
-    return '最近发现已完成';
+    return t('最近发现已完成');
 }
 
 function diagnosticsPillHtml(text, tone = '') {
@@ -2291,28 +2328,28 @@ function toneForDiagnosticsStatus(status, authenticated = false, hasError = fals
 
 function formatBackgroundStatusLabel(status, connection = null) {
     const labels = {
-        idle: '空闲',
-        connecting: '连接中',
-        open: '已打开待认证',
-        authenticated: '已认证',
-        failed: '连接失败',
-        scheduled_reconnect: '等待重连',
-        closed: '已关闭',
+        idle: t('空闲'),
+        connecting: t('连接中'),
+        open: t('已打开待认证'),
+        authenticated: t('已认证'),
+        failed: t('连接失败'),
+        scheduled_reconnect: t('等待重连'),
+        closed: t('已关闭'),
     };
     if (connection?.authenticated) {
-        return '已认证';
+        return t('已认证');
     }
-    return labels[status] || status || '未知';
+    return labels[status] || status || t('未知');
 }
 
 function formatDiagnosticsWhen(valueMs) {
     const ms = Number(valueMs || 0);
     if (!ms) {
-        return '暂无';
+        return t('暂无');
     }
     const date = new Date(ms);
     if (Number.isNaN(date.getTime())) {
-        return '暂无';
+        return t('暂无');
     }
     return `${date.toLocaleTimeString('zh-CN', { hour12: false })} · ${formatRelativeTimeFromNow(ms)}`;
 }
@@ -2320,25 +2357,25 @@ function formatDiagnosticsWhen(valueMs) {
 function formatRelativeTimeFromNow(valueMs) {
     const delta = Date.now() - Number(valueMs || 0);
     if (!Number.isFinite(delta)) {
-        return '未知';
+        return t('未知');
     }
     if (delta < 1000) {
-        return '刚刚';
+        return t('刚刚');
     }
     const seconds = Math.floor(delta / 1000);
     if (seconds < 60) {
-        return `${seconds} 秒前`;
+        return t('{count} 秒前', { count: seconds });
     }
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) {
-        return `${minutes} 分钟前`;
+        return t('{count} 分钟前', { count: minutes });
     }
     const hours = Math.floor(minutes / 60);
     if (hours < 24) {
-        return `${hours} 小时前`;
+        return t('{count} 小时前', { count: hours });
     }
     const days = Math.floor(hours / 24);
-    return `${days} 天前`;
+    return t('{count} 天前', { count: days });
 }
 
 function formatDurationMs(durationMs) {
@@ -2355,7 +2392,7 @@ function formatDurationMs(durationMs) {
     }
     const minutes = Math.floor(seconds / 60);
     const remainSeconds = Math.round(seconds % 60);
-    return `${minutes} 分 ${remainSeconds} 秒`;
+    return t('{minutes} 分 {seconds} 秒', { minutes, seconds: remainSeconds });
 }
 
 function hasSavedDevicesForSmartDiscovery() {
@@ -2426,7 +2463,7 @@ async function discoverNearbyDesktops({
     prioritizeSavedDevices = false,
 } = {}) {
     if (!supportsNearbyDesktopDiscovery()) {
-        nearbyDesktopState.scanError = '当前浏览器模式不支持自动扫描，请继续使用手动 IP / PIN。';
+        nearbyDesktopState.scanError = t('当前浏览器模式不支持自动扫描，请继续使用手动 IP / PIN。');
         nearbyDesktopState.items = [];
         nearbyDesktopState.scanning = false;
         renderNearbyDesktops();
@@ -2449,7 +2486,7 @@ async function discoverNearbyDesktops({
         nearbyDesktopState.items = Array.isArray(discovered) ? discovered.map((item) => ({
             ...item,
             ip: item.ip || '',
-            hostname: item.hostname || '未命名电脑',
+            hostname: item.hostname || t('未命名电脑'),
             port: Number(item.port || DESKTOP_DISCOVERY_DEFAULT_PORT),
             server_id: item.server_id || '',
         })).filter((item) => !shouldRejectLoopbackDesktopEndpoint(item.ip)) : [];
@@ -2465,7 +2502,7 @@ async function discoverNearbyDesktops({
         nearbyDesktopState.scanError = error?.message || String(error);
         renderNearbyDesktops();
         if (!silent) {
-            showToast(`扫描失败：${nearbyDesktopState.scanError}`);
+            showToast(t('扫描失败：{error}', { error: nearbyDesktopState.scanError }));
         }
         return [];
     } finally {
@@ -2555,20 +2592,20 @@ function renderNearbyDesktops() {
     const scanBtn = $('scan-nearby-desktops-btn');
     if (!list || !empty || !caption || !scanBtn) return;
 
-    scanBtn.textContent = nearbyDesktopState.scanning ? '扫描中…' : '扫描';
+    scanBtn.textContent = nearbyDesktopState.scanning ? t('扫描中…') : t('扫描');
     scanBtn.disabled = nearbyDesktopState.scanning;
 
     if (!supportsNearbyDesktopDiscovery()) {
         list.innerHTML = '';
-        empty.textContent = '当前浏览器模式不支持局域网自动发现，请使用手动输入的方式连接桌面端。';
+        empty.textContent = t('当前浏览器模式不支持局域网自动发现，请使用手动输入的方式连接桌面端。');
         empty.classList.remove('hidden');
-        caption.textContent = '安装后的手机 App 支持自动扫描附近电脑；浏览器模式仅保留手动连接。';
+        caption.textContent = t('安装后的手机 App 支持自动扫描附近电脑；浏览器模式仅保留手动连接。');
         return;
     }
 
     caption.textContent = nearbyDesktopState.scanning
-        ? '正在扫描当前局域网中的 VibeDrop 桌面端…'
-        : '自动扫描当前局域网中的 VibeDrop 桌面端，发起配对后即可保存并自动连接。';
+        ? t('正在扫描当前局域网中的 VibeDrop 桌面端…')
+        : t('自动扫描当前局域网中的 VibeDrop 桌面端，发起配对后即可保存并自动连接。');
 
     resetNearbyDesktopReorderState();
 
@@ -2578,10 +2615,10 @@ function renderNearbyDesktops() {
     if (!visibleItems.length) {
         list.innerHTML = '';
         empty.textContent = nearbyDesktopState.scanError
-            ? `扫描失败：${nearbyDesktopState.scanError}`
+            ? t('扫描失败：{error}', { error: nearbyDesktopState.scanError })
             : nearbyDesktopState.scanning
-                ? '正在搜索附近电脑…'
-                : '还没有发现附近的桌面端。确认电脑端已打开，且与手机在同一局域网后再试。';
+                ? t('正在搜索附近电脑…')
+                : t('还没有发现附近的桌面端。确认电脑端已打开，且与手机在同一局域网后再试。');
         empty.classList.remove('hidden');
         return;
     }
@@ -2589,16 +2626,16 @@ function renderNearbyDesktops() {
     empty.classList.add('hidden');
     list.innerHTML = visibleItems.map((desktop) => {
         const matched = resolveNearbyDesktopMatch(desktop, devices);
-        const displayName = matched?.name || desktop.displayName || desktop.hostname || '未命名电脑';
+        const displayName = matched?.name || desktop.displayName || desktop.hostname || t('未命名电脑');
         const metaLines = Array.from(new Set([
             matched?.hostName || desktop.resolvedHostname || desktop.hostname || '',
             desktop.ip ? `${desktop.ip}:${String(desktop.port || DESKTOP_DISCOVERY_DEFAULT_PORT)}` : '',
         ].filter(Boolean)));
         const isConnected = matched && connections[matched.id]?.authenticated;
-        const badgeText = isConnected ? '已连接' : matched ? '已配对' : '附近电脑';
-        const primaryLabel = isConnected ? '已连接' : matched ? '连接' : '请求配对';
+        const badgeText = isConnected ? t('已连接') : matched ? t('已配对') : t('附近电脑');
+        const primaryLabel = isConnected ? t('已连接') : matched ? t('连接') : t('请求配对');
         const primaryClass = matched ? 'secondary-btn' : 'primary-btn';
-        const secondaryLabel = matched ? '查看参数' : '填入配置';
+        const secondaryLabel = matched ? t('查看参数') : t('填入配置');
         const disabledAttr = nearbyDesktopState.pairing ? 'disabled' : '';
         const nearbyKey = getNearbyDesktopKey(desktop, devices);
         const sortableDeviceId = matched?.id || '';
@@ -2606,17 +2643,17 @@ function renderNearbyDesktops() {
         const isRenaming = matched && matched.id === nearbyRenameDeviceId;
 
         const nameBlock = isRenaming
-            ? `<input type="text" id="nearby-rename-input" class="nearby-rename-input" value="${escapeHtml(matched.name || displayName)}" maxlength="20" placeholder="给这台电脑起个短名">`
+            ? `<input type="text" id="nearby-rename-input" class="nearby-rename-input" value="${escapeHtml(matched.name || displayName)}" maxlength="20" placeholder="${t('给这台电脑起个短名')}">`
             : `<div class="nearby-desktop-name">${escapeHtml(displayName)}</div>`;
 
         const actionsBlock = isRenaming
             ? `
-                    <button type="button" class="primary-btn" data-desktop-action="rename-save" data-nearby-key="${escapeHtml(nearbyKey)}">保存</button>
-                    <button type="button" class="secondary-btn" data-desktop-action="rename-cancel" data-nearby-key="${escapeHtml(nearbyKey)}">取消</button>`
+                    <button type="button" class="primary-btn" data-desktop-action="rename-save" data-nearby-key="${escapeHtml(nearbyKey)}">${t('保存')}</button>
+                    <button type="button" class="secondary-btn" data-desktop-action="rename-cancel" data-nearby-key="${escapeHtml(nearbyKey)}">${t('取消')}</button>`
             : `
                     <button type="button" class="${primaryClass}" data-desktop-action="${matched ? 'connect' : 'pair'}" data-nearby-key="${escapeHtml(nearbyKey)}" ${disabledAttr}>${escapeHtml(primaryLabel)}</button>
                     <button type="button" class="secondary-btn" data-desktop-action="${matched ? 'advanced' : 'fill'}" data-nearby-key="${escapeHtml(nearbyKey)}" ${disabledAttr}>${escapeHtml(secondaryLabel)}</button>${matched ? `
-                    <button type="button" class="secondary-btn" data-desktop-action="rename" data-nearby-key="${escapeHtml(nearbyKey)}" ${disabledAttr}>改名</button>` : ''}`;
+                    <button type="button" class="secondary-btn" data-desktop-action="rename" data-nearby-key="${escapeHtml(nearbyKey)}" ${disabledAttr}>${t('改名')}</button>` : ''}`;
 
         return `
             <div class="nearby-desktop-item${sortableClass}" data-nearby-key="${escapeHtml(nearbyKey)}"${sortableDeviceId ? ` data-sortable-device-id="${escapeHtml(sortableDeviceId)}"` : ''}>
@@ -2659,7 +2696,7 @@ function renderNearbyDesktops() {
                 const field = $('nearby-rename-input');
                 const newName = (field?.value || '').trim();
                 if (!newName) {
-                    showToast('名字不能为空');
+                    showToast(t('名字不能为空'));
                     return;
                 }
                 const all = getDevices();
@@ -2673,7 +2710,7 @@ function renderNearbyDesktops() {
                 nearbyRenameDeviceId = null;
                 rerenderAllDeviceViews();
                 updateSmartCardUI();
-                showToast(`已改名为 ${newName}`);
+                showToast(t('已改名为 {name}', { name: newName }));
                 return;
             }
             if (action === 'advanced') {
@@ -2687,7 +2724,7 @@ function renderNearbyDesktops() {
             if (action === 'connect') {
                 if (desktop.source === 'saved' && matched) {
                     connectDevice(matched.id, matched.ip, matched.port || '9001', matched.pin || '');
-                    showToast(`正在连接 ${matched.name}`);
+                    showToast(t('正在连接 {name}', { name: matched.name }));
                     return;
                 }
                 connectMatchedDesktop(desktop);
@@ -2740,7 +2777,7 @@ function buildVisibleNearbyDesktops(devices = getDevices()) {
             ...desktop,
             source: 'discovered',
             deviceId: matched?.id || desktop.deviceId || '',
-            displayName: matched?.name || desktop.hostname || desktop.resolvedHostname || '未命名电脑',
+            displayName: matched?.name || desktop.hostname || desktop.resolvedHostname || t('未命名电脑'),
         };
         const key = getDesktopIdentityKey(item, matched);
         if (!discoveredByKey.has(key)) {
@@ -2753,13 +2790,13 @@ function buildVisibleNearbyDesktops(devices = getDevices()) {
         .forEach((device) => {
             const savedItem = {
                 server_id: device.serverId || '',
-                hostname: device.hostName || device.name || '未命名电脑',
+                hostname: device.hostName || device.name || t('未命名电脑'),
                 resolvedHostname: device.hostName || '',
                 ip: device.ip || '',
                 port: Number(device.port || DESKTOP_DISCOVERY_DEFAULT_PORT),
                 source: 'saved',
                 deviceId: device.id,
-                displayName: device.name || device.hostName || '未命名电脑',
+                displayName: device.name || device.hostName || t('未命名电脑'),
             };
             const key = getDesktopIdentityKey(savedItem, device);
             if (seen.has(key)) {
@@ -2790,7 +2827,7 @@ function buildVisibleNearbyDesktops(devices = getDevices()) {
             ...desktop,
             source: 'discovered',
             deviceId: matched?.id || desktop.deviceId || '',
-            displayName: matched?.name || desktop.hostname || desktop.resolvedHostname || '未命名电脑',
+            displayName: matched?.name || desktop.hostname || desktop.resolvedHostname || t('未命名电脑'),
         };
         const key = getDesktopIdentityKey(item, matched);
         if (seen.has(key)) {
@@ -3038,7 +3075,7 @@ function finishNearbyDesktopReorder() {
 
     saveDevices(reorderedDevices);
     rerenderAllDeviceViews(getDevices());
-    showToast('设备顺序已更新');
+    showToast(t('设备顺序已更新'));
 }
 
 function resetNearbyDesktopReorderState() {
@@ -3197,7 +3234,7 @@ function fillDesktopIntoSettings(desktop) {
         });
     }
     renderDeviceCards(normalizeDevices(devices));
-    showToast('已填入桌面端配置');
+    showToast(t('已填入桌面端配置'));
 }
 
 function connectMatchedDesktop(desktop) {
@@ -3205,7 +3242,7 @@ function connectMatchedDesktop(desktop) {
     const matched = matchSavedDevice(desktop, devices);
     if (!matched || !matched.pin) {
         fillDesktopIntoSettings(desktop);
-        showToast('这个电脑还没完成配对，请先请求配对');
+        showToast(t('这个电脑还没完成配对，请先请求配对'));
         return;
     }
 
@@ -3217,7 +3254,7 @@ function connectMatchedDesktop(desktop) {
     const normalized = rerenderAllDeviceViews();
     const normalizedMatched = findDeviceByAnyId(matched.id, normalized) || matched;
     connectDevice(normalizedMatched.id, normalizedMatched.ip, normalizedMatched.port, normalizedMatched.pin || '');
-    showToast(`正在连接 ${normalizedMatched.name}`);
+    showToast(t('正在连接 {name}', { name: normalizedMatched.name }));
 }
 
 function reconcileAuthenticatedDesktopIdentity(deviceId, payload = {}) {
@@ -3251,7 +3288,7 @@ function reconcileAuthenticatedDesktopIdentity(deviceId, payload = {}) {
 
 async function startDesktopPairing(desktop) {
     if (nearbyDesktopState.pairing) {
-        showToast('已有一个配对请求正在等待确认');
+        showToast(t('已有一个配对请求正在等待确认'));
         return;
     }
 
@@ -3275,7 +3312,7 @@ async function startDesktopPairing(desktop) {
         startDesktopPairingPoll();
     } catch (error) {
         console.error('发起桌面配对失败:', error);
-        showToast(`发起配对失败：${error?.message || error}`);
+        showToast(t('发起配对失败：{error}', { error: error?.message || error }));
     }
 }
 
@@ -3284,8 +3321,8 @@ function openDesktopPairingModal() {
     if (!pairing) return;
     $('desktop-pairing-target').textContent = pairing.hostname || pairing.ip;
     $('desktop-pairing-code').textContent = pairing.code || '------';
-    $('desktop-pairing-status').textContent = '配对请求已发出，请在电脑端确认同样的验证码并点击同意。';
-    $('desktop-pairing-subtitle').textContent = `目标电脑：${pairing.hostname || pairing.ip}。确认两边看到的是同一组 6 位验证码。`;
+    $('desktop-pairing-status').textContent = t('配对请求已发出，请在电脑端确认同样的验证码并点击同意。');
+    $('desktop-pairing-subtitle').textContent = t('目标电脑：{name}。确认两边看到的是同一组 6 位验证码。', { name: pairing.hostname || pairing.ip });
     $('desktop-pairing-modal')?.classList.remove('hidden');
 }
 
@@ -3314,7 +3351,7 @@ async function pollDesktopPairingStatus() {
     if (!pairing) return;
 
     if (Date.now() > pairing.expiresAt) {
-        showToast('配对请求已过期，请重新发起');
+        showToast(t('配对请求已过期，请重新发起'));
         closeDesktopPairingModal();
         return;
     }
@@ -3327,7 +3364,7 @@ async function pollDesktopPairingStatus() {
         });
 
         if (status.status === 'pending') {
-            $('desktop-pairing-status').textContent = '配对请求已送达，正在等待电脑端确认。';
+            $('desktop-pairing-status').textContent = t('配对请求已送达，正在等待电脑端确认。');
             return;
         }
 
@@ -3339,18 +3376,18 @@ async function pollDesktopPairingStatus() {
                 port: Number(status.port || pairing.port || DESKTOP_DISCOVERY_DEFAULT_PORT),
                 pin: status.pin || '',
             });
-            showToast(`已配对 ${status.hostname || pairing.hostname}`);
+            showToast(t('已配对 {name}', { name: status.hostname || pairing.hostname }));
             closeDesktopPairingModal();
             focusSendView();
             return;
         }
 
-        const errorMessage = status.error || (status.status === 'rejected' ? '桌面端拒绝了配对请求' : '配对请求已失效');
+        const errorMessage = status.error || (status.status === 'rejected' ? t('桌面端拒绝了配对请求') : t('配对请求已失效'));
         showToast(errorMessage);
         closeDesktopPairingModal();
     } catch (error) {
         console.error('查询桌面配对状态失败:', error);
-        $('desktop-pairing-status').textContent = `状态查询失败，正在重试…`;
+        $('desktop-pairing-status').textContent = t('状态查询失败，正在重试…');
     }
 }
 
@@ -3531,18 +3568,18 @@ function createSendCard(dev) {
             <div class="mac-header">
                 <span class="status-dot" id="dot-${dev.id}"></span>
                 <span class="mac-name" id="name-${dev.id}">${escapeHtml(dev.name)}</span>
-                <span class="status-text" id="status-${dev.id}">未连接</span>
+                <span class="status-text" id="status-${dev.id}">${t('未连接')}</span>
             </div>
             <div class="input-group">
-                <textarea id="input-${dev.id}" placeholder="输入要发送的文字..." rows="3"></textarea>
+                <textarea id="input-${dev.id}" placeholder="${t('输入要发送的文字...')}" rows="3"></textarea>
                 <div class="send-actions">
-                    <button class="send-btn aux-btn" id="sendbtn-${dev.id}" disabled>发送</button>
-                    <button class="send-btn aux-btn enter-btn" id="enterbtn-${dev.id}" disabled>回车</button>
+                    <button class="send-btn aux-btn" id="sendbtn-${dev.id}" disabled>${t('发送')}</button>
+                    <button class="send-btn aux-btn enter-btn" id="enterbtn-${dev.id}" disabled>${t('回车')}</button>
                 </div>
-                <button class="send-btn combo-btn" id="sendenterbtn-${dev.id}" disabled>发送并回车</button>
+                <button class="send-btn combo-btn" id="sendenterbtn-${dev.id}" disabled>${t('发送并回车')}</button>
                 <div class="send-actions media-actions">
-                    <button class="send-btn image-btn" id="imagebtn-${dev.id}" disabled>传图到剪贴板</button>
-                    <button class="send-btn image-btn" id="filebtn-${dev.id}" disabled>传到收件箱</button>
+                    <button class="send-btn image-btn" id="imagebtn-${dev.id}" disabled>${t('传图到剪贴板')}</button>
+                    <button class="send-btn image-btn" id="filebtn-${dev.id}" disabled>${t('传到收件箱')}</button>
                 </div>
                 <input type="file" id="imageinput-${dev.id}" accept="image/*" class="hidden-file-input">
                 <input type="file" id="fileinput-${dev.id}" class="hidden-file-input" multiple>
@@ -3572,11 +3609,11 @@ function createSendCard(dev) {
         const primaryShared = getPrimaryPendingSharedContent();
         if (pendingSharedContents.length) {
             if (pendingSharedContents.length > 1) {
-                showToast('批量内容请使用“传到收件箱”');
+                showToast(t('批量内容请使用“传到收件箱”'));
                 return;
             }
             if (!primaryShared?.isImage) {
-                showToast('当前共享内容不是图片，请使用“传到收件箱”');
+                showToast(t('当前共享内容不是图片，请使用“传到收件箱”'));
                 return;
             }
             sendPendingSharedImage(dev.id);
@@ -3631,7 +3668,7 @@ function getDeviceDisplayName(deviceId) {
     if (custom && custom !== '未命名设备' && !/^设备\s+\d+$/.test(custom)) {
         return custom;
     }
-    return conn?.hostname || dev?.hostName || dev?.ip || '未命名设备';
+    return conn?.hostname || dev?.hostName || dev?.ip || t('未命名设备');
 }
 
 function updateSendCardDeviceMeta(card, dev) {
@@ -3654,7 +3691,7 @@ function syncNewSendCardConnectionState(deviceId) {
     } else if (conn?.ws && conn.ws.readyState === WebSocket.CONNECTING) {
         updateDeviceUI(deviceId, 'connecting');
     } else if (conn?.ws && conn.ws.readyState === WebSocket.OPEN && !conn.authenticated) {
-        updateDeviceUI(deviceId, 'connecting', '认证中...');
+        updateDeviceUI(deviceId, 'connecting', t('认证中...'));
     }
 }
 
@@ -3790,7 +3827,7 @@ async function smartDispatch(kind) {
         text = ((await readClipboardText()) || '').trim();
     }
     if (!text) {
-        showToast('输入框和剪贴板都没有可发送文字');
+        showToast(t('输入框和剪贴板都没有可发送文字'));
         return;
     }
     if (smartInput) smartInput.value = '';
@@ -3871,11 +3908,11 @@ function createSmartCard() {
         const primaryShared = getPrimaryPendingSharedContent();
         if (pendingSharedContents.length) {
             if (pendingSharedContents.length > 1) {
-                showToast('批量内容请使用"传到收件箱"');
+                showToast(t('批量内容请使用"传到收件箱"'));
                 return;
             }
             if (!primaryShared?.isImage) {
-                showToast('当前共享内容不是图片，请使用"传到收件箱"');
+                showToast(t('当前共享内容不是图片，请使用"传到收件箱"'));
                 return;
             }
             sendPendingSharedImage(targetId);
@@ -4030,7 +4067,7 @@ function renderSendCards(devices) {
         emptyHint = document.createElement('p');
         emptyHint.id = 'cards-empty-hint';
         emptyHint.className = 'hint cards-empty-hint';
-        emptyHint.textContent = '首页卡片已全部隐藏，可在“设置”里重新开启。';
+        emptyHint.textContent = t('首页卡片已全部隐藏，可在“设置”里重新开启。');
         container.appendChild(emptyHint);
     } else if (hasAnyCard && emptyHint) {
         emptyHint.remove();
@@ -4048,7 +4085,7 @@ function renderSendCards(devices) {
 function renderHistoryFilters(devices) {
     const container = $('history-filter-btns');
     if (!container) return;
-    container.innerHTML = '<button class="filter-btn" data-filter="all">全部</button>';
+    container.innerHTML = `<button class="filter-btn" data-filter="all">${t('全部')}</button>`;
 
     const options = getHistoryDeviceOptions(getHistory(), devices || getDevices());
     const validFilters = new Set(['all', ...options.map((option) => option.value)]);
@@ -4087,7 +4124,7 @@ function getHistoryDeviceOptions(history = getHistory(), devices = getDevices())
         .forEach((device) => {
             options.set(device.id, {
                 value: device.id,
-                label: device.name || device.ip || '未命名电脑',
+                label: device.name || device.ip || t('未命名电脑'),
             });
         });
 
@@ -4147,7 +4184,7 @@ function initSettingsButton() {
         // 进入设置时重新加载设备卡片（丢弃未保存的更改）
         const devices = getDevices();
         if (devices.length === 0) {
-            renderDeviceCards([{ id: newDeviceId(), name: '设备 1', ip: '', port: '9001', pin: '' }]);
+            renderDeviceCards([{ id: newDeviceId(), name: t('设备 {number}', { number: 1 }), ip: '', port: '9001', pin: '' }]);
         } else {
             renderDeviceCards(devices);
         }
@@ -4163,7 +4200,7 @@ function initSettingsButton() {
     // 添加设备
     $('add-device-btn').addEventListener('click', () => {
         const current = getDevicesFromUI();
-        const newDev = { id: newDeviceId(), name: `设备 ${current.length + 1}`, ip: '', port: '9001', pin: '' };
+        const newDev = { id: newDeviceId(), name: t('设备 {number}', { number: current.length + 1 }), ip: '', port: '9001', pin: '' };
         current.push(newDev);
         renderDeviceCards(current);
     });
@@ -4205,11 +4242,11 @@ function initMediaOpenerSettings() {
     });
     $('media-opener-image-clear-btn')?.addEventListener('click', () => {
         clearPreferredMediaOpener('image');
-        showToast('图片默认打开应用已清除');
+    showToast(t('图片默认打开应用已清除'));
     });
     $('media-opener-video-clear-btn')?.addEventListener('click', () => {
         clearPreferredMediaOpener('video');
-        showToast('视频默认打开应用已清除');
+        showToast(t('视频默认打开应用已清除'));
     });
 
     rememberToggle.addEventListener('change', () => {
@@ -4242,10 +4279,10 @@ function renderMediaOpenerSettings() {
     specs.forEach(({ kind, labelEl, selectEl, clearEl }) => {
         const pref = openers[kind];
         if (labelEl) {
-            labelEl.textContent = pref?.label || '每次询问';
+            labelEl.textContent = pref?.label || t('每次询问');
         }
         if (selectEl) {
-            selectEl.textContent = pref ? '更改' : '选择';
+            selectEl.textContent = pref ? t('更改') : t('选择');
         }
         if (clearEl) {
             clearEl.classList.toggle('hidden', !pref);
@@ -4322,13 +4359,13 @@ function showMediaOpenerPicker({ kind, mode = 'open', item = null } = {}) {
     };
 
     title.textContent = mode === 'configure'
-        ? `选择${kind === 'video' ? '视频' : '图片'}默认打开应用`
-        : `选择${kind === 'video' ? '视频' : '图片'}打开应用`;
+        ? t('选择{kind}默认打开应用', { kind: kind === 'video' ? t('视频') : t('图片') })
+        : t('选择{kind}打开应用', { kind: kind === 'video' ? t('视频') : t('图片') });
     subtitle.textContent = mode === 'configure'
-        ? '这里只影响 VibeDrop 内部，不会修改系统全局默认。'
-        : '点一个应用立即打开；勾选后会记住这次选择。';
+        ? t('这里只影响 VibeDrop 内部，不会修改系统全局默认。')
+        : t('点一个应用立即打开；勾选后会记住这次选择。');
     rememberWrap.classList.toggle('hidden', mode !== 'open');
-    rememberLabel.textContent = `记住这次选择，以后默认用它打开${kind === 'video' ? '视频' : '图片'}`;
+    rememberLabel.textContent = t('记住这次选择，以后默认用它打开{kind}', { kind: kind === 'video' ? t('视频') : t('图片') });
     rememberToggle.checked = false;
 
     if (!apps.length) {
@@ -4355,7 +4392,7 @@ function showMediaOpenerPicker({ kind, mode = 'open', item = null } = {}) {
 
                 if (mediaOpenerPickerState.mode === 'configure') {
                     setPreferredMediaOpener(kind, app);
-                    showToast(`已将${app.label || app.packageName}设为默认打开应用`);
+                    showToast(t('已将{name}设为默认打开应用', { name: app.label || app.packageName }));
                     closeMediaOpenerPicker();
                     return;
                 }
@@ -4398,16 +4435,16 @@ function closeMediaOpenerPicker() {
 function testConnection() {
     const resultDiv = $('test-result');
     resultDiv.style.display = 'block';
-    resultDiv.innerHTML = '正在测试...';
+    resultDiv.innerHTML = t('正在测试...');
     resultDiv.style.color = '#667085';
 
     const devices = getDevicesFromUI();
 
     function testOne(dev) {
         return new Promise((resolve) => {
-            if (!dev.ip) { resolve(`${dev.name}: 未配置`); return; }
+            if (!dev.ip) { resolve(t('{name}: 未配置', { name: dev.name })); return; }
             const ws = new WebSocket(`ws://${dev.ip}:${dev.port}/ws`);
-            const timeout = setTimeout(() => { ws.close(); resolve(`${dev.name}: 连接超时`); }, 3000);
+            const timeout = setTimeout(() => { ws.close(); resolve(t('{name}: 连接超时', { name: dev.name })); }, 3000);
             ws.onopen = () => {
                 ws.send(JSON.stringify({ action: 'auth', pin: dev.pin }));
             };
@@ -4416,12 +4453,12 @@ function testConnection() {
                 const data = JSON.parse(e.data);
                 ws.close();
                 if (data.status === 'ok') {
-                    resolve(`${dev.name}: 已连接 (${data.hostname})`);
+                    resolve(t('{name}: 已连接 ({host})', { name: dev.name, host: data.hostname }));
                 } else {
-                    resolve(`${dev.name}: ${data.error || 'PIN 错误'}`);
+                    resolve(t('{name}: {error}', { name: dev.name, error: data.error || t('PIN 错误') }));
                 }
             };
-            ws.onerror = () => { clearTimeout(timeout); resolve(`${dev.name}: 无法连接`); };
+            ws.onerror = () => { clearTimeout(timeout); resolve(t('{name}: 无法连接', { name: dev.name })); };
         });
     }
 
@@ -4624,12 +4661,12 @@ function applyHistoryFilterForm() {
     const status = $('history-status-filter')?.value || 'all';
 
     if (startDate && endDate && startDate > endDate) {
-        showToast('开始日期不能晚于结束日期');
+        showToast(t('开始日期不能晚于结束日期'));
         return;
     }
 
     if (timeRange === 'custom' && startTime && endTime && startTime > endTime) {
-        showToast('开始时间不能晚于结束时间');
+        showToast(t('开始时间不能晚于结束时间'));
         return;
     }
 
@@ -4687,10 +4724,10 @@ function renderHistoryDateInputs() {
     const endDate = $('history-end-date')?.value || '';
 
     if ($('history-start-date-label')) {
-        $('history-start-date-label').textContent = startDate ? formatHistoryDateLabel(startDate) : '选择开始日期';
+        $('history-start-date-label').textContent = startDate ? formatHistoryDateLabel(startDate) : t('选择开始日期');
     }
     if ($('history-end-date-label')) {
-        $('history-end-date-label').textContent = endDate ? formatHistoryDateLabel(endDate) : '选择结束日期';
+        $('history-end-date-label').textContent = endDate ? formatHistoryDateLabel(endDate) : t('选择结束日期');
     }
 
     const hasAvailableDates = availability.availableDates.size > 0;
@@ -4702,12 +4739,12 @@ function renderHistoryDateInputs() {
 
     if (!hasAvailableDates) {
         hint.classList.remove('hidden');
-        hint.textContent = '当前条件下没有可选日期。';
+        hint.textContent = t('当前条件下没有可选日期。');
         return;
     }
 
     hint.classList.remove('hidden');
-    hint.textContent = `有记录日期：${formatHistoryDateLabel(availability.minDate)} 至 ${formatHistoryDateLabel(availability.maxDate)}，不可选日期会置灰。`;
+    hint.textContent = t('有记录日期：{start} 至 {end}，不可选日期会置灰。', { start: formatHistoryDateLabel(availability.minDate), end: formatHistoryDateLabel(availability.maxDate) });
 }
 
 function readHistoryFilterDraft() {
@@ -4776,7 +4813,7 @@ function getHistoryDateAvailability() {
 function openHistoryDatePicker(field) {
     const availability = getHistoryDateAvailability();
     if (availability.availableDates.size === 0) {
-        showToast('当前条件下没有可选日期');
+        showToast(t('当前条件下没有可选日期'));
         return;
     }
 
@@ -4788,10 +4825,10 @@ function openHistoryDatePicker(field) {
         month: getHistoryPickerInitialMonth(field, availability),
     };
 
-    const title = field === 'startDate' ? '选择开始日期' : '选择结束日期';
+    const title = field === 'startDate' ? t('选择开始日期') : t('选择结束日期');
     if ($('history-date-picker-title')) $('history-date-picker-title').textContent = title;
     if ($('history-date-picker-subtitle')) {
-        $('history-date-picker-subtitle').textContent = `仅显示有记录的日期。范围：${formatHistoryDateLabel(availability.minDate)} 至 ${formatHistoryDateLabel(availability.maxDate)}`;
+        $('history-date-picker-subtitle').textContent = t('仅显示有记录的日期。范围：{start} 至 {end}', { start: formatHistoryDateLabel(availability.minDate), end: formatHistoryDateLabel(availability.maxDate) });
     }
 
     renderHistoryDatePicker();
@@ -4846,7 +4883,7 @@ function renderHistoryDatePicker() {
     const month = historyDatePickerState.month;
     const year = month.getFullYear();
     const monthIndex = month.getMonth();
-    monthLabel.textContent = `${year}年${monthIndex + 1}月`;
+    monthLabel.textContent = t('{year}年{month}月', { year, month: monthIndex + 1 });
 
     const firstDay = new Date(year, monthIndex, 1);
     const startOffset = (firstDay.getDay() + 6) % 7;
@@ -4925,7 +4962,7 @@ function formatHistoryDateLabel(value) {
     if (!value) return '';
     const [year, month, day] = String(value).split('-').map(Number);
     if (!year || !month || !day) return value;
-    return `${year}年${month}月${day}日`;
+    return t('{year}年{month}月{day}日', { year, month, day });
 }
 
 function dateKeyToUtcDate(value) {
@@ -5147,7 +5184,7 @@ function syncHistoryHeatmapViewportMeta(baseEntries, counts, bounds) {
         </div>
     `).join('');
 
-    caption.textContent = `当前窗口 ${formatHistoryDateLabel(visibleStart)} 至 ${formatHistoryDateLabel(visibleEnd)}。左右滑动查看更多日期，点方块筛选该小时。`;
+    caption.textContent = t('当前窗口 {start} 至 {end}。左右滑动查看更多日期，点方块筛选该小时。', { start: formatHistoryDateLabel(visibleStart), end: formatHistoryDateLabel(visibleEnd) });
     resetBtn.classList.toggle('hidden', startIndex >= getHistoryHeatmapMaxStartIndex(bounds));
 }
 
@@ -5316,20 +5353,20 @@ function buildHistoryHeatmapStats(entries, visibleStart, visibleEnd) {
 
     return [
         {
-            label: '窗口',
+            label: t('窗口'),
             value: `${formatShortDateLabel(visibleStart)} - ${formatShortDateLabel(visibleEnd)}`,
         },
         {
-            label: '发送',
-            value: `${total} 条`,
+            label: t('发送'),
+            value: t('{count} 条', { count: total }),
         },
         {
-            label: '高峰时段',
-            value: peakHour == null ? '暂无' : `${pad2(peakHour)}:00 · ${peakHourCount}`,
+            label: t('高峰时段'),
+            value: peakHour == null ? t('暂无') : `${pad2(peakHour)}:00 · ${peakHourCount}`,
         },
         {
-            label: '最忙日期',
-            value: !peakDay ? '暂无' : `${formatShortDateLabel(peakDay)} · ${peakDayCount}`,
+            label: t('最忙日期'),
+            value: !peakDay ? t('暂无') : `${formatShortDateLabel(peakDay)} · ${peakDayCount}`,
         },
     ];
 }
@@ -5346,7 +5383,7 @@ function openSelfStudyReport(refresh = false) {
     if (!overlay || !frame) return;
     overlay.classList.remove('hidden');
     frame.src = 'about:blank';
-    if (refresh) showToast('正在用最新数据重新生成，可能要几秒…');
+    if (refresh) showToast(t('正在用最新数据重新生成，可能要几秒…'));
     frame.src = getSelfStudyReportUrl(refresh);
 }
 
@@ -5392,10 +5429,10 @@ function renderHistoryHeatmap(baseEntries) {
     track.innerHTML = days.map((dayKey) => {
         const dayDate = dateKeyToUtcDate(dayKey);
         const weekday = dayDate
-            ? dayDate.toLocaleDateString('zh-CN', { weekday: 'short', timeZone: 'UTC' }).replace('周', '周')
+            ? dayDate.toLocaleDateString(window.vibeI18n?.lang === 'zh-CN' ? 'zh-CN' : 'en', { weekday: 'short', timeZone: 'UTC' })
             : '';
         const isToday = dayKey === todayKey;
-        const headerLabel = isToday ? '今天' : weekday;
+        const headerLabel = isToday ? t('今天') : weekday;
 
         const hoursHtml = Array.from({ length: HEATMAP_HOUR_SLOTS }, (_, hour) => {
             const count = getHistoryHeatmapCellCount(counts, dayKey, hour);
@@ -5405,7 +5442,7 @@ function renderHistoryHeatmap(baseEntries) {
             if (count > 0) classes.push('has-data');
             if (isSelected) classes.push('selected');
             const style = `background:${getHistoryHeatmapCellColor(count, initialMaxCount)};`;
-            const label = `${formatHistoryDateLabel(dayKey)} ${formatHeatmapHourLabel(hour)}，${count} 条`;
+            const label = t('{date} {hour}，{count} 条', { date: formatHistoryDateLabel(dayKey), hour: formatHeatmapHourLabel(hour), count });
 
             return `
                 <button
@@ -5559,7 +5596,7 @@ function markUnusableDesktopEndpoint(device) {
         conn.hostname = null;
     }
 
-    const detail = reason === 'android_loopback' ? '手机端不可用地址' : '未配置地址';
+    const detail = reason === 'android_loopback' ? t('手机端不可用地址') : t('未配置地址');
     updateDeviceUI(device.id, 'error', detail);
     debugLog('connect:skipped_unusable_endpoint', {
         deviceId: device.id,
@@ -5808,7 +5845,7 @@ function connectDevice(deviceId, ip, port, pin) {
     } catch (e) {
         console.error(`[${deviceId}] WebSocket 创建失败:`, e);
         debugLog('connect:create_error', { deviceId, ip: conn.ip, port: conn.port, endpoint, error: e?.message || String(e) });
-        updateDeviceUI(deviceId, 'error', '连接失败');
+        updateDeviceUI(deviceId, 'error', t('连接失败'));
         scheduleReconnect(deviceId, conn.ip, conn.port, conn.pin);
         scheduleConnectionRecovery('socket-create-error', {
             forceDiscovery: true,
@@ -5835,7 +5872,7 @@ function connectDevice(deviceId, ip, port, pin) {
             device_name: clientIdentity.name,
             can_receive_files: supportsNativeFileReceive(),
         }));
-        updateDeviceUI(deviceId, 'connecting', '认证中...');
+        updateDeviceUI(deviceId, 'connecting', t('认证中...'));
     };
 
     ws.onmessage = (event) => {
@@ -5861,9 +5898,9 @@ function connectDevice(deviceId, ip, port, pin) {
         if (data.action === 'clipboard') {
             if (data.text) {
                 writeClipboard(data.text).then(() => {
-                    showToast('已同步到剪贴板');
+                    showToast(t('已同步到剪贴板'));
                 }).catch(() => {
-                    showToast('剪贴板写入失败');
+                    showToast(t('剪贴板写入失败'));
                 });
             }
             return;
@@ -5899,7 +5936,7 @@ function connectDevice(deviceId, ip, port, pin) {
                 startHeartbeat(deviceId, conn.ip, conn.port, conn.pin);
             } else {
                 debugLog('connect:auth_fail', { deviceId, error: data.error || 'PIN 错误' });
-                updateDeviceUI(deviceId, 'error', data.error || 'PIN 错误');
+                updateDeviceUI(deviceId, 'error', data.error || t('PIN 错误'));
             }
             return;
         }
@@ -5913,7 +5950,7 @@ function connectDevice(deviceId, ip, port, pin) {
     ws.onerror = () => {
         if (conn.ws !== ws) return;
         debugLog('connect:error', { deviceId });
-        updateDeviceUI(deviceId, 'error', '连接出错');
+        updateDeviceUI(deviceId, 'error', t('连接出错'));
         scheduleConnectionRecovery('socket-error', {
             forceDiscovery: false,
             onlyIfUnhealthy: true,
@@ -5924,11 +5961,11 @@ function connectDevice(deviceId, ip, port, pin) {
     ws.onclose = () => {
         if (conn.ws !== ws) return;
         debugLog('connect:close', { deviceId });
-        rejectOutboundDesktopTransfersForDevice(deviceId, '连接已断开');
+        rejectOutboundDesktopTransfersForDevice(deviceId, t('连接已断开'));
         conn.ws = null;
         conn.authenticated = false;
         conn.hostname = null;
-        updateDeviceUI(deviceId, 'disconnected', '已断开');
+        updateDeviceUI(deviceId, 'disconnected', t('已断开'));
         clearTimers(conn);
         scheduleReconnect(deviceId, conn.ip, conn.port, conn.pin);
         scheduleConnectionRecovery('socket-close', {
@@ -6066,13 +6103,13 @@ async function handleIncomingDesktopTransfer(deviceId, payload) {
         }
 
         if (!transferId) {
-            throw new Error('缺少传输标识');
+            throw new Error(t('缺少传输标识'));
         }
 
         if (payload.action === 'incoming_file_start') {
             await beginIncomingDesktopFile(payload);
-            const fileName = payload.file_name || '文件';
-            showToast(`正在接收：${fileName}`);
+            const fileName = payload.file_name || t('文件');
+            showToast(t('正在接收：{name}', { name: fileName }));
             return;
         }
 
@@ -6091,7 +6128,7 @@ async function handleIncomingDesktopTransfer(deviceId, payload) {
             return;
         }
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error || '接收失败');
+        const message = error instanceof Error ? error.message : String(error || t('接收失败'));
         if (transferId && incomingDesktopTransfers[transferId]) {
             markDesktopIncomingHistoryTransfer(incomingDesktopTransfers[transferId], {
                 status: 'failed',
@@ -6106,14 +6143,14 @@ async function handleIncomingDesktopTransfer(deviceId, payload) {
                 error: message,
             }));
         }
-        showToast(`接收文件失败：${message}`);
+        showToast(t('接收文件失败：{error}', { error: message }));
     }
 }
 
 async function beginIncomingDesktopFile(payload) {
     const transferId = payload.transfer_id;
     if (!transferId) {
-        throw new Error('缺少传输标识');
+        throw new Error(t('缺少传输标识'));
     }
 
     const mimeType = payload.mime_type || 'application/octet-stream';
@@ -6147,7 +6184,7 @@ async function appendIncomingDesktopFileChunk(payload) {
     const transferId = payload.transfer_id;
     const transfer = incomingDesktopTransfers[transferId];
     if (!transfer) {
-        throw new Error('接收状态不存在');
+        throw new Error(t('接收状态不存在'));
     }
 
     if (supportsNativeFileReceive()) {
@@ -6165,7 +6202,7 @@ async function finishIncomingDesktopFile(payload) {
     const transferId = payload.transfer_id;
     const transfer = incomingDesktopTransfers[transferId];
     if (!transfer) {
-        throw new Error('接收状态不存在');
+        throw new Error(t('接收状态不存在'));
     }
 
     try {
@@ -6184,9 +6221,9 @@ async function finishIncomingDesktopFile(payload) {
                 } catch (scanError) {
                     console.warn('通知系统媒体库扫描失败', scanError);
                 }
-                showToast(`已保存到${getIncomingDesktopSavedLocationLabel(transfer.saveTarget)}：${transfer.fileName}`);
+                showToast(t('已保存到{location}：{name}', { location: getIncomingDesktopSavedLocationLabel(transfer.saveTarget), name: transfer.fileName }));
             } else {
-                showToast(`已保存到${getIncomingDesktopSavedLocationLabel(transfer.saveTarget)}：${transfer.fileName}`);
+                showToast(t('已保存到{location}：{name}', { location: getIncomingDesktopSavedLocationLabel(transfer.saveTarget), name: transfer.fileName }));
             }
             return savedPath;
         }
@@ -6202,7 +6239,7 @@ async function finishIncomingDesktopFile(payload) {
             status: 'success',
             savedPath: transfer.fileName,
         });
-        showToast(`已下载：${transfer.fileName}`);
+        showToast(t('已下载：{name}', { name: transfer.fileName }));
         return transfer.fileName;
     } finally {
         delete incomingDesktopTransfers[transferId];
@@ -6231,7 +6268,7 @@ function resolveIncomingDesktopSaveTarget({ mimeType = '', isArchive = false } =
 function normalizeHistoryItem(item = {}) {
     return {
         kind: item.kind || normalizeHistoryKind(item.mime_type || item.mimeType || ''),
-        fileName: item.fileName || item.file_name || '文件',
+        fileName: item.fileName || item.file_name || t('文件'),
         mimeType: item.mimeType || item.mime_type || 'application/octet-stream',
         thumbnailDataUrl: item.thumbnailDataUrl || item.thumbnail_data_url || '',
         filePath: item.filePath || item.file_path || '',
@@ -6261,7 +6298,7 @@ function buildHistoryItemsSummary(items = []) {
 
     if (normalizedItems.length === 1) {
         const item = normalizedItems[0];
-        const prefix = item.kind === 'image' ? '图片' : item.kind === 'video' ? '视频' : '文件';
+        const prefix = item.kind === 'image' ? t('图片') : item.kind === 'video' ? t('视频') : t('文件');
         return {
             kind: item.kind,
             text: `[${prefix}] ${item.fileName}`,
@@ -6269,15 +6306,15 @@ function buildHistoryItemsSummary(items = []) {
     }
 
     if (imageCount === normalizedItems.length) {
-        return { kind: 'image', text: `[图片] ${normalizedItems.length} 张` };
+        return { kind: 'image', text: t('[图片] {count} 张', { count: normalizedItems.length }) };
     }
     if (videoCount === normalizedItems.length) {
-        return { kind: 'video', text: `[视频] ${normalizedItems.length} 个` };
+        return { kind: 'video', text: t('[视频] {count} 个', { count: normalizedItems.length }) };
     }
     if (imageCount + videoCount === normalizedItems.length) {
-        return { kind: 'media', text: `[媒体] ${normalizedItems.length} 项` };
+        return { kind: 'media', text: t('[媒体] {count} 项', { count: normalizedItems.length }) };
     }
-    return { kind: 'file', text: `[文件] ${normalizedItems.length} 项` };
+    return { kind: 'file', text: t('[文件] {count} 项', { count: normalizedItems.length }) };
 }
 
 function upsertHistoryEntry(entry) {
@@ -6439,7 +6476,7 @@ function updateDeviceUI(deviceId, status, detail) {
         case 'connected':
             dot.classList.add('connected');
             card.classList.add('connected');
-            text.textContent = '已连接';
+            text.textContent = t('已连接');
             if (sendBtn) sendBtn.disabled = false;
             if (enterBtn) enterBtn.disabled = false;
             if (sendEnterBtn) sendEnterBtn.disabled = false;
@@ -6449,7 +6486,7 @@ function updateDeviceUI(deviceId, status, detail) {
             break;
         case 'connecting':
             dot.classList.add('connecting');
-            text.textContent = detail || '连接中...';
+            text.textContent = detail || t('连接中...');
             if (sendBtn) sendBtn.disabled = true;
             if (enterBtn) enterBtn.disabled = true;
             if (sendEnterBtn) sendEnterBtn.disabled = true;
@@ -6459,7 +6496,7 @@ function updateDeviceUI(deviceId, status, detail) {
         case 'error':
             dot.classList.add('error');
             card.classList.add('error');
-            text.textContent = detail || '错误';
+            text.textContent = detail || t('错误');
             if (sendBtn) sendBtn.disabled = true;
             if (enterBtn) enterBtn.disabled = true;
             if (sendEnterBtn) sendEnterBtn.disabled = true;
@@ -6468,7 +6505,7 @@ function updateDeviceUI(deviceId, status, detail) {
             break;
         case 'disconnected':
         default:
-            text.textContent = detail || '未连接';
+            text.textContent = detail || t('未连接');
             if (sendBtn) sendBtn.disabled = true;
             if (enterBtn) enterBtn.disabled = true;
             if (sendEnterBtn) sendEnterBtn.disabled = true;
@@ -6503,7 +6540,7 @@ function isConnectionReady(conn) {
 
 function getDeviceDisplayName(deviceId) {
     const device = findDeviceByAnyId(deviceId, getDevices());
-    return device?.name || device?.hostName || device?.ip || '目标电脑';
+    return device?.name || device?.hostName || device?.ip || t('目标电脑');
 }
 
 async function ensureReadyConnectionForSend(deviceId, {
@@ -6523,8 +6560,8 @@ async function ensureReadyConnectionForSend(deviceId, {
     const device = findDeviceByAnyId(deviceId, getDevices());
     if (!device?.ip) {
         debugLog('ensureReady:no_device_ip', { deviceId });
-        showToast('设备地址缺失，请到设置里重新选择电脑');
-        updateDeviceUI(deviceId, 'error', '未配置地址');
+        showToast(t('设备地址缺失，请到设置里重新选择电脑'));
+        updateDeviceUI(deviceId, 'error', t('未配置地址'));
         return null;
     }
     if (!isUsableDesktopEndpoint(device)) {
@@ -6534,14 +6571,14 @@ async function ensureReadyConnectionForSend(deviceId, {
             reason,
             endpoint: getDesktopConnectionEndpoint(device.ip, device.port || '9001'),
         });
-        showToast('这个电脑的地址在手机端不可用，请重新扫描或修改 IP');
+        showToast(t('这个电脑的地址在手机端不可用，请重新扫描或修改 IP'));
         markUnusableDesktopEndpoint(device);
         return null;
     }
 
     const label = getDeviceDisplayName(deviceId);
     if (showConnectingToast) {
-        showToast(`正在重连 ${label}`);
+        showToast(t('正在重连 {name}', { name: label }));
     }
     debugLog('ensureReady:reconnect', { deviceId, ip: device.ip, port: device.port || '9001' });
     connectDevice(deviceId, device.ip, device.port || '9001', device.pin || '');
@@ -6589,7 +6626,7 @@ async function ensureReadyConnectionForSend(deviceId, {
         return conn;
     }
 
-    showToast(`${label} 未连接，请稍后再试`);
+    showToast(t('{name} 未连接，请稍后再试', { name: label }));
     return null;
 }
 
@@ -6619,7 +6656,7 @@ async function sendDeviceAction(deviceId, {
     });
 
     if (!btn) {
-        return { ok: false, error: '操作按钮不存在' };
+        return { ok: false, error: t('操作按钮不存在') };
     }
 
     if (!isConnectionReady(conn)) {
@@ -6633,7 +6670,7 @@ async function sendDeviceAction(deviceId, {
             readyState: conn?.ws?.readyState,
             authenticated: Boolean(conn?.authenticated),
         });
-        return { ok: false, error: '未连接' };
+        return { ok: false, error: t('未连接') };
     }
 
     debugLog('sendAction:ready', { deviceId, action });
@@ -6674,27 +6711,27 @@ async function sendDeviceAction(deviceId, {
             updateHistory(historyEntry);
         }
         if (failureToast) {
-            showToast(result.error || '操作失败');
+            showToast(result.error || t('操作失败'));
         }
         if (btn) btn.classList.add('fail');
         if (btn) btn.textContent = '✗';
-        return { ok: false, error: result.error || '操作失败' };
+        return { ok: false, error: result.error || t('操作失败') };
     } catch (e) {
         debugLog('sendAction:catch', {
             deviceId,
             action,
-            error: e.message || '操作失败',
+            error: e.message || t('操作失败'),
         });
         if (historyEntry) {
             historyEntry.status = 'failed';
             updateHistory(historyEntry);
         }
         if (failureToast) {
-            showToast(e.message || '操作失败');
+            showToast(e.message || t('操作失败'));
         }
         if (btn) btn.classList.add('fail');
         if (btn) btn.textContent = '✗';
-        return { ok: false, error: e.message || '操作失败' };
+        return { ok: false, error: e.message || t('操作失败') };
     } finally {
         setTimeout(() => {
             if (btn) btn.classList.remove('sending', 'success', 'fail');
@@ -6739,7 +6776,7 @@ async function sendText(deviceId, buttonIdOverride = null, textOverride = null) 
         action: outing ? 'clipboard_text' : 'type',
         payload: { text, transfer_id: historyEntry.transferId },
         buttonId: buttonIdOverride || `sendbtn-${deviceId}`,
-        pendingText: outing ? '同步中...' : '发送中...',
+        pendingText: outing ? t('同步中...') : t('发送中...'),
         clearInput: true,
         historyEntry,
         failureToast: true,
@@ -6750,7 +6787,7 @@ async function sendEnter(deviceId) {
     await sendDeviceAction(deviceId, {
         action: 'enter',
         buttonId: `enterbtn-${deviceId}`,
-        pendingText: '回车中...',
+        pendingText: t('回车中...'),
     });
 }
 
@@ -6796,7 +6833,7 @@ async function sendTextAndEnter(deviceId, buttonIdOverride = null, textOverride 
         action: 'type_enter',
         payload: { text, transfer_id: historyEntry.transferId },
         buttonId: buttonIdOverride || `sendenterbtn-${deviceId}`,
-        pendingText: '发送并回车中...',
+        pendingText: t('发送并回车中...'),
         clearInput: true,
         historyEntry,
         failureToast: true,
@@ -6824,7 +6861,7 @@ async function resolveTextToSend(deviceId) {
         return clipboardText;
     }
 
-    showToast('输入框和剪贴板都没有可发送文字');
+    showToast(t('输入框和剪贴板都没有可发送文字'));
     return '';
 }
 
@@ -6832,7 +6869,7 @@ function readFileAsDataUrl(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+        reader.onerror = () => reject(reader.error || new Error(t('读取文件失败')));
         reader.readAsDataURL(file);
     });
 }
@@ -6863,14 +6900,14 @@ async function readBlobChunkAsBase64(blob, offsetBytes, lengthBytes) {
 
 function readPendingSharedContentChunkBase64At(itemIndex, offsetBytes, lengthBytes) {
     if (!window.NativeShare) {
-        throw new Error('当前环境不支持分块读取共享文件');
+        throw new Error(t('当前环境不支持分块读取共享文件'));
     }
 
     const base64 = typeof window.NativeShare.readPendingSharedContentChunkBase64At === 'function'
         ? window.NativeShare.readPendingSharedContentChunkBase64At(itemIndex, offsetBytes, lengthBytes)
         : window.NativeShare.readPendingSharedContentChunkBase64?.(offsetBytes, lengthBytes);
     if (typeof base64 !== 'string') {
-        throw new Error('共享文件分块读取失败');
+        throw new Error(t('共享文件分块读取失败'));
     }
     return base64;
 }
@@ -6912,14 +6949,14 @@ function registerOutboundDesktopFileTransfer(deviceId, transferId, timeoutMs) {
                 return;
             }
             transfer.state = 'rejected';
-            transfer.errorMessage = message || '桌面端接收失败';
+            transfer.errorMessage = message || t('桌面端接收失败');
             clearTimeout(transfer.timeoutTimer);
             reject(new Error(transfer.errorMessage));
         };
     });
 
     transfer.timeoutTimer = setTimeout(() => {
-        transfer.reject('等待桌面端完成确认超时');
+        transfer.reject(t('等待桌面端完成确认超时'));
     }, timeoutMs);
 
     outboundDesktopFileTransfers[transferId] = transfer;
@@ -6945,7 +6982,7 @@ function settleOutboundDesktopFileTransfer(deviceId, payload) {
     if (payload.action === 'incoming_file_saved') {
         transfer.resolve(payload);
     } else {
-        transfer.reject(payload.error || '桌面端接收失败');
+        transfer.reject(payload.error || t('桌面端接收失败'));
     }
     return true;
 }
@@ -6954,14 +6991,14 @@ function rejectOutboundDesktopTransfersForDevice(deviceId, message) {
     Object.keys(outboundDesktopFileTransfers).forEach((transferId) => {
         const transfer = outboundDesktopFileTransfers[transferId];
         if (transfer?.deviceId === deviceId) {
-            transfer.reject(message || '连接已断开');
+            transfer.reject(message || t('连接已断开'));
         }
     });
 }
 
 function sendWsJson(ws, payload) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-        throw new Error('连接已断开');
+        throw new Error(t('连接已断开'));
     }
     ws.send(JSON.stringify(payload));
 }
@@ -6974,11 +7011,11 @@ function sendDesktopRequest(conn, payload, timeoutMs = 5000) {
             readyState: conn?.ws?.readyState,
             authenticated: Boolean(conn?.authenticated),
         });
-        return Promise.reject(new Error('未连接'));
+        return Promise.reject(new Error(t('未连接')));
     }
     if (conn._sendCallback) {
         debugLog('desktopRequest:busy', { action: payload?.action });
-        return Promise.reject(new Error('当前有未完成操作'));
+        return Promise.reject(new Error(t('当前有未完成操作')));
     }
 
     return new Promise((resolve, reject) => {
@@ -7005,7 +7042,7 @@ function sendDesktopRequest(conn, payload, timeoutMs = 5000) {
         });
         timer = setTimeout(() => {
             debugLog('desktopRequest:timeout', { action: payload?.action, timeoutMs });
-            finish(reject)(new Error('超时'));
+            finish(reject)(new Error(t('超时')));
         }, timeoutMs);
 
         conn._sendCallback = callback;
@@ -7020,9 +7057,9 @@ function sendDesktopRequest(conn, payload, timeoutMs = 5000) {
         } catch (error) {
             debugLog('desktopRequest:send_error', {
                 action: payload?.action,
-                error: error instanceof Error ? error.message : String(error || '发送失败'),
+                error: error instanceof Error ? error.message : String(error || t('发送失败')),
             });
-            finish(reject)(error instanceof Error ? error : new Error(String(error || '发送失败')));
+            finish(reject)(error instanceof Error ? error : new Error(String(error || t('发送失败'))));
         }
     });
 }
@@ -7031,18 +7068,18 @@ async function waitForFileTransferBufferDrain(conn, transferId) {
     while (conn?.ws && conn.ws.readyState === WebSocket.OPEN && conn.ws.bufferedAmount > FILE_TRANSFER_WS_BUFFER_HIGH_WATER_BYTES) {
         const transfer = outboundDesktopFileTransfers[transferId];
         if (transfer?.state === 'rejected') {
-            throw new Error(transfer.errorMessage || '桌面端接收失败');
+            throw new Error(transfer.errorMessage || t('桌面端接收失败'));
         }
         await sleep(FILE_TRANSFER_WS_BUFFER_POLL_MS);
     }
 
     if (!conn?.ws || conn.ws.readyState !== WebSocket.OPEN) {
-        throw new Error('连接已断开');
+        throw new Error(t('连接已断开'));
     }
 
     const transfer = outboundDesktopFileTransfers[transferId];
     if (transfer?.state === 'rejected') {
-        throw new Error(transfer.errorMessage || '桌面端接收失败');
+        throw new Error(transfer.errorMessage || t('桌面端接收失败'));
     }
 }
 
@@ -7057,7 +7094,7 @@ async function transferFileToDesktop(deviceId, {
     const conn = connections[deviceId];
 
     if (!conn || !conn.authenticated || !conn.ws) {
-        return { ok: false, error: '未连接' };
+        return { ok: false, error: t('未连接') };
     }
 
     const safeFileName = fileName || 'file.bin';
@@ -7077,7 +7114,7 @@ async function transferFileToDesktop(deviceId, {
         }, FILE_TRANSFER_START_TIMEOUT_MS);
 
         if (startResult.status !== 'ok') {
-            throw new Error(startResult.error || '桌面端拒绝接收文件');
+            throw new Error(startResult.error || t('桌面端拒绝接收文件'));
         }
 
         transfer = registerOutboundDesktopFileTransfer(
@@ -7091,7 +7128,7 @@ async function transferFileToDesktop(deviceId, {
             const chunkLength = Math.min(FILE_TRANSFER_CHUNK_BYTES, totalBytes - sentBytes);
             const chunkBase64 = await readChunkBase64(sentBytes, chunkLength);
             if (typeof chunkBase64 !== 'string' || chunkBase64.length === 0) {
-                throw new Error('文件分块读取失败');
+                throw new Error(t('文件分块读取失败'));
             }
 
             await waitForFileTransferBufferDrain(conn, transferId);
@@ -7134,7 +7171,7 @@ async function transferFileToDesktop(deviceId, {
         }
         return { ok: true, savedPath: result.saved_path || '' };
     } catch (error) {
-        const message = error instanceof Error ? error.message : String(error || '文件传输失败');
+        const message = error instanceof Error ? error.message : String(error || t('文件传输失败'));
         if (historyEntry) {
             historyEntry.status = 'failed';
             updateHistory(historyEntry);
@@ -7171,7 +7208,7 @@ async function sendFileToDesktopInChunks(deviceId, {
     const btn = $(buttonId);
 
     if (!btn || !conn || !conn.authenticated || !conn.ws) {
-        return { ok: false, error: '未连接' };
+        return { ok: false, error: t('未连接') };
     }
 
     const originalText = btn ? btn.textContent : '';
@@ -7187,7 +7224,7 @@ async function sendFileToDesktopInChunks(deviceId, {
             historyEntry,
             readChunkBase64,
             onProgress: ({ stage, progress }) => {
-                if (btn) btn.textContent = stage === 'saving' ? '保存中...' : `${progress}%`;
+                if (btn) btn.textContent = stage === 'saving' ? t('保存中...') : `${progress}%`;
             },
         });
 
@@ -7201,7 +7238,7 @@ async function sendFileToDesktopInChunks(deviceId, {
         }
 
         if (failureToast) {
-            showToast(result.error || '文件传输失败');
+            showToast(result.error || t('文件传输失败'));
         }
         if (btn) btn.classList.add('fail');
         if (btn) btn.textContent = '✗';
@@ -7239,7 +7276,7 @@ function computeHistoryItemsAggregateStatus(items = []) {
 function createOutboundBatchHistoryEntry(deviceId, items = []) {
     const normalizedItems = items.map((item) => normalizeHistoryItem({
         kind: item.kind || normalizeHistoryKind(item.mimeType || ''),
-        fileName: item.fileName || '文件',
+        fileName: item.fileName || t('文件'),
         mimeType: item.mimeType || 'application/octet-stream',
         thumbnailDataUrl: item.thumbnailDataUrl || '',
         status: 'pending',
@@ -7267,24 +7304,24 @@ function createOutboundBatchHistoryEntry(deviceId, items = []) {
 
 function buildBatchTransferSummaryToast({ totalCount, successCount, failedCount }) {
     if (successCount === totalCount) {
-        return `已发送 ${totalCount} 项到 VibeDrop 收件箱`;
+        return t('已发送 {count} 项到 VibeDrop 收件箱', { count: totalCount });
     }
     if (failedCount === totalCount) {
-        return `${totalCount} 项发送失败`;
+        return t('{count} 项发送失败', { count: totalCount });
     }
-    return `已发送 ${successCount} 项，失败 ${failedCount} 项`;
+    return t('已发送 {success} 项，失败 {failed} 项', { success: successCount, failed: failedCount });
 }
 
 async function sendFilesToDesktopBatch(deviceId, items, {
     buttonId,
-    pendingText = '批量传输中...',
+    pendingText = t('批量传输中...'),
 }) {
     const conn = connections[deviceId];
     const btn = $(buttonId);
     const normalizedItems = Array.isArray(items) ? items : [];
 
     if (!btn || !conn || !conn.authenticated || !conn.ws || normalizedItems.length <= 1) {
-        return { ok: false, error: '未连接或批量内容无效' };
+        return { ok: false, error: t('未连接或批量内容无效') };
     }
 
     const historyEntry = createOutboundBatchHistoryEntry(deviceId, normalizedItems);
@@ -7310,7 +7347,7 @@ async function sendFilesToDesktopBatch(deviceId, items, {
                 readChunkBase64: item.readChunkBase64,
                 onProgress: ({ stage, progress }) => {
                     if (btn) btn.textContent = stage === 'saving'
-                        ? `${prefix} · 保存中`
+                        ? t('{prefix} · 保存中', { prefix })
                         : `${prefix} · ${progress}%`;
                 },
             });
@@ -7329,7 +7366,7 @@ async function sendFilesToDesktopBatch(deviceId, items, {
                 historyEntry.items[index] = normalizeHistoryItem({
                     ...batchItem,
                     status: 'failed',
-                    error: result.error || '发送失败',
+                    error: result.error || t('发送失败'),
                 });
             }
 
@@ -7409,14 +7446,14 @@ function createThumbnailDataUrl(sourceDataUrl, outputType = 'image/jpeg') {
             const context = canvas.getContext('2d');
 
             if (!context) {
-                reject(new Error('无法创建图片预览'));
+                reject(new Error(t('无法创建图片预览')));
                 return;
             }
 
             context.drawImage(image, 0, 0, width, height);
             resolve(canvas.toDataURL(outputType, 0.82));
         };
-        image.onerror = () => reject(new Error('无法生成图片预览'));
+        image.onerror = () => reject(new Error(t('无法生成图片预览')));
         image.src = sourceDataUrl;
     });
 }
@@ -7428,16 +7465,16 @@ async function sendSelectedImage(deviceId, file, buttonIdOverride = null) {
     if (!isConnectionReady(conn)) return;
 
     if (!file.type || !file.type.startsWith('image/')) {
-        showToast('请选择图片文件');
+        showToast(t('请选择图片文件'));
         return;
     }
 
     if (file.size > MAX_IMAGE_FILE_BYTES) {
-        showToast('图片过大，请选择 10MB 以内的图片');
+        showToast(t('图片过大，请选择 10MB 以内的图片'));
         return;
     }
 
-    const displayText = `[图片] ${file.name}`;
+    const displayText = t('[图片] {name}', { name: file.name });
 
     const historyEntry = {
         id: Date.now(),
@@ -7455,7 +7492,7 @@ async function sendSelectedImage(deviceId, file, buttonIdOverride = null) {
         const dataUrl = await readFileAsDataUrl(file);
         const commaIndex = String(dataUrl).indexOf(',');
         if (commaIndex === -1) {
-            throw new Error('图片编码失败');
+            throw new Error(t('图片编码失败'));
         }
 
         try {
@@ -7477,16 +7514,16 @@ async function sendSelectedImage(deviceId, file, buttonIdOverride = null) {
                 image_base64: imageBase64,
             },
             buttonId: buttonIdOverride || `imagebtn-${deviceId}`,
-            pendingText: '传图中...',
+            pendingText: t('传图中...'),
             historyEntry,
             failureToast: true,
-            successToast: '图片已放入 Mac 剪贴板',
+            successToast: t('图片已放入 Mac 剪贴板'),
             timeoutMs: 20000,
         });
     } catch (error) {
         historyEntry.status = 'failed';
         updateHistory(historyEntry);
-        showToast(`图片发送失败：${error.message}`);
+        showToast(t('图片发送失败：{error}', { error: error.message }));
     }
 }
 
@@ -7498,7 +7535,7 @@ async function sendSelectedFile(deviceId, file, buttonIdOverride = null) {
     const historyEntry = {
         id: Date.now(),
         timestamp: getLocalTimestamp(),
-        text: `[文件] ${file.name}`,
+        text: t('[文件] {name}', { name: file.name }),
         status: 'pending',
         kind: 'file',
         saveTarget: 'desktop-inbox',
@@ -7514,16 +7551,16 @@ async function sendSelectedFile(deviceId, file, buttonIdOverride = null) {
             mimeType: file.type || 'application/octet-stream',
             sizeBytes: file.size,
             buttonId: buttonIdOverride || `filebtn-${deviceId}`,
-            pendingText: '传文件中...',
+            pendingText: t('传文件中...'),
             historyEntry,
             failureToast: true,
-            successToast: '文件已保存到 VibeDrop 收件箱',
+            successToast: t('文件已保存到 VibeDrop 收件箱'),
             readChunkBase64: (offsetBytes, lengthBytes) => readBlobChunkAsBase64(file, offsetBytes, lengthBytes),
         });
     } catch (error) {
         historyEntry.status = 'failed';
         updateHistory(historyEntry);
-        showToast(`文件传输失败：${error.message}`);
+        showToast(t('文件传输失败：{error}', { error: error.message }));
     }
 }
 
@@ -7544,7 +7581,7 @@ async function sendSelectedFilesBatch(deviceId, files, buttonIdOverride = null) 
 
     await sendFilesToDesktopBatch(deviceId, batchItems, {
         buttonId: buttonIdOverride || `filebtn-${deviceId}`,
-        pendingText: '批量传输中...',
+        pendingText: t('批量传输中...'),
     });
 }
 
@@ -7637,8 +7674,8 @@ function renderPendingSharedContent() {
         const sizeText = formatFileSize(shared.sizeBytes);
         title.textContent = shared.displayName;
         hint.textContent = shared.isImage
-            ? `图片已从系统分享导入${sizeText ? ` · ${sizeText}` : ''}，现在可直接点任意设备的“传图到剪贴板”或“传到收件箱”。`
-            : `文件已从系统分享导入${sizeText ? ` · ${sizeText}` : ''}，现在可直接点任意设备的“传到收件箱”。`;
+            ? t('图片已从系统分享导入{size}，现在可直接点任意设备的“传图到剪贴板”或“传到收件箱”。', { size: sizeText ? ` · ${sizeText}` : '' })
+            : t('文件已从系统分享导入{size}，现在可直接点任意设备的“传到收件箱”。', { size: sizeText ? ` · ${sizeText}` : '' });
         card.classList.remove('hidden');
         return;
     }
@@ -7646,17 +7683,17 @@ function renderPendingSharedContent() {
     const summary = summarizePendingSharedContents();
     const segments = [];
     if (summary.imageCount) {
-        segments.push(`图片 ${summary.imageCount} 张`);
+        segments.push(t('图片 {count} 张', { count: summary.imageCount }));
     }
     if (summary.videoCount) {
-        segments.push(`视频 ${summary.videoCount} 个`);
+        segments.push(t('视频 {count} 个', { count: summary.videoCount }));
     }
     if (summary.fileCount) {
-        segments.push(`文件 ${summary.fileCount} 项`);
+        segments.push(t('文件 {count} 项', { count: summary.fileCount }));
     }
 
-    title.textContent = `已选择 ${summary.totalCount} 项`;
-    hint.textContent = `${segments.join(' · ')}。现在可直接点任意设备的“传到收件箱”批量发送。`;
+    title.textContent = t('已选择 {count} 项', { count: summary.totalCount });
+    hint.textContent = t('{summary}。现在可直接点任意设备的“传到收件箱”批量发送。', { summary: segments.join(' · ') });
     card.classList.remove('hidden');
 }
 
@@ -7671,7 +7708,7 @@ function clearPendingSharedContentState({ silent = false } = {}) {
     pendingSharedContents = [];
     renderPendingSharedContent();
     if (!silent) {
-        showToast('已清除共享内容');
+        showToast(t('已清除共享内容'));
     }
 }
 
@@ -7688,8 +7725,8 @@ function setPendingSharedContents(raw, { announce = false } = {}) {
     if (announce) {
         showToast(
             normalized.length === 1
-                ? `已接收共享内容：${normalized[0].displayName}`
-                : `已接收共享内容：${normalized.length} 项`
+                ? t('已接收共享内容：{name}', { name: normalized[0].displayName })
+                : t('已接收共享内容：{count} 项', { count: normalized.length })
         );
     }
 }
@@ -7727,14 +7764,14 @@ function initNativeShareInbox() {
 
 function readPendingSharedContentBase64At(itemIndex) {
     if (!window.NativeShare) {
-        throw new Error('当前环境不支持系统分享内容读取');
+        throw new Error(t('当前环境不支持系统分享内容读取'));
     }
 
     const base64 = typeof window.NativeShare.readPendingSharedContentBase64At === 'function'
         ? window.NativeShare.readPendingSharedContentBase64At(itemIndex)
         : window.NativeShare.readPendingSharedContentBase64?.();
     if (!base64) {
-        throw new Error('共享内容已失效，请重新分享一次');
+        throw new Error(t('共享内容已失效，请重新分享一次'));
     }
 
     return base64;
@@ -7768,7 +7805,7 @@ async function sendPendingSharedImage(deviceId) {
     const historyEntry = {
         id: Date.now(),
         timestamp: getLocalTimestamp(),
-        text: `[图片] ${shared.displayName}`,
+        text: t('[图片] {name}', { name: shared.displayName }),
         status: 'pending',
         kind: 'image',
         fileName: shared.displayName,
@@ -7799,10 +7836,10 @@ async function sendPendingSharedImage(deviceId) {
                 image_base64: imageBase64,
             },
             buttonId: `imagebtn-${deviceId}`,
-            pendingText: '传图中...',
+            pendingText: t('传图中...'),
             historyEntry,
             failureToast: true,
-            successToast: '图片已放入 Mac 剪贴板',
+            successToast: t('图片已放入 Mac 剪贴板'),
             timeoutMs: 20000,
         });
 
@@ -7812,7 +7849,7 @@ async function sendPendingSharedImage(deviceId) {
     } catch (error) {
         historyEntry.status = 'failed';
         updateHistory(historyEntry);
-        showToast(`共享图片发送失败：${error.message}`);
+        showToast(t('共享图片发送失败：{error}', { error: error.message }));
     }
 }
 
@@ -7825,7 +7862,7 @@ async function sendPendingSharedFile(deviceId) {
     const historyEntry = {
         id: Date.now(),
         timestamp: getLocalTimestamp(),
-        text: `[文件] ${shared.displayName}`,
+        text: t('[文件] {name}', { name: shared.displayName }),
         status: 'pending',
         kind: 'file',
         saveTarget: 'desktop-inbox',
@@ -7841,10 +7878,10 @@ async function sendPendingSharedFile(deviceId) {
             mimeType: shared.mimeType,
             sizeBytes: shared.sizeBytes,
             buttonId: `filebtn-${deviceId}`,
-            pendingText: '传文件中...',
+            pendingText: t('传文件中...'),
             historyEntry,
             failureToast: true,
-            successToast: '文件已保存到 VibeDrop 收件箱',
+            successToast: t('文件已保存到 VibeDrop 收件箱'),
             readChunkBase64: (offsetBytes, lengthBytes) => (
                 Promise.resolve(readPendingSharedContentChunkBase64At(0, offsetBytes, lengthBytes))
             ),
@@ -7856,7 +7893,7 @@ async function sendPendingSharedFile(deviceId) {
     } catch (error) {
         historyEntry.status = 'failed';
         updateHistory(historyEntry);
-        showToast(`共享文件发送失败：${error.message}`);
+        showToast(t('共享文件发送失败：{error}', { error: error.message }));
     }
 }
 
@@ -7879,7 +7916,7 @@ async function sendPendingSharedFilesBatch(deviceId) {
 
     const result = await sendFilesToDesktopBatch(deviceId, batchItems, {
         buttonId: `filebtn-${deviceId}`,
-        pendingText: '批量传输中...',
+        pendingText: t('批量传输中...'),
     });
 
     if (result.ok) {
@@ -7923,7 +7960,7 @@ function persistNativeHistoryEntry(entry) {
     try {
         const result = JSON.parse(window.NativeHistory.upsertHistoryEntry(JSON.stringify(entry)) || '{}');
         if (result.ok === false) {
-            throw new Error(result.error || 'SQLite 写入失败');
+            throw new Error(result.error || t('SQLite 写入失败'));
         }
     } catch (error) {
         console.warn('单条历史写入 SQLite 失败', error);
@@ -8053,7 +8090,7 @@ function hydrateHistoryEntry(entry, devices = getDevices(), historyEntries = rea
         resolvedTargetId ? getTargetDeviceName(resolvedTargetId) : '',
     ].find(Boolean) || '';
 
-    const displayTarget = targetAlias || targetDeviceName || resolvedTargetId || storedTarget || storedTargetName || '未知设备';
+    const displayTarget = targetAlias || targetDeviceName || resolvedTargetId || storedTarget || storedTargetName || t('未知设备');
     const items = Array.isArray(entry.items) ? entry.items.map((item) => normalizeHistoryItem(item)) : undefined;
     const summary = items?.length ? buildHistoryItemsSummary(items) : null;
     const firstItem = items?.[0];
@@ -8078,7 +8115,7 @@ function hydrateHistoryEntry(entry, devices = getDevices(), historyEntries = rea
 }
 
 function resolveHistoryExportTarget(entry) {
-    return entry.targetAlias || entry.targetName || entry.targetDeviceName || '未知设备';
+    return entry.targetAlias || entry.targetName || entry.targetDeviceName || t('未知设备');
 }
 
 function buildHistoryExportData(history) {
@@ -8121,7 +8158,7 @@ function normalizeImportedHistoryEntry(entry) {
         ...entry,
         timestamp: normalizedTimestamp,
         target: targetId,
-        targetName: targetAlias || targetDeviceName || targetId || '未知设备',
+        targetName: targetAlias || targetDeviceName || targetId || t('未知设备'),
         targetAlias,
         targetDeviceName,
         targetServerId,
@@ -8166,7 +8203,7 @@ function waitForNativeBridgeEvent(eventName, invokeNative, timeoutMs = 15000) {
             if (settled) return;
             settled = true;
             window.removeEventListener(eventName, handler);
-            reject(new Error('原生操作超时'));
+            reject(new Error(t('原生操作超时')));
         }, timeoutMs);
 
         window.addEventListener(eventName, handler);
@@ -8304,23 +8341,23 @@ function buildHomeVaultRestoreProgressDetail(progress = {}) {
     const parts = [];
 
     if (totalEntries || processedEntries) {
-        parts.push(`历史 ${processedEntries}/${totalEntries || '?'}`);
+        parts.push(t('历史 {processed}/{total}', { processed: processedEntries, total: totalEntries || '?' }));
     }
     if (existingEntries || newEntries) {
-        parts.push(`新增 ${newEntries}`);
-        parts.push(`覆盖 ${existingEntries}`);
+        parts.push(t('新增 {count}', { count: newEntries }));
+        parts.push(t('覆盖 {count}', { count: existingEntries }));
     }
     if (totalMedia || downloadedMedia || skippedMedia || failedMedia) {
-        parts.push(`媒体 ${downloadedMedia}/${totalMedia || '?'}`);
+        parts.push(t('媒体 {downloaded}/{total}', { downloaded: downloadedMedia, total: totalMedia || '?' }));
     }
     if (skippedMedia) {
-        parts.push(`已缓存跳过 ${skippedMedia}`);
+        parts.push(t('已缓存跳过 {count}', { count: skippedMedia }));
     }
     if (failedMedia) {
-        parts.push(`失败 ${failedMedia}`);
+        parts.push(t('失败 {count}', { count: failedMedia }));
     }
     if (downloadedBytes) {
-        parts.push(`已下载 ${formatProgressBytes(downloadedBytes)}`);
+        parts.push(t('已下载 {size}', { size: formatProgressBytes(downloadedBytes) }));
     }
     if (currentFileName) {
         const compactName = currentFileName.length > 38
@@ -8329,10 +8366,10 @@ function buildHomeVaultRestoreProgressDetail(progress = {}) {
         const fileProgress = currentFileTotalBytes > 0
             ? `${formatProgressBytes(currentFileBytes)}/${formatProgressBytes(currentFileTotalBytes)}`
             : formatProgressBytes(currentFileBytes);
-        parts.push(`当前 ${compactName}${currentFileBytes ? ` ${fileProgress}` : ''}`);
+        parts.push(t('当前 {name}{progress}', { name: compactName, progress: currentFileBytes ? ` ${fileProgress}` : '' }));
     }
 
-    return parts.join(' · ') || '等待开始';
+    return parts.join(' · ') || t('等待开始');
 }
 
 function setHomeVaultRestoreProgress(progress = {}, tone = '') {
@@ -8344,11 +8381,11 @@ function setHomeVaultRestoreProgress(progress = {}, tone = '') {
     const detail = $('home-vault-restore-progress-detail');
     const percent = Math.max(0, Math.min(100, Math.round(Number(progress.percent || 0))));
     const fallbackLabels = {
-        requesting: '正在连接 Home Vault',
-        manifest: '正在解析恢复清单',
-        processing: '正在恢复历史',
-        writing: '正在写入 SQLite',
-        done: '恢复完成',
+        requesting: t('正在连接 Home Vault'),
+        manifest: t('正在解析恢复清单'),
+        processing: t('正在恢复历史'),
+        writing: t('正在写入 SQLite'),
+        done: t('恢复完成'),
     };
 
     root.classList.remove('hidden');
@@ -8356,7 +8393,7 @@ function setHomeVaultRestoreProgress(progress = {}, tone = '') {
     root.classList.toggle('success', tone === 'success' || progress.phase === 'done');
     root.classList.toggle('error', tone === 'error');
     if (label) {
-        label.textContent = progress.message || fallbackLabels[progress.phase] || '正在恢复';
+        label.textContent = progress.message || fallbackLabels[progress.phase] || t('正在恢复');
     }
     if (percentText) {
         percentText.textContent = `${percent}%`;
@@ -8471,7 +8508,7 @@ async function autoUploadLocalMediaToVault() {
         if (!files.length) return;
         const report = await invokeNative('vault_upload_media', { endpoint, files });
         if (report && Number(report.uploaded) > 0) {
-            showToast(`已向 Home Vault 补传 ${report.uploaded} 个原件`);
+            showToast(t('已向 Home Vault 补传 {count} 个原件', { count: report.uploaded }));
             refreshVaultMergedHistory();
         }
     } catch (error) {
@@ -8659,7 +8696,7 @@ async function pushHomeVaultDelta(endpoint, entries) {
             entries: buildHistoryExportData(entries),
         }),
     });
-    if (!response.ok) throw new Error(`append 失败 HTTP ${response.status}`);
+    if (!response.ok) throw new Error(t('append 失败 HTTP {status}', { status: response.status }));
     return response.json();
 }
 
@@ -8704,8 +8741,8 @@ function renderHistorySourceFilters() {
     }
 
     const options = [
-        { value: '', label: '全部' },
-        { value: localId, label: '本机' },
+        { value: '', label: t('全部') },
+        { value: localId, label: t('本机') },
         ...vaultMergedDevices
             .filter((device) => !localAliasIds.has(String(device.deviceId)))
             .map((device) => ({
@@ -8800,7 +8837,7 @@ async function restoreHomeVaultWithFetch(endpoint, deviceId, mode = 'compact') {
 async function syncHomeVaultHistory() {
     const history = getHistory();
     if (history.length === 0) {
-        showToast('暂无历史可同步');
+        showToast(t('暂无历史可同步'));
         return;
     }
 
@@ -8814,9 +8851,9 @@ async function syncHomeVaultHistory() {
     const button = $('sync-home-vault-btn');
     if (button) {
         button.disabled = true;
-        button.textContent = '同步中...';
+        button.textContent = t('同步中...');
     }
-    setHomeVaultStatus(`正在同步 ${history.length} 条历史到 ${endpoint}...`);
+    setHomeVaultStatus(t('正在同步 {count} 条历史到 {endpoint}...', { count: history.length, endpoint }));
 
     const payload = buildHomeVaultPayload(history);
     try {
@@ -8826,7 +8863,7 @@ async function syncHomeVaultHistory() {
                 window.NativeHomeVault.syncHistory(endpoint, JSON.stringify(payload));
             }, 120000);
             if (!result.ok) {
-                throw new Error(result.error || '同步失败');
+                throw new Error(result.error || t('同步失败'));
             }
             if (result.body) {
                 try {
@@ -8855,16 +8892,16 @@ async function syncHomeVaultHistory() {
             lastSyncedAt: syncedAt,
             lastEntryCount: syncedCount,
         });
-        setHomeVaultStatus(`已同步 ${syncedCount} 条，Vault 当前 ${totalCount} 条。`, 'success');
-        showToast('已同步到 Mac mini Vault');
+        setHomeVaultStatus(t('已同步 {synced} 条，Vault 当前 {total} 条。', { synced: syncedCount, total: totalCount }), 'success');
+        showToast(t('已同步到 Mac mini Vault'));
     } catch (error) {
-        const message = error?.name === 'AbortError' ? '同步超时' : (error?.message || '同步失败');
-        setHomeVaultStatus(`同步失败：${message}`, 'error');
-        showToast(`同步失败：${message}`);
+        const message = error?.name === 'AbortError' ? t('同步超时') : (error?.message || t('同步失败'));
+        setHomeVaultStatus(t('同步失败：{error}', { error: message }), 'error');
+        showToast(t('同步失败：{error}', { error: message }));
     } finally {
         if (button) {
             button.disabled = false;
-            button.textContent = '同步到 Mac mini';
+            button.textContent = t('同步到 Mac mini');
         }
     }
 }
@@ -8881,15 +8918,15 @@ async function restoreHomeVaultHistory() {
     const syncButton = $('sync-home-vault-btn');
     if (button) {
         button.disabled = true;
-        button.textContent = '恢复中...';
+        button.textContent = t('恢复中...');
     }
     if (syncButton) {
         syncButton.disabled = true;
     }
-    setHomeVaultStatus(`正在从 ${endpoint} 拉取历史...`);
+    setHomeVaultStatus(t('正在从 {endpoint} 拉取历史...', { endpoint }));
     setHomeVaultRestoreProgress({
         phase: 'requesting',
-        message: '正在连接 Home Vault...',
+        message: t('正在连接 Home Vault...'),
         percent: 0,
     });
     const progressHandler = (event) => {
@@ -8906,7 +8943,7 @@ async function restoreHomeVaultHistory() {
                 window.NativeHomeVault.restoreHistory(endpoint, deviceId, restoreMode);
             }, restoreMode === 'full-media' ? 15 * 60 * 1000 : 120000);
             if (!result.ok) {
-                throw new Error(result.error || '恢复失败');
+                throw new Error(result.error || t('恢复失败'));
             }
             if (result.mode === 'full-media' || (!result.body && result.restoredCount != null)) {
                 const currentCount = loadNativeHistoryIntoCache();
@@ -8918,13 +8955,13 @@ async function restoreHomeVaultHistory() {
                     lastRestoredAt: restoredAt,
                     lastRestoreCount: result.restoredCount || currentCount,
                 });
-                const mediaText = `媒体 ${result.downloadedMediaCount || 0}/${result.mediaReferenceCount || 0}`;
-                const skippedText = result.skippedMediaCount ? `，缓存跳过 ${result.skippedMediaCount}` : '';
-                const failedText = result.failedMediaCount ? `，失败 ${result.failedMediaCount}` : '';
+                const mediaText = t('媒体 {downloaded}/{total}', { downloaded: result.downloadedMediaCount || 0, total: result.mediaReferenceCount || 0 });
+                const skippedText = result.skippedMediaCount ? t('，缓存跳过 {count}', { count: result.skippedMediaCount }) : '';
+                const failedText = result.failedMediaCount ? t('，失败 {count}', { count: result.failedMediaCount }) : '';
                 setHomeVaultRestoreProgress({
                     ...result,
                     phase: 'done',
-                    message: '恢复完成',
+                    message: t('恢复完成'),
                     percent: 100,
                     totalEntries: result.returnedCount || result.restoredCount || currentCount,
                     processedEntries: result.returnedCount || result.restoredCount || currentCount,
@@ -8936,10 +8973,10 @@ async function restoreHomeVaultHistory() {
                     newEntries: result.newEntryCount || 0,
                 }, 'success');
                 const entryText = result.existingEntryCount != null
-                    ? `新增 ${result.newEntryCount || 0} 条，覆盖 ${result.existingEntryCount || 0} 条`
-                    : `已全量恢复 ${result.restoredCount || currentCount} 条`;
+                    ? t('新增 {added} 条，覆盖 {existing} 条', { added: result.newEntryCount || 0, existing: result.existingEntryCount || 0 })
+                    : t('已全量恢复 {count} 条', { count: result.restoredCount || currentCount });
                 setHomeVaultStatus(`${entryText}，${mediaText}${skippedText}${failedText}。`, 'success');
-                showToast(`已从 Mac mini 全量恢复 ${result.restoredCount || currentCount} 条`);
+                showToast(t('已从 Mac mini 全量恢复 {count} 条', { count: result.restoredCount || currentCount }));
                 return;
             }
             if (result.body) {
@@ -8949,7 +8986,7 @@ async function restoreHomeVaultHistory() {
                         status: result.status,
                     };
                 } catch (error) {
-                    throw new Error('恢复响应不是有效 JSON');
+                    throw new Error(t('恢复响应不是有效 JSON'));
                 }
             }
         } else {
@@ -8957,7 +8994,7 @@ async function restoreHomeVaultHistory() {
         }
 
         if (!Array.isArray(result.history)) {
-            throw new Error('Vault 返回的 history 不是数组');
+            throw new Error(t('Vault 返回的 history 不是数组'));
         }
 
         const mergeResult = mergeImportedHistoryEntries(result.history);
@@ -8970,27 +9007,27 @@ async function restoreHomeVaultHistory() {
         const returnedCount = result.returnedCount || result.history.length;
         setHomeVaultRestoreProgress({
             phase: 'done',
-            message: '恢复完成',
+            message: t('恢复完成'),
             percent: 100,
             totalEntries: returnedCount,
             processedEntries: returnedCount,
         }, 'success');
-        setHomeVaultStatus(`已恢复 ${mergeResult.added} 条，跳过 ${mergeResult.skipped} 条重复。Vault 返回 ${returnedCount} 条。`, 'success');
-        showToast(`已从 Mac mini 恢复 ${mergeResult.added} 条`);
+        setHomeVaultStatus(t('已恢复 {added} 条，跳过 {skipped} 条重复。Vault 返回 {returned} 条。', { added: mergeResult.added, skipped: mergeResult.skipped, returned: returnedCount }), 'success');
+        showToast(t('已从 Mac mini 恢复 {count} 条', { count: mergeResult.added }));
     } catch (error) {
-        const message = error?.name === 'AbortError' ? '恢复超时' : (error?.message || '恢复失败');
+        const message = error?.name === 'AbortError' ? t('恢复超时') : (error?.message || t('恢复失败'));
         setHomeVaultRestoreProgress({
             phase: 'error',
-            message: `恢复失败：${message}`,
+            message: t('恢复失败：{error}', { error: message }),
             percent: 100,
         }, 'error');
-        setHomeVaultStatus(`恢复失败：${message}`, 'error');
-        showToast(`恢复失败：${message}`);
+        setHomeVaultStatus(t('恢复失败：{error}', { error: message }), 'error');
+        showToast(t('恢复失败：{error}', { error: message }));
     } finally {
         window.removeEventListener('native-home-vault-restore-progress', progressHandler);
         if (button) {
             button.disabled = false;
-            button.textContent = '从 Mac mini 恢复';
+            button.textContent = t('从 Mac mini 恢复');
         }
         if (syncButton) {
             syncButton.disabled = false;
@@ -9013,20 +9050,20 @@ function initHomeVaultSync() {
         const label = Number.isNaN(date.getTime())
             ? settings.lastSyncedAt
             : date.toLocaleString('zh-CN');
-        setHomeVaultStatus(`上次同步：${label} · ${settings.lastEntryCount || 0} 条`, 'success');
+        setHomeVaultStatus(t('上次同步：{time} · {count} 条', { time: label, count: settings.lastEntryCount || 0 }), 'success');
     } else if (settings.lastRestoredAt) {
         const date = new Date(settings.lastRestoredAt);
         const label = Number.isNaN(date.getTime())
             ? settings.lastRestoredAt
             : date.toLocaleString('zh-CN');
-        setHomeVaultStatus(`上次恢复：${label} · ${settings.lastRestoreCount || 0} 条`, 'success');
+        setHomeVaultStatus(t('上次恢复：{time} · {count} 条', { time: label, count: settings.lastRestoreCount || 0 }), 'success');
     }
 
     input.addEventListener('change', () => {
         const url = resolveHomeVaultUrlForNetwork(input.value);
         input.value = url;
         saveHomeVaultSettings({ url });
-        setHomeVaultStatus('服务器地址已保存');
+        setHomeVaultStatus(t('服务器地址已保存'));
     });
     button.addEventListener('click', () => syncHomeVaultHistory());
     if (restoreButton) {
@@ -9037,7 +9074,7 @@ function initHomeVaultSync() {
 async function exportHistory() {
     const history = getHistory();
     if (history.length === 0) {
-        showToast('暂无历史可导出');
+        showToast(t('暂无历史可导出'));
         return;
     }
     const data = JSON.stringify(buildHistoryExportData(history), null, 2);
@@ -9058,17 +9095,17 @@ async function exportHistory() {
             });
 
             if (result.cancelled) {
-                showToast(result.message || '已取消导出');
+                showToast(result.message || t('已取消导出'));
                 return;
             }
 
             if (!result.ok) {
-                throw new Error(result.error || '导出失败');
+                throw new Error(result.error || t('导出失败'));
             }
 
-            showToast(result.message || `已导出 ${filename}`);
+            showToast(result.message || t('已导出 {filename}', { filename }));
         } catch (err) {
-            showToast('导出失败：' + err.message);
+            showToast(t('导出失败：{error}', { error: err.message }));
         }
         return;
     }
@@ -9077,15 +9114,15 @@ async function exportHistory() {
         try {
             const handle = await window.showSaveFilePicker({
                 suggestedName: filename,
-                types: [{ description: 'JSON 文件', accept: { [mimeType]: ['.json'] } }],
+                types: [{ description: t('JSON 文件'), accept: { [mimeType]: ['.json'] } }],
             });
             const writable = await handle.createWritable();
             await writable.write(data);
             await writable.close();
-            showToast('已导出到你选择的位置');
+            showToast(t('已导出到你选择的位置'));
         } catch (err) {
             if (err.name !== 'AbortError') {
-                showToast('导出失败：' + err.message);
+                showToast(t('导出失败：{error}', { error: err.message }));
             }
         }
         return;
@@ -9098,13 +9135,13 @@ async function exportHistory() {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-    showToast('导出成功');
+    showToast(t('导出成功'));
 }
 
 async function shareHistory() {
     const history = getHistory();
     if (history.length === 0) {
-        showToast('暂无历史可分享');
+        showToast(t('暂无历史可分享'));
         return;
     }
 
@@ -9126,12 +9163,12 @@ async function shareHistory() {
             });
 
             if (!result.ok) {
-                throw new Error(result.error || '分享失败');
+                throw new Error(result.error || t('分享失败'));
             }
 
-            showToast(result.message || '已打开分享面板');
+            showToast(result.message || t('已打开分享面板'));
         } catch (err) {
-            showToast('分享失败：' + err.message);
+            showToast(t('分享失败：{error}', { error: err.message }));
         }
         return;
     }
@@ -9141,26 +9178,26 @@ async function shareHistory() {
             const file = new File([data], filename, { type: mimeType });
             if (navigator.canShare && navigator.canShare({ files: [file] })) {
                 await navigator.share({
-                    title: 'VibeDrop 历史记录',
-                    text: 'VibeDrop 导出的历史记录',
+                    title: t('VibeDrop 历史记录'),
+                    text: t('VibeDrop 导出的历史记录'),
                     files: [file],
                 });
             } else {
                 await navigator.share({
-                    title: 'VibeDrop 历史记录',
+                    title: t('VibeDrop 历史记录'),
                     text: data,
                 });
             }
-            showToast('已打开分享面板');
+            showToast(t('已打开分享面板'));
         } catch (err) {
             if (err.name !== 'AbortError') {
-                showToast('分享失败：' + err.message);
+                showToast(t('分享失败：{error}', { error: err.message }));
             }
         }
         return;
     }
 
-    showToast('当前环境不支持系统分享');
+    showToast(t('当前环境不支持系统分享'));
 }
 
 function updateHistory(entry) {
@@ -9214,14 +9251,14 @@ function initHistoryActions() {
             }
 
             if (entry.kind === 'file') {
-                showToast('文件记录不支持复制');
+                showToast(t('文件记录不支持复制'));
                 return;
             }
 
             writeClipboard(entry.text).then(() => {
-                showToast('已复制');
+                showToast(t('已复制'));
             }).catch(() => {
-                showToast('复制失败');
+                showToast(t('复制失败'));
             });
         });
     }
@@ -9305,7 +9342,7 @@ async function openMediaViewer(entry, itemIndex) {
     const root = $('media-viewer');
     const track = $('media-viewer-track');
     if (!root || !track) {
-        throw new Error('查看器未就绪');
+        throw new Error(t('查看器未就绪'));
     }
 
     const allItems = getHistoryEntryItems(entry);
@@ -9319,7 +9356,7 @@ async function openMediaViewer(entry, itemIndex) {
         viewable.push({ item, kind, originalIndex });
     });
     if (!viewable.length) {
-        throw new Error('没有可预览的媒体');
+        throw new Error(t('没有可预览的媒体'));
     }
 
     let startIndex = viewable.findIndex((v) => v.originalIndex === itemIndex);
@@ -9436,19 +9473,19 @@ async function loadMediaViewerSlide(index) {
         console.warn('解析媒体地址失败', error);
     }
     if (!uri) {
-        showMediaViewerSlideError(slide, kind === 'video' ? '没有可用的视频地址' : '没有可用的图片地址');
+        showMediaViewerSlideError(slide, kind === 'video' ? t('没有可用的视频地址') : t('没有可用的图片地址'));
         return;
     }
 
     if (kind === 'image') {
         const img = document.createElement('img');
-        img.alt = item.fileName || '图片';
+        img.alt = item.fileName || t('图片');
         img.draggable = false;
         img.addEventListener('load', () => {
             slide.loadState = 'ready';
             slide.spinner.classList.add('hidden');
         });
-        img.addEventListener('error', () => showMediaViewerSlideError(slide, '图片加载失败'));
+        img.addEventListener('error', () => showMediaViewerSlideError(slide, t('图片加载失败')));
         img.src = uri;
         slide.mediaEl = img;
         slide.content.appendChild(img);
@@ -9463,7 +9500,7 @@ async function loadMediaViewerSlide(index) {
         if (item.thumbnailDataUrl) {
             const poster = document.createElement('img');
             poster.src = item.thumbnailDataUrl;
-            poster.alt = item.fileName || '视频';
+            poster.alt = item.fileName || t('视频');
             poster.draggable = false;
             slide.mediaEl = poster;
             slide.content.appendChild(poster);
@@ -9471,14 +9508,14 @@ async function loadMediaViewerSlide(index) {
         const playBtn = document.createElement('button');
         playBtn.type = 'button';
         playBtn.className = 'mv-video-center-play';
-        playBtn.setAttribute('aria-label', '播放');
+        playBtn.setAttribute('aria-label', t('播放'));
         playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>';
         playBtn.addEventListener('pointerdown', (event) => event.stopPropagation());
         playBtn.addEventListener('click', (event) => {
             event.stopPropagation();
             const nativeError = window.NativeMediaLibrary.playVideoNative(nativePlayPath);
             if (nativeError) {
-                showToast(`播放失败：${nativeError}`);
+                showToast(t('播放失败：{error}', { error: nativeError }));
             }
         });
         slide.root.appendChild(playBtn);
@@ -9496,7 +9533,7 @@ async function loadMediaViewerSlide(index) {
         // 只会黑屏有声且不报 error,主动降级提示外部打开
         if (!video.videoWidth) {
             try { video.pause(); } catch (error) { /* 忽略 */ }
-            showMediaViewerSlideError(slide, '这个视频格式应用内无法解码');
+            showMediaViewerSlideError(slide, t('这个视频格式应用内无法解码'));
             return;
         }
         slide.loadState = 'ready';
@@ -9514,7 +9551,7 @@ async function loadMediaViewerSlide(index) {
             closeMediaViewer();
         }
     });
-    video.addEventListener('error', () => showMediaViewerSlideError(slide, '视频加载失败'));
+    video.addEventListener('error', () => showMediaViewerSlideError(slide, t('视频加载失败')));
     slide.mediaEl = video;
     slide.video = video;
     slide.content.appendChild(video);
@@ -9536,7 +9573,7 @@ function showMediaViewerSlideError(slide, message) {
         const btn = document.createElement('button');
         if (btn) btn.type = 'button';
         if (btn) btn.className = 'media-viewer-error-btn';
-        if (btn) btn.textContent = '用其他应用打开';
+        if (btn) btn.textContent = t('用其他应用打开');
         if (btn) btn.addEventListener('click', (event) => {
             event.stopPropagation();
             closeMediaViewer({ instant: true });
@@ -9612,7 +9649,7 @@ function renderMediaViewerChrome() {
     const external = $('media-viewer-external');
 
     if (title) {
-        title.textContent = truncateFilenamePreserveExtension(current?.item?.fileName || (current?.kind === 'video' ? '视频' : '图片'));
+        title.textContent = truncateFilenamePreserveExtension(current?.item?.fileName || (current?.kind === 'video' ? t('视频') : t('图片')));
     }
     if (counter) {
         counter.textContent = items.length > 1 ? `${index + 1} / ${items.length}` : '';
@@ -10010,11 +10047,11 @@ function attachMediaViewerVideoUi(slide) {
     const ui = document.createElement('div');
     ui.className = 'mv-video-ui';
     ui.innerHTML = `
-        <button type="button" class="mv-video-center-play" aria-label="播放">
+        <button type="button" class="mv-video-center-play" aria-label="${t('播放')}">
             <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>
         </button>
         <div class="mv-video-bar">
-            <button type="button" class="mv-video-play" aria-label="播放/暂停"></button>
+            <button type="button" class="mv-video-play" aria-label="${t('播放/暂停')}"></button>
             <span class="mv-video-time">0:00</span>
             <div class="mv-video-progress">
                 <div class="mv-video-progress-rail"></div>
@@ -10022,7 +10059,7 @@ function attachMediaViewerVideoUi(slide) {
                 <div class="mv-video-progress-handle"></div>
             </div>
             <span class="mv-video-duration">0:00</span>
-            <button type="button" class="mv-video-mute" aria-label="静音"></button>
+            <button type="button" class="mv-video-mute" aria-label="${t('静音')}"></button>
         </div>
     `;
     slide.root.appendChild(ui);
@@ -10044,7 +10081,7 @@ function attachMediaViewerVideoUi(slide) {
             if (getNativeMobilePlatform() === 'ios' && tryEnterIosNativeFullscreen(slide)) {
                 return;
             }
-            video.play().catch(() => showToast('视频播放失败'));
+            video.play().catch(() => showToast(t('视频播放失败')));
         } else {
             video.pause();
         }
@@ -10157,7 +10194,7 @@ function showHistoryMediaPreview(entry, items, { initialIndex = 0 } = {}) {
     const normalizedItems = (Array.isArray(items) ? items : [])
         .map((item) => normalizeHistoryItem(item));
     if (!normalizedItems.length) {
-        showToast('没有可预览的媒体内容');
+        showToast(t('没有可预览的媒体内容'));
         return;
     }
 
@@ -10172,8 +10209,8 @@ function showHistoryMediaPreview(entry, items, { initialIndex = 0 } = {}) {
         items: orderedItems,
     };
 
-    title.textContent = entry.text || '媒体预览';
-    subtitle.textContent = getHistoryEntryHint(entry) || '查看这次传输里的全部媒体。';
+    title.textContent = entry.text || t('媒体预览');
+    subtitle.textContent = getHistoryEntryHint(entry) || t('查看这次传输里的全部媒体。');
     body.innerHTML = `
         <div class="history-media-preview-grid">
             ${orderedItems.map((item, index) => renderHistoryMediaPreviewItem(item, index)).join('')}
@@ -10189,7 +10226,7 @@ function showHistoryMediaPreview(entry, items, { initialIndex = 0 } = {}) {
             }
             const openPath = previewItem.savedPath || previewItem.filePath || '';
             if (!openPath && !getItemVaultHash(previewItem) && !(previewItem.kind === 'image' && previewItem.thumbnailDataUrl)) {
-                showToast('原件已丢失，无法查看');
+                showToast(t('原件已丢失，无法查看'));
                 return;
             }
             await openHistoryMediaItem({
@@ -10284,7 +10321,7 @@ async function resolveHistoryMediaPreviewUri(item) {
 function fallbackOpenHistoryMediaExternally(item) {
     const openPath = item.savedPath || item.filePath || '';
     if (!openPath) {
-        showToast('原文件路径未保留');
+        showToast(t('原文件路径未保留'));
         return;
     }
 
@@ -10292,7 +10329,7 @@ function fallbackOpenHistoryMediaExternally(item) {
         try {
             const errorMessage = window.NativeMediaLibrary.openPath(openPath, item.mimeType || '');
             if (errorMessage) {
-                showToast(`打开失败：${errorMessage}`);
+                showToast(t('打开失败：{error}', { error: errorMessage }));
             }
             return;
         } catch (error) {
@@ -10300,13 +10337,13 @@ function fallbackOpenHistoryMediaExternally(item) {
         }
     }
 
-    showToast('当前环境不支持直接打开原文件');
+    showToast(t('当前环境不支持直接打开原文件'));
 }
 
 async function openHistoryMediaExternallyWithPackage(item, app, { retryOnFailure = true } = {}) {
     const openPath = item?.savedPath || item?.filePath || '';
     if (!openPath) {
-        showToast('原文件路径未保留');
+        showToast(t('原文件路径未保留'));
         return;
     }
 
@@ -10329,25 +10366,25 @@ async function openHistoryMediaExternallyWithPackage(item, app, { retryOnFailure
         const kind = inferMediaOpenerKind(item);
         if (result.code === 'package_unavailable' && kind && getPreferredMediaOpener(kind)?.packageName === app?.packageName) {
             clearPreferredMediaOpener(kind);
-            showToast(`${app?.label || '默认应用'}已不可用，请重新选择`);
+            showToast(t('{name}已不可用，请重新选择', { name: app?.label || t('默认应用') }));
             if (retryOnFailure) {
                 showMediaOpenerPicker({ kind, mode: 'open', item });
                 return;
             }
         }
 
-        showToast(`打开失败：${result.message || '操作失败'}`);
+        showToast(t('打开失败：{error}', { error: result.message || t('操作失败') }));
     } catch (error) {
         console.warn('按指定应用打开媒体失败', error);
-        showToast('打开失败');
+        showToast(t('打开失败'));
     }
 }
 
 function renderHistoryMediaPreviewItem(item, index) {
-    const displayName = truncateFilenamePreserveExtension(item.fileName || '媒体');
+    const displayName = truncateFilenamePreserveExtension(item.fileName || t('媒体'));
     const thumb = item.thumbnailDataUrl
-        ? `<img class="history-media-preview-thumb" src="${item.thumbnailDataUrl}" alt="${escapeHtml(item.fileName || '媒体')}">`
-        : `<div class="history-media-preview-thumb-placeholder">${item.kind === 'video' ? '视频' : item.kind === 'image' ? '图片' : '文件'}</div>`;
+        ? `<img class="history-media-preview-thumb" src="${item.thumbnailDataUrl}" alt="${escapeHtml(item.fileName || t('媒体'))}">`
+        : `<div class="history-media-preview-thumb-placeholder">${item.kind === 'video' ? t('视频') : item.kind === 'image' ? t('图片') : t('文件')}</div>`;
     const playBadge = item.kind === 'video'
         ? '<span class="history-media-play history-media-play-single">▶</span>'
         : '';
@@ -10363,14 +10400,14 @@ function renderHistoryMediaPreviewItem(item, index) {
                 ${playBadge}
             </div>
             <div class="history-media-preview-meta">
-                <div class="history-media-preview-name" title="${escapeHtml(item.fileName || '媒体')}">${escapeHtml(displayName)}</div>
+                <div class="history-media-preview-name" title="${escapeHtml(item.fileName || t('媒体'))}">${escapeHtml(displayName)}</div>
             </div>
         </div>
     `;
 }
 
 function truncateFilenamePreserveExtension(filename, maxBaseLength = 16, maxTotalLength = 28) {
-    const value = String(filename || '媒体').trim() || '媒体';
+    const value = String(filename || t('媒体')).trim() || t('媒体');
     if (value.length <= maxTotalLength) {
         return value;
     }
@@ -10396,7 +10433,7 @@ function truncateFilenamePreserveExtension(filename, maxBaseLength = 16, maxTota
 
 function mergeImportedHistoryEntries(imported) {
     if (!Array.isArray(imported)) {
-        throw new Error('history 必须是 JSON 数组');
+        throw new Error(t('history 必须是 JSON 数组'));
     }
 
     const existing = getHistory();
@@ -10436,7 +10473,7 @@ function mergeImportedHistoryEntries(imported) {
 function importHistory(file) {
     const resultDiv = $('import-result');
     resultDiv.style.display = 'block';
-    resultDiv.innerHTML = '正在导入...';
+    resultDiv.innerHTML = t('正在导入...');
     resultDiv.style.color = '#667085';
 
     const reader = new FileReader();
@@ -10444,16 +10481,16 @@ function importHistory(file) {
         try {
             const imported = JSON.parse(e.target.result);
             if (!Array.isArray(imported)) {
-                resultDiv.innerHTML = '文件格式错误，需要 JSON 数组';
+                resultDiv.innerHTML = t('文件格式错误，需要 JSON 数组');
                 resultDiv.style.color = '#c73b31';
                 return;
             }
 
             const result = mergeImportedHistoryEntries(imported);
-            resultDiv.innerHTML = `已导入 ${result.added} 条，跳过 ${result.skipped} 条重复`;
+            resultDiv.innerHTML = t('已导入 {added} 条，跳过 {skipped} 条重复', { added: result.added, skipped: result.skipped });
             resultDiv.style.color = '#147d33';
         } catch (err) {
-            resultDiv.innerHTML = `解析失败：${err.message}`;
+            resultDiv.innerHTML = t('解析失败：{error}', { error: err.message });
             resultDiv.style.color = '#c73b31';
         }
     };
@@ -10472,7 +10509,7 @@ function renderHistory() {
         currentRenderedHistoryEntries = [];
         renderHistoryHeatmap([]);
         renderHistoryFilterSummary([]);
-        list.innerHTML = '<p class="empty-hint">暂无发送记录</p>';
+        list.innerHTML = `<p class="empty-hint">${t('暂无发送记录')}</p>`;
         return;
     }
 
@@ -10484,10 +10521,10 @@ function renderHistory() {
     if (filtered.length === 0) {
         currentRenderedHistoryEntries = [];
         const emptyText = historyHeatmapState.selectionDate && historyHeatmapState.selectionHour != null
-            ? '这个时段没有符合条件的记录'
+            ? t('这个时段没有符合条件的记录')
             : hasSearchQuery
-                ? '没有匹配的历史记录'
-                : '没有符合筛选条件的记录';
+                ? t('没有匹配的历史记录')
+                : t('没有符合筛选条件的记录');
         list.innerHTML = `<p class="empty-hint">${emptyText}</p>`;
         return;
     }
@@ -10736,7 +10773,7 @@ async function openHistoryMediaItem(entry, itemIndex) {
     const vaultHash = getItemVaultHash(item);
     const canShowThumbnailOnly = kind === 'image' && Boolean(item.thumbnailDataUrl);
     if (!openPath && !vaultHash && !canShowThumbnailOnly) {
-        showToast('原件已丢失，无法查看');
+        showToast(t('原件已丢失，无法查看'));
         return;
     }
 
@@ -10776,7 +10813,7 @@ async function openHistoryMediaItemExternally(item) {
 
     const openPath = item.savedPath || item.filePath || '';
     if (!openPath) {
-        showToast('原文件路径未保留');
+        showToast(t('原文件路径未保留'));
         return;
     }
 
@@ -10845,7 +10882,7 @@ function getHistoryEntryItems(entry) {
     if (entry.kind === 'image' || entry.kind === 'video') {
         return [normalizeHistoryItem({
             kind: entry.kind,
-            fileName: entry.fileName || entry.file_name || entry.text || '媒体',
+            fileName: entry.fileName || entry.file_name || entry.text || t('媒体'),
             mimeType: entry.mimeType || entry.mime_type || '',
             thumbnailDataUrl: entry.thumbnailDataUrl || entry.thumbnail_data_url || '',
             sizeBytes: entry.sizeBytes || entry.size_bytes || 0,
@@ -10862,22 +10899,22 @@ function isHistoryMediaEntry(entry) {
 
 function getIncomingDesktopSavedLocationLabel(saveTarget = '') {
     if (saveTarget === 'gallery' || saveTarget === 'gallery-image' || saveTarget === 'gallery-video') {
-        return '相册';
+        return t('相册');
     }
     if (isIOSNativeApp()) {
-        return 'VibeDrop 收件箱';
+        return t('VibeDrop 收件箱');
     }
-    return '下载';
+    return t('下载');
 }
 
 function getDesktopIncomingHistoryHint(saveTarget = '') {
     if (saveTarget === 'gallery' || saveTarget === 'gallery-image' || saveTarget === 'gallery-video') {
-        return '已从 Mac 保存到手机相册';
+        return t('已从 Mac 保存到手机相册');
     }
     if (isIOSNativeApp()) {
-        return '已从 Mac 保存到 VibeDrop 收件箱';
+        return t('已从 Mac 保存到 VibeDrop 收件箱');
     }
-    return '已从 Mac 保存到手机下载';
+    return t('已从 Mac 保存到手机下载');
 }
 
 function getHistoryEntryHint(entry) {
@@ -10886,17 +10923,17 @@ function getHistoryEntryHint(entry) {
     }
 
     if (entry.saveTarget === 'desktop-inbox') {
-        return '已保存到 VibeDrop 收件箱';
+        return t('已保存到 VibeDrop 收件箱');
     }
 
     if (entry.kind === 'image') {
-        return '已发送到 Mac 剪贴板';
+        return t('已发送到 Mac 剪贴板');
     }
     if (entry.kind === 'video' || entry.kind === 'media') {
-        return '已发送到 Mac';
+        return t('已发送到 Mac');
     }
     if (entry.kind === 'file') {
-        return '已保存到 VibeDrop 收件箱';
+        return t('已保存到 VibeDrop 收件箱');
     }
     return '';
 }
@@ -10904,38 +10941,38 @@ function getHistoryEntryHint(entry) {
 function getHistoryEntryTitle(entry) {
     if (isHistoryMediaEntry(entry)) {
         return getHistoryEntryItems(entry).length > 1
-            ? '点缩略图直接预览，点卡片空白查看全部'
-            : '点缩略图直接预览';
+            ? t('点缩略图直接预览，点卡片空白查看全部')
+            : t('点缩略图直接预览');
     }
     if (entry.kind === 'file') {
-        return '文件记录';
+        return t('文件记录');
     }
-    return '点击复制';
+    return t('点击复制');
 }
 
 function getHistoryStatusLabel(entry) {
     if (entry.direction === 'desktop_to_mobile') {
-        if (entry.status === 'success') return '已接收';
-        if (entry.status === 'partial') return '部分成功';
-        if (entry.status === 'failed') return '失败';
-        return '接收中';
+        if (entry.status === 'success') return t('已接收');
+        if (entry.status === 'partial') return t('部分成功');
+        if (entry.status === 'failed') return t('失败');
+        return t('接收中');
     }
 
-    if (entry.status === 'success') return '已送达';
-    if (entry.status === 'partial') return '部分成功';
-    if (entry.status === 'failed') return '失败';
-    return '发送中';
+    if (entry.status === 'success') return t('已送达');
+    if (entry.status === 'partial') return t('部分成功');
+    if (entry.status === 'failed') return t('失败');
+    return t('发送中');
 }
 
 function getHistoryKindLabel(kind = 'text') {
     const labels = {
-        text: '文字',
-        image: '图片',
-        video: '视频',
-        media: '媒体',
-        file: '文件',
+        text: t('文字'),
+        image: t('图片'),
+        video: t('视频'),
+        media: t('媒体'),
+        file: t('文件'),
     };
-    return labels[kind] || kind || '文字';
+    return labels[kind] || kind || t('文字');
 }
 
 function renderHistoryEntryContent(entry) {
@@ -10961,7 +10998,7 @@ function renderHistoryEntryContent(entry) {
             }
             return `
                 <div class="history-media-cell history-media-cell-placeholder" data-media-index="${index}">
-                    <span class="history-media-placeholder">${item.kind === 'video' ? '视频' : item.kind === 'image' ? '图片' : '文件'}</span>
+                    <span class="history-media-placeholder">${item.kind === 'video' ? t('视频') : item.kind === 'image' ? t('图片') : t('文件')}</span>
                     ${countBadge}
                 </div>
             `;
@@ -10983,11 +11020,11 @@ function renderHistoryEntryContent(entry) {
         const thumbContent = item.thumbnailDataUrl
             ? `
                 <div class="history-thumb-wrap" data-media-index="0">
-                    <img class="history-thumb" src="${item.thumbnailDataUrl}" alt="${escapeHtml(item.fileName || entry.text || '媒体')}">
+                    <img class="history-thumb" src="${item.thumbnailDataUrl}" alt="${escapeHtml(item.fileName || entry.text || t('媒体'))}">
                     ${item.kind === 'video' ? '<span class="history-media-play history-media-play-single">▶</span>' : ''}
                 </div>
             `
-            : `<div class="history-file-badge" data-media-index="0">${item.kind === 'video' ? '视频' : '图片'}</div>`;
+            : `<div class="history-file-badge" data-media-index="0">${item.kind === 'video' ? t('视频') : t('图片')}</div>`;
 
         return `
             <div class="history-image-row">
@@ -11003,7 +11040,7 @@ function renderHistoryEntryContent(entry) {
     if (entry.kind === 'file') {
         return `
             <div class="history-image-row history-file-row">
-                <div class="history-file-badge">文件</div>
+                <div class="history-file-badge">${t('文件')}</div>
                 <div class="history-image-meta">
                     <div class="history-text">${highlightHistoryText(entry.text)}</div>
                     <div class="history-image-hint">${escapeHtml(getHistoryEntryHint(entry))}</div>
@@ -11032,7 +11069,7 @@ function formatTime(isoString) {
     const now = new Date();
     const isToday = d.toDateString() === now.toDateString();
     const time = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    if (isToday) return `今天 ${time}`;
+    if (isToday) return t('今天 {time}', { time });
     const date = d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
     return `${date} ${time}`;
 }
@@ -11248,43 +11285,43 @@ function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistor
     const labels = [];
     const queryLabel = String(currentHistoryFilters.query || '').trim();
     if (queryLabel) {
-        labels.push(`搜索：${queryLabel}`);
+        labels.push(t('搜索：{query}', { query: queryLabel }));
     }
 
     const sourceIds = currentHistoryFilters.sources || [];
     if (sourceIds.length) {
         const localId = getLocalSourceId();
         const names = sourceIds.map((id) => {
-            if (String(id) === localId) return '本机';
+            if (String(id) === localId) return t('本机');
             const device = vaultMergedDevices.find((d) => String(d.deviceId) === String(id));
-            return device?.deviceName || '未知设备';
+            return device?.deviceName || t('未知设备');
         });
         const shown = names.slice(0, 2).join('、');
-        labels.push(`来源：${shown}${names.length > 2 ? ` 等${names.length}台` : ''}`);
+        labels.push(t('来源：{names}{more}', { names: shown, more: names.length > 2 ? t(' 等{count}台', { count: names.length }) : '' }));
     }
 
     const deviceLabel = getHistoryDeviceLabel(currentHistoryFilters.device);
-    if (deviceLabel) labels.push(`目标：${deviceLabel}`);
+    if (deviceLabel) labels.push(t('目标：{name}', { name: deviceLabel }));
 
     const quickTimeLabels = {
-        today: '今天',
-        '7d': '近7天',
-        '30d': '近30天',
-        custom: '自定义日期',
+        today: t('今天'),
+        '7d': t('近7天'),
+        '30d': t('近30天'),
+        custom: t('自定义日期'),
     };
     if (currentHistoryFilters.quickTime !== 'all') {
-        labels.push(quickTimeLabels[currentHistoryFilters.quickTime] || '自定义日期');
+        labels.push(quickTimeLabels[currentHistoryFilters.quickTime] || t('自定义日期'));
     }
     if (currentHistoryFilters.quickTime === 'custom' && (currentHistoryFilters.startDate || currentHistoryFilters.endDate)) {
-        labels.push(`${currentHistoryFilters.startDate || '开始'} - ${currentHistoryFilters.endDate || '结束'}`);
+        labels.push(t('{start} - {end}', { start: currentHistoryFilters.startDate || t('开始'), end: currentHistoryFilters.endDate || t('结束') }));
     }
 
     const timeRangeLabels = {
-        morning: '上午',
-        afternoon: '下午',
-        evening: '晚上',
-        night: '凌晨',
-        custom: '自定义时段',
+        morning: t('上午'),
+        afternoon: t('下午'),
+        evening: t('晚上'),
+        night: t('凌晨'),
+        custom: t('自定义时段'),
     };
     if (currentHistoryFilters.timeRange !== 'all') {
         if (currentHistoryFilters.timeRange === 'custom') {
@@ -11295,25 +11332,25 @@ function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistor
     }
 
     const kindLabels = {
-        text: '文字',
-        image: '图片',
-        video: '视频',
-        media: '媒体',
-        file: '文件',
+        text: t('文字'),
+        image: t('图片'),
+        video: t('视频'),
+        media: t('媒体'),
+        file: t('文件'),
     };
     if (currentHistoryFilters.kind !== 'all') {
-        labels.push(`类型：${kindLabels[currentHistoryFilters.kind] || currentHistoryFilters.kind}`);
+        labels.push(t('类型：{kind}', { kind: kindLabels[currentHistoryFilters.kind] || currentHistoryFilters.kind }));
     }
 
     if ((currentHistoryFilters.availability || 'available') === 'all') {
-        labels.push('含已丢失原件');
+        labels.push(t('含已丢失原件'));
     }
 
     const statusLabels = {
-        success: '成功',
-        partial: '部分成功',
-        failed: '失败',
-        pending: '发送中',
+        success: t('成功'),
+        partial: t('部分成功'),
+        failed: t('失败'),
+        pending: t('发送中'),
     };
     if (currentHistoryFilters.status !== 'all') {
         labels.push(statusLabels[currentHistoryFilters.status]);
@@ -11321,7 +11358,7 @@ function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistor
 
     if (historyHeatmapState.selectionDate && historyHeatmapState.selectionHour != null) {
         const selectedCount = applyHistoryHeatmapSelection(baseEntries).length;
-        labels.push(`${formatHeatmapSelectionLabel(historyHeatmapState.selectionDate, historyHeatmapState.selectionHour)} · ${selectedCount} 条`);
+        labels.push(t('{selection} · {count} 条', { selection: formatHeatmapSelectionLabel(historyHeatmapState.selectionDate, historyHeatmapState.selectionHour), count: selectedCount }));
     }
 
     if (labels.length === 0) {
@@ -11337,7 +11374,7 @@ function renderHistoryFilterSummary(baseEntries = filterHistoryEntries(getHistor
         <div class="history-filter-chip-list">
             ${labels.map(label => `<span class="history-filter-chip">${escapeHtml(label)}</span>`).join('')}
         </div>
-        <button class="history-filter-clear" id="history-filter-clear-btn">清除</button>
+        <button class="history-filter-clear" id="history-filter-clear-btn">${t('清除')}</button>
     `;
     $('history-filter-clear-btn')?.addEventListener('click', () => {
         currentHistoryFilters = { ...DEFAULT_HISTORY_FILTERS };
@@ -11361,7 +11398,7 @@ function getHistoryDeviceLabel(deviceId) {
 }
 
 function getHistoryPrimaryTargetLabel(entry) {
-    return entry.targetAlias || entry.targetName || entry.targetDeviceName || entry.target || '未知设备';
+    return entry.targetAlias || entry.targetName || entry.targetDeviceName || entry.target || t('未知设备');
 }
 
 function getHistorySecondaryTargetLabel(entry) {
@@ -11431,7 +11468,7 @@ async function writeClipboard(text) {
     if (navigator.clipboard) {
         return navigator.clipboard.writeText(text);
     }
-    throw new Error('无可用剪贴板 API');
+    throw new Error(t('无可用剪贴板 API'));
 }
 
 // ---- Toast 提示 ----

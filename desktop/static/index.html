@@ -26,16 +26,16 @@
         <section id="settings-view" class="view hidden">
             <div class="settings-header">
                 <div class="settings-title-group">
-                    <h2>连接设置</h2>
-                    <p class="hint">默认使用“附近电脑 + 验证码配对”。手动 IP、端口和 PIN 已收进高级连接里，平时不需要碰。</p>
+                    <h2 data-i18n>连接设置</h2>
+                    <p class="hint" data-i18n>默认使用“附近电脑 + 验证码配对”。手动 IP、端口和 PIN 已收进高级连接里，平时不需要碰。</p>
                 </div>
             </div>
 
             <section class="settings-card outing-mode-card">
                 <div class="outing-mode-row">
                     <div class="outing-mode-copy">
-                        <h3>外出模式</h3>
-                        <p class="hint">开启后，首页只保留"同步剪贴板"按钮：文字写入 Mac 剪贴板（不模拟键盘输入），由 UU 远程等远控工具自动同步到被控电脑。</p>
+                        <h3 data-i18n>外出模式</h3>
+                        <p class="hint" data-i18n>开启后，首页只保留"同步剪贴板"按钮：文字写入 Mac 剪贴板（不模拟键盘输入），由 UU 远程等远控工具自动同步到被控电脑。</p>
                     </div>
                     <label class="outing-mode-switch">
                         <input type="checkbox" id="outing-mode-toggle">
@@ -52,7 +52,7 @@
                     </div>
                     <select id="language-select" class="timezone-select">
                         <option value="system" data-i18n>跟随系统</option>
-                        <option value="zh-CN">简体中文</option>
+                        <option value="zh-CN" data-i18n>简体中文</option>
                         <option value="en">English</option>
                     </select>
                 </div>
@@ -61,8 +61,8 @@
             <section class="settings-card">
                 <div class="outing-mode-row">
                     <div class="outing-mode-copy">
-                        <h3>智能发送卡</h3>
-                        <p class="hint">首页顶部的"跟随光标发送"卡片（需配置两台以上电脑）。</p>
+                        <h3 data-i18n>智能发送卡</h3>
+                        <p class="hint" data-i18n>首页顶部的"跟随光标发送"卡片（需配置两台以上电脑）。</p>
                     </div>
                     <label class="outing-mode-switch">
                         <input type="checkbox" id="smart-card-toggle">
@@ -71,8 +71,8 @@
                 </div>
                 <div class="outing-mode-row">
                     <div class="outing-mode-copy">
-                        <h3>传统设备卡</h3>
-                        <p class="hint">首页按电脑分开的发送卡片，每台一张。</p>
+                        <h3 data-i18n>传统设备卡</h3>
+                        <p class="hint" data-i18n>首页按电脑分开的发送卡片，每台一张。</p>
                     </div>
                     <label class="outing-mode-switch">
                         <input type="checkbox" id="device-cards-toggle">
@@ -84,13 +84,13 @@
             <section class="settings-card nearby-desktops-card">
                 <div class="nearby-desktops-header">
                     <div>
-                        <h3>附近电脑</h3>
-                        <p id="nearby-desktops-caption" class="hint">自动扫描当前局域网中的 VibeDrop 桌面端，发起配对后即可保存并自动连接。</p>
+                        <h3 data-i18n>附近电脑</h3>
+                        <p id="nearby-desktops-caption" class="hint" data-i18n>自动扫描当前局域网中的 VibeDrop 桌面端，发起配对后即可保存并自动连接。</p>
                     </div>
-                    <button id="scan-nearby-desktops-btn" class="secondary-btn nearby-scan-btn">扫描</button>
+                    <button id="scan-nearby-desktops-btn" class="secondary-btn nearby-scan-btn" data-i18n>扫描</button>
                 </div>
                 <div id="nearby-desktops-list" class="nearby-desktops-list"></div>
-                <div id="nearby-desktops-empty" class="empty-hint nearby-desktops-empty">
+                <div id="nearby-desktops-empty" class="empty-hint nearby-desktops-empty" data-i18n>
                     正在等待扫描结果。确保桌面端和手机在同一局域网，且桌面端已打开。
                 </div>
             </section>
@@ -98,13 +98,13 @@
             <details id="connection-diagnostics-panel" class="settings-card diagnostics-panel">
                 <summary class="advanced-connect-summary">
                     <div class="advanced-connect-copy">
-                        <h3>连接诊断</h3>
-                        <p class="hint">查看前端连接、原生后台剪贴板和最近一次智能发现的实时状态。默认折叠，展开后才刷新。</p>
+                        <h3 data-i18n>连接诊断</h3>
+                        <p class="hint" data-i18n>查看前端连接、原生后台剪贴板和最近一次智能发现的实时状态。默认折叠，展开后才刷新。</p>
                     </div>
-                    <span class="advanced-connect-toggle">实时状态</span>
+                    <span class="advanced-connect-toggle" data-i18n>实时状态</span>
                 </summary>
                 <div class="advanced-connect-body diagnostics-body">
-                    <div id="connection-diagnostics-summary" class="diagnostics-summary">展开后加载诊断信息。</div>
+                    <div id="connection-diagnostics-summary" class="diagnostics-summary" data-i18n>展开后加载诊断信息。</div>
                     <div id="connection-diagnostics-error" class="diagnostics-error hidden"></div>
                     <div id="connection-diagnostics-sections" class="diagnostics-sections"></div>
                 </div>
@@ -113,42 +113,42 @@
             <details id="advanced-connect-panel" class="settings-card advanced-connect-panel">
                 <summary class="advanced-connect-summary">
                     <div class="advanced-connect-copy">
-                        <h3>高级连接</h3>
-                        <p class="hint">只有在局域网自动发现失败、需要排障，或者想手动改连接参数时，才需要展开这里。</p>
+                        <h3 data-i18n>高级连接</h3>
+                        <p class="hint" data-i18n>只有在局域网自动发现失败、需要排障，或者想手动改连接参数时，才需要展开这里。</p>
                     </div>
-                    <span class="advanced-connect-toggle">IP / 端口 / PIN</span>
+                    <span class="advanced-connect-toggle" data-i18n>IP / 端口 / PIN</span>
                 </summary>
                 <div class="advanced-connect-body">
                     <div id="device-cards"></div>
-                    <button id="add-device-btn" class="secondary-btn stack-action">添加设备</button>
-                    <button id="test-connection-btn" class="secondary-btn">测试连接</button>
+                    <button id="add-device-btn" class="secondary-btn stack-action" data-i18n>添加设备</button>
+                    <button id="test-connection-btn" class="secondary-btn" data-i18n>测试连接</button>
                     <div id="test-result" class="test-result" style="display:none"></div>
-                    <button id="save-settings-btn" class="primary-btn">保存并连接</button>
+                    <button id="save-settings-btn" class="primary-btn" data-i18n>保存并连接</button>
                 </div>
             </details>
 
             <section id="media-opener-settings-card" class="settings-card data-card hidden">
-                <h3>默认打开应用</h3>
-                <p class="hint">只影响 VibeDrop 内部的媒体打开方式，不会修改手机系统全局默认。</p>
+                <h3 data-i18n>默认打开应用</h3>
+                <p class="hint" data-i18n>只影响 VibeDrop 内部的媒体打开方式，不会修改手机系统全局默认。</p>
                 <div class="media-opener-settings-list">
                     <div class="media-opener-settings-row">
                         <div class="media-opener-settings-copy">
-                            <div class="media-opener-settings-label">图片</div>
-                            <div id="media-opener-image-value" class="media-opener-settings-value">每次询问</div>
+                            <div class="media-opener-settings-label" data-i18n>图片</div>
+                            <div id="media-opener-image-value" class="media-opener-settings-value" data-i18n>每次询问</div>
                         </div>
                         <div class="media-opener-settings-actions">
-                            <button id="media-opener-image-select-btn" class="secondary-btn" type="button">选择</button>
-                            <button id="media-opener-image-clear-btn" class="secondary-btn hidden" type="button">清除</button>
+                            <button id="media-opener-image-select-btn" class="secondary-btn" type="button" data-i18n>选择</button>
+                            <button id="media-opener-image-clear-btn" class="secondary-btn hidden" type="button" data-i18n>清除</button>
                         </div>
                     </div>
                     <div class="media-opener-settings-row">
                         <div class="media-opener-settings-copy">
-                            <div class="media-opener-settings-label">视频</div>
-                            <div id="media-opener-video-value" class="media-opener-settings-value">每次询问</div>
+                            <div class="media-opener-settings-label" data-i18n>视频</div>
+                            <div id="media-opener-video-value" class="media-opener-settings-value" data-i18n>每次询问</div>
                         </div>
                         <div class="media-opener-settings-actions">
-                            <button id="media-opener-video-select-btn" class="secondary-btn" type="button">选择</button>
-                            <button id="media-opener-video-clear-btn" class="secondary-btn hidden" type="button">清除</button>
+                            <button id="media-opener-video-select-btn" class="secondary-btn" type="button" data-i18n>选择</button>
+                            <button id="media-opener-video-clear-btn" class="secondary-btn hidden" type="button" data-i18n>清除</button>
                         </div>
                     </div>
                 </div>
@@ -158,27 +158,27 @@
                 <summary class="advanced-connect-summary">
                     <div class="advanced-connect-copy">
                         <h3>Home Vault</h3>
-                        <p class="hint">历史与原件已全自动同步。只有出门在外要改 vault 地址（tailnet 域名）、或新设备要恢复历史时，才需要展开。</p>
+                        <p class="hint" data-i18n>历史与原件已全自动同步。只有出门在外要改 vault 地址（tailnet 域名）、或新设备要恢复历史时，才需要展开。</p>
                     </div>
-                    <span class="advanced-connect-toggle">自动同步中</span>
+                    <span class="advanced-connect-toggle" data-i18n>自动同步中</span>
                 </summary>
                 <div class="advanced-connect-body home-vault-sync">
                     <input id="home-vault-url-input" class="home-vault-url-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://minideMac-mini.local:8788">
                     <div class="home-vault-sync-actions">
-                        <button id="sync-home-vault-btn" class="primary-btn" type="button">同步到 Mac mini</button>
-                        <button id="restore-home-vault-btn" class="secondary-btn" type="button">从 Mac mini 恢复</button>
+                        <button id="sync-home-vault-btn" class="primary-btn" type="button" data-i18n>同步到 Mac mini</button>
+                        <button id="restore-home-vault-btn" class="secondary-btn" type="button" data-i18n>从 Mac mini 恢复</button>
                     </div>
                     <div id="home-vault-restore-progress" class="home-vault-progress hidden" aria-hidden="true">
                         <div class="home-vault-progress-head">
-                            <span id="home-vault-restore-progress-label">准备恢复</span>
+                            <span id="home-vault-restore-progress-label" data-i18n>准备恢复</span>
                             <span id="home-vault-restore-progress-percent">0%</span>
                         </div>
                         <div class="home-vault-progress-track">
                             <div id="home-vault-restore-progress-bar" class="home-vault-progress-bar"></div>
                         </div>
-                        <div id="home-vault-restore-progress-detail" class="home-vault-progress-detail">等待开始</div>
+                        <div id="home-vault-restore-progress-detail" class="home-vault-progress-detail" data-i18n>等待开始</div>
                     </div>
-                    <div id="home-vault-sync-status" class="home-vault-sync-status">未同步</div>
+                    <div id="home-vault-sync-status" class="home-vault-sync-status" data-i18n>未同步</div>
                 </div>
             </details>
         </section>
@@ -187,8 +187,8 @@
         <section id="send-view" class="view">
             <div id="share-inbox" class="share-inbox hidden">
                 <div class="share-inbox-header">
-                    <div class="share-inbox-kicker">来自系统分享</div>
-                    <button id="clear-share-btn" class="icon-btn share-clear-btn" title="清除共享内容">清除</button>
+                    <div class="share-inbox-kicker" data-i18n>来自系统分享</div>
+                    <button id="clear-share-btn" class="icon-btn share-clear-btn" title="清除共享内容" data-i18n-title data-i18n>清除</button>
                 </div>
                 <div id="share-inbox-title" class="share-inbox-title"></div>
                 <div id="share-inbox-hint" class="share-inbox-hint"></div>
@@ -199,35 +199,35 @@
         <!-- 历史页面 -->
         <section id="history-view" class="view hidden">
             <div class="history-header">
-                <h2>传输历史</h2>
+                <h2 data-i18n>传输历史</h2>
                 <div class="history-search-box">
                     <label class="history-search-field" for="history-search-input">
-                        <span class="history-search-prefix">搜索</span>
-                        <input id="history-search-input" type="search" placeholder="搜索内容、设备或文件名" autocomplete="off" spellcheck="false">
+                        <span class="history-search-prefix" data-i18n>搜索</span>
+                        <input id="history-search-input" type="search" placeholder="搜索内容、设备或文件名" data-i18n-placeholder autocomplete="off" spellcheck="false">
                     </label>
-                    <button id="history-search-clear-btn" type="button" class="secondary-btn history-search-clear hidden">清空</button>
+                    <button id="history-search-clear-btn" type="button" class="secondary-btn history-search-clear hidden" data-i18n>清空</button>
                 </div>
                 <div class="history-filter history-labeled-filter history-source-filter hidden" id="history-source-btns" data-row-label="来源"></div>
                 <div class="history-filter history-labeled-filter" id="history-filter-btns" data-row-label="目标">
-                    <button class="filter-btn active" data-filter="all">全部</button>
+                    <button class="filter-btn active" data-filter="all" data-i18n>全部</button>
                 </div>
                 <div class="history-filter history-labeled-filter history-kind-filter" id="history-kind-filter-btns" data-row-label="类型">
-                    <button class="filter-btn active" data-kind-filter="all">全部</button>
-                    <button class="filter-btn" data-kind-filter="text">文字</button>
-                    <button class="filter-btn" data-kind-filter="image">图片</button>
-                    <button class="filter-btn" data-kind-filter="video">视频</button>
-                    <button class="filter-btn" data-kind-filter="file">文件</button>
+                    <button class="filter-btn active" data-kind-filter="all" data-i18n>全部</button>
+                    <button class="filter-btn" data-kind-filter="text" data-i18n>文字</button>
+                    <button class="filter-btn" data-kind-filter="image" data-i18n>图片</button>
+                    <button class="filter-btn" data-kind-filter="video" data-i18n>视频</button>
+                    <button class="filter-btn" data-kind-filter="file" data-i18n>文件</button>
                 </div>
                 <div class="history-filter history-labeled-filter" id="history-availability-filter-btns" data-row-label="原件">
-                    <button class="filter-btn active" data-availability-filter="available">有原件</button>
-                    <button class="filter-btn" data-availability-filter="all">全部</button>
+                    <button class="filter-btn active" data-availability-filter="available" data-i18n>有原件</button>
+                    <button class="filter-btn" data-availability-filter="all" data-i18n>全部</button>
                 </div>
                 <div class="history-filter history-labeled-filter history-time-filter" id="history-time-filter-btns" data-row-label="时间">
-                    <button class="filter-btn active" data-time-filter="all">全部</button>
-                    <button class="filter-btn" data-time-filter="today">今天</button>
-                    <button class="filter-btn" data-time-filter="7d">近7天</button>
-                    <button class="filter-btn" data-time-filter="30d">近30天</button>
-                    <button class="filter-btn" data-time-filter="custom">自定义</button>
+                    <button class="filter-btn active" data-time-filter="all" data-i18n>全部</button>
+                    <button class="filter-btn" data-time-filter="today" data-i18n>今天</button>
+                    <button class="filter-btn" data-time-filter="7d" data-i18n>近7天</button>
+                    <button class="filter-btn" data-time-filter="30d" data-i18n>近30天</button>
+                    <button class="filter-btn" data-time-filter="custom" data-i18n>自定义</button>
                 </div>
                 <div id="history-toolbar" class="history-toolbar hidden">
                     <div id="history-filter-summary" class="history-filter-summary hidden"></div>
@@ -236,10 +236,10 @@
             <section id="history-heatmap-card" class="history-heatmap-card" aria-label="发送活跃热力图">
                 <div class="history-heatmap-header">
                     <div>
-                        <h3>活跃热力图</h3>
-                        <p id="history-heatmap-caption" class="hint">每个方块代表某天某小时的传输记录数量。左右滑动查看更多日期，点方块筛选该小时。</p>
+                        <h3 data-i18n>活跃热力图</h3>
+                        <p id="history-heatmap-caption" class="hint" data-i18n>每个方块代表某天某小时的传输记录数量。左右滑动查看更多日期，点方块筛选该小时。</p>
                     </div>
-                    <button id="history-heatmap-reset-btn" class="secondary-btn history-heatmap-reset hidden">回到最近</button>
+                    <button id="history-heatmap-reset-btn" class="secondary-btn history-heatmap-reset hidden" data-i18n>回到最近</button>
                 </div>
                 <div id="history-heatmap-stats" class="history-heatmap-stats"></div>
                 <div class="history-heatmap-body">
@@ -259,33 +259,33 @@
                     </div>
                 </div>
                 <div class="history-heatmap-legend" aria-hidden="true">
-                    <span>少</span>
+                    <span data-i18n>少</span>
                     <div class="history-heatmap-legend-scale"></div>
-                    <span>多</span>
+                    <span data-i18n>多</span>
                 </div>
             </section>
             <section id="history-selfstudy-card" class="history-heatmap-card" aria-label="消息自我研究">
                 <div class="history-heatmap-header">
                     <div>
-                        <h3>消息自我研究</h3>
-                        <p class="hint">词云、高频实义词、口头禅榜、高频短语、月度话题演变（jieba 全套分析，Mini 生成）。</p>
+                        <h3 data-i18n>消息自我研究</h3>
+                        <p class="hint" data-i18n>词云、高频实义词、口头禅榜、高频短语、月度话题演变（jieba 全套分析，Mini 生成）。</p>
                     </div>
                 </div>
                 <div class="selfstudy-actions">
-                    <button type="button" class="primary-btn" id="selfstudy-open-btn">打开完整报告</button>
-                    <button type="button" class="secondary-btn" id="selfstudy-refresh-btn">用最新数据重新生成</button>
+                    <button type="button" class="primary-btn" id="selfstudy-open-btn" data-i18n>打开完整报告</button>
+                    <button type="button" class="secondary-btn" id="selfstudy-refresh-btn" data-i18n>用最新数据重新生成</button>
                 </div>
             </section>
 
             <div id="selfstudy-overlay" class="selfstudy-overlay hidden">
                 <div class="selfstudy-topbar">
-                    <span>消息自我研究报告</span>
-                    <button type="button" class="secondary-btn" id="selfstudy-close-btn">关闭</button>
+                    <span data-i18n>消息自我研究报告</span>
+                    <button type="button" class="secondary-btn" id="selfstudy-close-btn" data-i18n>关闭</button>
                 </div>
-                <iframe id="selfstudy-frame" class="selfstudy-frame" title="消息自我研究报告"></iframe>
+                <iframe id="selfstudy-frame" class="selfstudy-frame" title="消息自我研究报告" data-i18n-title></iframe>
             </div>
             <div id="history-list" class="history-list">
-                <p class="empty-hint">暂无发送记录</p>
+                <p class="empty-hint" data-i18n>暂无发送记录</p>
             </div>
         </section>
 
@@ -294,68 +294,68 @@
                 <div class="sheet-handle"></div>
                 <div class="sheet-header">
                     <div>
-                        <h3>高级筛选</h3>
-                        <p class="hint">按日期、时间段和发送状态筛选历史记录。</p>
+                        <h3 data-i18n>高级筛选</h3>
+                        <p class="hint" data-i18n>按日期、时间段和发送状态筛选历史记录。</p>
                     </div>
-                    <button id="history-filter-close-btn" class="icon-btn share-clear-btn" title="关闭">关闭</button>
+                    <button id="history-filter-close-btn" class="icon-btn share-clear-btn" title="关闭" data-i18n-title data-i18n>关闭</button>
                 </div>
 
                 <div class="sheet-section">
-                    <label for="history-start-date-trigger">开始日期</label>
+                    <label for="history-start-date-trigger" data-i18n>开始日期</label>
                     <input id="history-start-date" type="hidden">
                     <button id="history-start-date-trigger" type="button" class="sheet-picker-btn">
-                        <span id="history-start-date-label">选择开始日期</span>
-                        <span class="sheet-picker-caret">选择</span>
+                        <span id="history-start-date-label" data-i18n>选择开始日期</span>
+                        <span class="sheet-picker-caret" data-i18n>选择</span>
                     </button>
                 </div>
 
                 <div class="sheet-section">
-                    <label for="history-end-date-trigger">结束日期</label>
+                    <label for="history-end-date-trigger" data-i18n>结束日期</label>
                     <input id="history-end-date" type="hidden">
                     <button id="history-end-date-trigger" type="button" class="sheet-picker-btn">
-                        <span id="history-end-date-label">选择结束日期</span>
-                        <span class="sheet-picker-caret">选择</span>
+                        <span id="history-end-date-label" data-i18n>选择结束日期</span>
+                        <span class="sheet-picker-caret" data-i18n>选择</span>
                     </button>
                     <p id="history-date-availability" class="sheet-field-hint hidden"></p>
                 </div>
 
                 <div class="sheet-section">
-                    <label for="history-time-range">时间范围</label>
+                    <label for="history-time-range" data-i18n>时间范围</label>
                     <select id="history-time-range">
-                        <option value="all">全天</option>
-                        <option value="morning">上午 06:00 - 11:59</option>
-                        <option value="afternoon">下午 12:00 - 17:59</option>
-                        <option value="evening">晚上 18:00 - 23:59</option>
-                        <option value="night">凌晨 00:00 - 05:59</option>
-                        <option value="custom">自定义时段</option>
+                        <option value="all" data-i18n>全天</option>
+                        <option value="morning" data-i18n>上午 06:00 - 11:59</option>
+                        <option value="afternoon" data-i18n>下午 12:00 - 17:59</option>
+                        <option value="evening" data-i18n>晚上 18:00 - 23:59</option>
+                        <option value="night" data-i18n>凌晨 00:00 - 05:59</option>
+                        <option value="custom" data-i18n>自定义时段</option>
                     </select>
                 </div>
 
                 <div class="sheet-time-grid">
                     <div class="sheet-section">
-                        <label for="history-start-time">开始时间</label>
+                        <label for="history-start-time" data-i18n>开始时间</label>
                         <input id="history-start-time" type="time" disabled>
                     </div>
                     <div class="sheet-section">
-                        <label for="history-end-time">结束时间</label>
+                        <label for="history-end-time" data-i18n>结束时间</label>
                         <input id="history-end-time" type="time" disabled>
                     </div>
                 </div>
 
                 <div class="sheet-section">
-                    <label for="history-status-filter">发送状态</label>
+                    <label for="history-status-filter" data-i18n>发送状态</label>
                     <select id="history-status-filter">
-                        <option value="all">全部状态</option>
-                        <option value="success">成功</option>
-                        <option value="partial">部分成功</option>
-                        <option value="failed">失败</option>
-                        <option value="pending">发送中</option>
+                        <option value="all" data-i18n>全部状态</option>
+                        <option value="success" data-i18n>成功</option>
+                        <option value="partial" data-i18n>部分成功</option>
+                        <option value="failed" data-i18n>失败</option>
+                        <option value="pending" data-i18n>发送中</option>
                     </select>
                 </div>
 
                 <div class="sheet-actions">
-                    <button id="history-filter-reset-btn" class="secondary-btn">重置</button>
-                    <button id="history-filter-apply-btn" class="primary-btn">应用筛选</button>
+                    <button id="history-filter-reset-btn" class="secondary-btn" data-i18n>重置</button>
+                    <button id="history-filter-apply-btn" class="primary-btn" data-i18n>应用筛选</button>
                 </div>
             </div>
         </div>
@@ -365,10 +365,10 @@
                 <div class="sheet-handle"></div>
                 <div class="sheet-header">
                     <div>
-                        <h3 id="history-date-picker-title">选择日期</h3>
-                        <p id="history-date-picker-subtitle" class="hint">仅可选择当前条件下存在记录的日期。</p>
+                        <h3 id="history-date-picker-title" data-i18n>选择日期</h3>
+                        <p id="history-date-picker-subtitle" class="hint" data-i18n>仅可选择当前条件下存在记录的日期。</p>
                     </div>
-                    <button id="history-date-picker-close-btn" class="icon-btn share-clear-btn" title="关闭">关闭</button>
+                    <button id="history-date-picker-close-btn" class="icon-btn share-clear-btn" title="关闭" data-i18n-title data-i18n>关闭</button>
                 </div>
 
                 <div class="history-date-picker-nav">
@@ -378,20 +378,20 @@
                 </div>
 
                 <div class="history-date-picker-weekdays">
-                    <span>一</span>
-                    <span>二</span>
-                    <span>三</span>
-                    <span>四</span>
-                    <span>五</span>
-                    <span>六</span>
-                    <span>日</span>
+                    <span data-i18n>一</span>
+                    <span data-i18n>二</span>
+                    <span data-i18n>三</span>
+                    <span data-i18n>四</span>
+                    <span data-i18n>五</span>
+                    <span data-i18n>六</span>
+                    <span data-i18n>日</span>
                 </div>
 
                 <div id="history-date-picker-grid" class="history-date-picker-grid"></div>
 
                 <div class="sheet-actions">
-                    <button id="history-date-picker-clear-btn" class="secondary-btn">清除日期</button>
-                    <button id="history-date-picker-done-btn" class="primary-btn">完成</button>
+                    <button id="history-date-picker-clear-btn" class="secondary-btn" data-i18n>清除日期</button>
+                    <button id="history-date-picker-done-btn" class="primary-btn" data-i18n>完成</button>
                 </div>
             </div>
         </div>
@@ -401,18 +401,18 @@
                 <div class="sheet-handle"></div>
                 <div class="sheet-header">
                     <div>
-                        <h3>等待电脑确认配对</h3>
-                        <p id="desktop-pairing-subtitle" class="hint">请在电脑端确认相同验证码后点击同意。</p>
+                        <h3 data-i18n>等待电脑确认配对</h3>
+                        <p id="desktop-pairing-subtitle" class="hint" data-i18n>请在电脑端确认相同验证码后点击同意。</p>
                     </div>
-                    <button id="desktop-pairing-close-btn" class="icon-btn share-clear-btn" title="关闭">关闭</button>
+                    <button id="desktop-pairing-close-btn" class="icon-btn share-clear-btn" title="关闭" data-i18n-title data-i18n>关闭</button>
                 </div>
                 <div class="desktop-pairing-code-wrap">
-                    <div id="desktop-pairing-target" class="desktop-pairing-target">正在连接电脑…</div>
+                    <div id="desktop-pairing-target" class="desktop-pairing-target" data-i18n>正在连接电脑…</div>
                     <div id="desktop-pairing-code" class="desktop-pairing-code">------</div>
-                    <p id="desktop-pairing-status" class="desktop-pairing-status">配对请求已发出，正在等待桌面端确认。</p>
+                    <p id="desktop-pairing-status" class="desktop-pairing-status" data-i18n>配对请求已发出，正在等待桌面端确认。</p>
                 </div>
                 <div class="sheet-actions">
-                    <button id="desktop-pairing-cancel-btn" class="secondary-btn">先关闭</button>
+                    <button id="desktop-pairing-cancel-btn" class="secondary-btn" data-i18n>先关闭</button>
                 </div>
             </div>
         </div>
@@ -422,10 +422,10 @@
             <div class="history-media-preview-card" role="dialog" aria-modal="true" aria-labelledby="history-media-preview-title">
                 <div class="history-media-preview-header">
                     <div class="history-media-preview-copy">
-                        <h3 id="history-media-preview-title">媒体预览</h3>
-                        <p id="history-media-preview-subtitle" class="history-media-preview-subtitle">查看这次传输里的全部媒体。</p>
+                        <h3 id="history-media-preview-title" data-i18n>媒体预览</h3>
+                        <p id="history-media-preview-subtitle" class="history-media-preview-subtitle" data-i18n>查看这次传输里的全部媒体。</p>
                     </div>
-                    <button id="history-media-preview-close" class="icon-btn share-clear-btn" title="关闭">关闭</button>
+                    <button id="history-media-preview-close" class="icon-btn share-clear-btn" title="关闭" data-i18n-title data-i18n>关闭</button>
                 </div>
                 <div id="history-media-preview-body" class="history-media-preview-body"></div>
             </div>
@@ -454,17 +454,17 @@
                 <div class="sheet-handle"></div>
                 <div class="sheet-header">
                     <div>
-                        <h3 id="media-opener-picker-title">选择打开应用</h3>
-                        <p id="media-opener-picker-subtitle" class="hint">只影响 VibeDrop 内部，不会修改系统默认。</p>
+                        <h3 id="media-opener-picker-title" data-i18n>选择打开应用</h3>
+                        <p id="media-opener-picker-subtitle" class="hint" data-i18n>只影响 VibeDrop 内部，不会修改系统默认。</p>
                     </div>
-                    <button id="media-opener-picker-close-btn" class="icon-btn share-clear-btn" title="关闭">关闭</button>
+                    <button id="media-opener-picker-close-btn" class="icon-btn share-clear-btn" title="关闭" data-i18n-title data-i18n>关闭</button>
                 </div>
                 <label id="media-opener-picker-remember" class="media-opener-picker-remember">
                     <input id="media-opener-picker-remember-toggle" type="checkbox">
-                    <span id="media-opener-picker-remember-label">记住这次选择</span>
+                    <span id="media-opener-picker-remember-label" data-i18n>记住这次选择</span>
                 </label>
                 <div id="media-opener-picker-list" class="media-opener-picker-list"></div>
-                <div id="media-opener-picker-empty" class="empty-hint hidden">没有找到可用的打开应用。</div>
+                <div id="media-opener-picker-empty" class="empty-hint hidden" data-i18n>没有找到可用的打开应用。</div>
             </div>
             <div id="media-opener-picker-backdrop" class="media-opener-picker-backdrop"></div>
         </div>
@@ -473,13 +473,13 @@
         <!-- 底部导航栏 -->
         <nav id="bottom-nav">
             <button class="nav-btn active" data-view="send-view" id="nav-send-btn">
-                <span class="nav-label">发送</span>
+                <span class="nav-label" data-i18n>发送</span>
             </button>
             <button class="nav-btn" data-view="history-view" id="nav-history-btn">
-                <span class="nav-label">历史</span>
+                <span class="nav-label" data-i18n>历史</span>
             </button>
             <button class="nav-btn" data-view="settings-view" id="nav-settings-btn">
-                <span class="nav-label">设置</span>
+                <span class="nav-label" data-i18n>设置</span>
             </button>
         </nav>
     </div>

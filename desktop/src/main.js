@@ -72,9 +72,19 @@ let logHeatmapState = {
     suppressCellClickUntil: 0,
 };
 let pendingPairRequests = [];
+const i18nDictionaryReadyAtBoot = window.vibeI18n?.lang === 'zh-CN'
+    || Boolean(localStorage.getItem(`vibedrop-i18n-cache-${window.vibeI18n?.lang || 'en'}`));
+
+// 首次切到非中文时，动态界面可能先于词典请求完成；词典缓存落盘后补一次重载。
+window.addEventListener('i18n-updated', () => {
+    if (!i18nDictionaryReadyAtBoot && window.vibeI18n?.lang !== 'zh-CN') {
+        window.location.reload();
+    }
+});
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
+    localizeStaticAttributes();
     // 首先检查辅助功能权限
     await checkPermission();
 
@@ -87,6 +97,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         await checkPermission();
     });
 });
+
+function localizeStaticAttributes() {
+    document.documentElement.lang = window.vibeI18n?.lang === 'zh-CN' ? 'zh-CN' : 'en';
+    document.querySelector('.desktop-tabbar')?.setAttribute('aria-label', t('桌面视图切换'));
+    document.querySelector('.connected-devices-card')?.setAttribute('aria-label', t('当前已连接设备'));
+    document.querySelector('.pair-requests-card')?.setAttribute('aria-label', t('待确认配对请求'));
+    document.querySelector('.drop-send-card')?.setAttribute('aria-label', t('发送到手机'));
+    document.getElementById('desktop-history-advanced-panel')?.setAttribute('aria-label', t('精确筛选'));
+    document.querySelector('.heatmap-card')?.setAttribute('aria-label', t('接收热力图'));
+}
 
 window.addEventListener('focus', () => {
     if (document.getElementById('main-view')?.style.display === 'flex') {
@@ -140,7 +160,7 @@ async function showMainView() {
             el.addEventListener('click', () => {
                 navigator.clipboard.writeText(el.textContent);
                 const original = el.textContent;
-                el.textContent = '已复制';
+                el.textContent = t('已复制');
                 setTimeout(() => el.textContent = original, 1500);
             });
         });
@@ -288,7 +308,7 @@ function normalizeConnectedClients(clients) {
         .filter((client) => client && client.id)
         .map((client) => ({
             id: client.id,
-            name: client.name || '未命名设备',
+            name: client.name || t('未命名设备'),
             can_receive_files: Boolean(client.can_receive_files),
         }))
         .sort((a, b) => {
@@ -319,7 +339,7 @@ function normalizePairRequests(requests) {
         .map((request) => ({
             request_id: request.request_id,
             client_id: request.client_id || '',
-            client_name: request.client_name || '未命名手机',
+            client_name: request.client_name || t('未命名手机'),
             code: request.code || '------',
             requested_at: request.requested_at || '',
         }))
@@ -346,17 +366,17 @@ function renderPairRequests() {
             <div class="pair-request-top">
                 <div>
                     <div class="pair-request-name">${escapeHtml(request.client_name)}</div>
-                    <div class="pair-request-subtitle">确认手机端显示同一验证码后，再点击同意配对。</div>
+                    <div class="pair-request-subtitle">${t('确认手机端显示同一验证码后，再点击同意配对。')}</div>
                 </div>
                 <div class="pair-request-code">${escapeHtml(request.code)}</div>
             </div>
             <div class="connected-device-meta">
-                <span>${escapeHtml(request.client_id || '未知客户端')}</span>
+                <span>${escapeHtml(request.client_id || t('未知客户端'))}</span>
                 <span>${escapeHtml(formatPairRequestTime(request.requested_at))}</span>
             </div>
             <div class="pair-request-actions">
-                <button type="button" class="pair-request-btn is-reject" data-pair-action="reject" data-request-id="${escapeHtml(request.request_id)}">拒绝</button>
-                <button type="button" class="pair-request-btn is-approve" data-pair-action="approve" data-request-id="${escapeHtml(request.request_id)}">同意配对</button>
+                <button type="button" class="pair-request-btn is-reject" data-pair-action="reject" data-request-id="${escapeHtml(request.request_id)}">${t('拒绝')}</button>
+                <button type="button" class="pair-request-btn is-approve" data-pair-action="approve" data-request-id="${escapeHtml(request.request_id)}">${t('同意配对')}</button>
             </div>
         </div>
     `).join('');
@@ -370,15 +390,15 @@ function renderPairRequests() {
             try {
                 if (action === 'approve') {
                     await invoke('approve_pair_request', { requestId });
-                    showToast('已同意配对，请在手机端确认');
+                    showToast(t('已同意配对，请在手机端确认'));
                 } else {
                     await invoke('reject_pair_request', { requestId });
-                    showToast('已拒绝配对请求');
+                    showToast(t('已拒绝配对请求'));
                 }
                 await refreshPairRequests();
                 renderPairRequests();
             } catch (error) {
-                showToast(`处理配对失败：${error}`);
+                showToast(t('处理配对失败：{error}', { error }));
                 button.disabled = false;
             }
         });
@@ -388,7 +408,7 @@ function renderPairRequests() {
 function formatPairRequestTime(value) {
     const time = new Date(value || '');
     if (Number.isNaN(time.getTime())) {
-        return '刚刚';
+        return t('刚刚');
     }
     return time.toLocaleTimeString('zh-CN', {
         hour: '2-digit',
@@ -414,12 +434,12 @@ function renderConnectedDevicePanel() {
     empty.classList.add('hidden');
     list.innerHTML = connectedDropClients.map((client) => {
         const capabilityClass = client.can_receive_files ? '' : ' is-limited';
-        const capabilityText = client.can_receive_files ? '支持接收文件' : '当前仅支持发送到 Mac';
+        const capabilityText = client.can_receive_files ? t('支持接收文件') : t('当前仅支持发送到 Mac');
         return `
             <div class="connected-device-item">
                 <div class="connected-device-top">
                     <div class="connected-device-name">${escapeHtml(client.name)}</div>
-                    <span class="connected-device-status">已连接</span>
+                    <span class="connected-device-status">${t('已连接')}</span>
                 </div>
                 <div class="connected-device-meta">
                     <span class="connected-device-capability${capabilityClass}">${escapeHtml(capabilityText)}</span>
@@ -450,11 +470,11 @@ function renderConnectedDropClients() {
         zone.classList.add('is-disabled');
         void syncPreferredShareClient('');
         caption.textContent = connectedDropClients.length
-            ? '已有设备连上这台 Mac，但当前没有支持接收文件的客户端。'
-            : '把 Finder 里的文件或文件夹拖进这个窗口，图片/视频会进相册，其它内容进下载。';
+            ? t('已有设备连上这台 Mac，但当前没有支持接收文件的客户端。')
+            : t('把 Finder 里的文件或文件夹拖进这个窗口，图片/视频会进相册，其它内容进下载。');
         empty.textContent = connectedDropClients.length
-            ? '已有设备在线，但它当前不支持接收文件。请使用最新版手机 App 连接这台 Mac。'
-            : '当前没有已连接的手机 App，先在手机端连上这台 Mac。';
+            ? t('已有设备在线，但它当前不支持接收文件。请使用最新版手机 App 连接这台 Mac。')
+            : t('当前没有已连接的手机 App，先在手机端连上这台 Mac。');
         return;
     }
 
@@ -480,8 +500,8 @@ function renderConnectedDropClients() {
     }
     void syncPreferredShareClient(selectedDropClientId);
     caption.textContent = selected
-        ? `把 Finder 里的文件或文件夹拖进这个窗口，图片/视频会进 ${selected.name} 的相册，其它内容进下载目录。`
-        : '把 Finder 里的文件或文件夹拖进这个窗口，图片/视频会进相册，其它内容进下载目录。';
+        ? t('把 Finder 里的文件或文件夹拖进这个窗口，图片/视频会进 {name} 的相册，其它内容进下载目录。', { name: selected.name })
+        : t('把 Finder 里的文件或文件夹拖进这个窗口，图片/视频会进相册，其它内容进下载目录。');
 }
 
 async function syncPreferredShareClient(clientId) {
@@ -505,9 +525,9 @@ function toggleWindowDropOverlay(visible, itemCount = 0) {
     }
 
     const selected = connectedDropClients.find((client) => client.id === selectedDropClientId);
-    const targetText = selected ? `发送到 ${selected.name}` : '先选择一个已连接的手机';
-    const itemText = itemCount > 1 ? `${itemCount} 个项目` : '当前项目';
-    text.textContent = `${itemText}将${targetText}。纯图片/视频会逐个发到相册，其它多文件/文件夹会打包 ZIP。`;
+    const targetText = selected ? t('发送到 {name}', { name: selected.name }) : t('先选择一个已连接的手机');
+    const itemText = itemCount > 1 ? t('{count} 个项目', { count: itemCount }) : t('当前项目');
+    text.textContent = t('{item}将{target}。纯图片/视频会逐个发到相册，其它多文件/文件夹会打包 ZIP。', { item: itemText, target: targetText });
     overlay.classList.remove('hidden');
 }
 
@@ -517,7 +537,7 @@ async function handleDroppedPaths(paths) {
     }
 
     if (!selectedDropClientId) {
-        showToast('先选择一个已连接的手机');
+        showToast(t('先选择一个已连接的手机'));
         return;
     }
 
@@ -536,18 +556,18 @@ async function handleDroppedPaths(paths) {
                 client_id: launch.client_id,
                 client_name: launch.client_name,
                 file_name: normalizedPaths.length > 1
-                    ? `${normalizedPaths.length} 个项目`
-                    : (normalizedPaths[0] ? pathBaseName(normalizedPaths[0]) : '拖拽内容'),
+                    ? t('{count} 个项目', { count: normalizedPaths.length })
+                    : (normalizedPaths[0] ? pathBaseName(normalizedPaths[0]) : t('拖拽内容')),
                 status: 'preparing',
                 progress: 0,
                 sent_bytes: 0,
                 total_bytes: 0,
                 is_archive: normalizedPaths.length > 1,
-                detail: '正在准备发送内容',
+                detail: t('正在准备发送内容'),
             });
         }
     } catch (error) {
-        showToast(`发送失败：${error}`);
+        showToast(t('发送失败：{error}', { error }));
     }
 }
 
@@ -574,7 +594,7 @@ function upsertDesktopTransferItem(payload) {
         const progressPercent = Math.max(0, Math.min(100, Math.round((Number(item.progress) || 0) * 100)));
         const metaRight = item.total_bytes
             ? `${formatBytes(item.sent_bytes || 0)} / ${formatBytes(item.total_bytes || 0)}`
-            : '等待开始';
+            : t('等待开始');
         const classes = ['drop-transfer-item'];
         if (item.status === 'success') classes.push('is-success');
         if (item.status === 'error') classes.push('is-error');
@@ -582,7 +602,7 @@ function upsertDesktopTransferItem(payload) {
         return `
             <div class="${classes.join(' ')}">
                 <div class="drop-transfer-top">
-                    <div class="drop-transfer-name">${escapeHtml(item.file_name || '发送内容')}</div>
+                    <div class="drop-transfer-name">${escapeHtml(item.file_name || t('发送内容'))}</div>
                     <div class="drop-transfer-status">${escapeHtml(statusLabel)}</div>
                 </div>
                 <div class="drop-transfer-meta">
@@ -606,21 +626,21 @@ function upsertDesktopTransferItem(payload) {
 function formatTransferStatus(status) {
     switch (status) {
         case 'preparing':
-            return '准备中';
+            return t('准备中');
         case 'sending':
-            return '发送中';
+            return t('发送中');
         case 'success':
-            return '已完成';
+            return t('已完成');
         case 'error':
-            return '失败';
+            return t('失败');
         default:
-            return '处理中';
+            return t('处理中');
     }
 }
 
 function pathBaseName(path) {
     const normalized = String(path || '').replace(/\\/g, '/');
-    return normalized.split('/').filter(Boolean).pop() || '文件';
+    return normalized.split('/').filter(Boolean).pop() || t('文件');
 }
 
 function formatBytes(value) {
@@ -649,7 +669,7 @@ async function restoreLog() {
         if (Array.isArray(log)) {
             saveLog(log);
         } else {
-            throw new Error('桌面端返回的历史格式无效');
+            throw new Error(t('桌面端返回的历史格式无效'));
         }
     } catch (e) {
         console.error('读取桌面历史失败:', e);
@@ -697,7 +717,7 @@ function normalizeLogEntry(entryOrText, timestamp) {
 function normalizeLogItem(item = {}) {
     return {
         kind: item.kind || normalizeLogKind(item.mime_type || item.mimeType || ''),
-        file_name: item.file_name || item.fileName || '文件',
+        file_name: item.file_name || item.fileName || t('文件'),
         mime_type: item.mime_type || item.mimeType || 'application/octet-stream',
         thumbnail_data_url: item.thumbnail_data_url || item.thumbnailDataUrl || '',
         file_path: item.file_path || item.filePath || '',
@@ -918,7 +938,7 @@ function renderDesktopHistoryDeviceFilters(entries) {
     const devices = getDesktopHistoryDeviceOptions(entries).filter((device) =>
         unhiddenDeviceIds.has(device.id) || (!hiddenDeviceIds.has(device.id) && !DEFAULT_HIDDEN_DEVICE_NAMES.includes(device.label)));
     container.innerHTML = [
-        `<button type="button" class="desktop-history-filter-btn${currentLogHistoryFilters.device === 'all' ? ' is-active' : ''}" data-device-filter="all">全部</button>`,
+        `<button type="button" class="desktop-history-filter-btn${currentLogHistoryFilters.device === 'all' ? ' is-active' : ''}" data-device-filter="all">${t('全部')}</button>`,
         ...devices.map((device) => `
             <button
                 type="button"
@@ -927,7 +947,7 @@ function renderDesktopHistoryDeviceFilters(entries) {
                 title="${escapeHtml(device.label)}"
             >${escapeHtml(device.label)}</button>
         `),
-        `<button type="button" class="desktop-history-filter-btn desktop-history-manage-btn" data-manage-devices="1" title="隐藏测试设备等,不删除任何数据">管理</button>`,
+        `<button type="button" class="desktop-history-filter-btn desktop-history-manage-btn" data-manage-devices="1" title="${t('隐藏测试设备等,不删除任何数据')}">${t('管理')}</button>`,
     ].join('');
 }
 
@@ -941,18 +961,18 @@ function showManageDevicesModal() {
     overlay.className = 'manage-devices-overlay';
     overlay.innerHTML = `
         <div class="manage-devices-card">
-            <h3>管理设备</h3>
-            <p class="manage-devices-hint">勾选"隐藏"后,该设备不再出现在筛选和历史列表里。只是视图隐藏,不删除任何记录,随时可恢复。</p>
+            <h3>${t('管理设备')}</h3>
+            <p class="manage-devices-hint">${t('勾选"隐藏"后,该设备不再出现在筛选和历史列表里。只是视图隐藏,不删除任何记录,随时可恢复。')}</p>
             <div class="manage-devices-list">
                 ${allDevices.map((device) => `
                     <label class="manage-devices-row">
                         <input type="checkbox" data-device-id="${escapeHtml(device.id)}" ${hiddenDeviceIds.has(device.id) ? 'checked' : ''}>
-                        <span>隐藏「${escapeHtml(device.label)}」</span>
+                        <span>${t('隐藏「{name}」', { name: escapeHtml(device.label) })}</span>
                     </label>
                 `).join('')}
             </div>
             <div class="manage-devices-actions">
-                <button type="button" class="manage-devices-done">完成</button>
+                <button type="button" class="manage-devices-done">${t('完成')}</button>
             </div>
         </div>
     `;
@@ -1084,7 +1104,7 @@ function readDesktopHistoryFilterForm() {
 function applyDesktopHistoryFilterForm() {
     const nextFilters = readDesktopHistoryFilterForm();
     if (nextFilters.startDate && nextFilters.endDate && nextFilters.startDate > nextFilters.endDate) {
-        showToast('开始日期不能晚于结束日期');
+        showToast(t('开始日期不能晚于结束日期'));
         return;
     }
 
@@ -1092,7 +1112,7 @@ function applyDesktopHistoryFilterForm() {
         && nextFilters.startTime
         && nextFilters.endTime
         && nextFilters.startTime > nextFilters.endTime) {
-        showToast('开始时间不能晚于结束时间');
+        showToast(t('开始时间不能晚于结束时间'));
         return;
     }
 
@@ -1159,7 +1179,7 @@ function renderHistoryFilterBanner(baseEntries, totalCount = 0) {
     const labels = [];
     const queryLabel = String(currentLogHistoryFilters.query || '').trim();
     if (queryLabel) {
-        labels.push(`搜索：${queryLabel}`);
+        labels.push(t('搜索：{query}', { query: queryLabel }));
     }
     const deviceLabel = getLogFilterDeviceLabel(currentLogHistoryFilters.device, getLog());
     if (deviceLabel) {
@@ -1167,10 +1187,10 @@ function renderHistoryFilterBanner(baseEntries, totalCount = 0) {
     }
 
     const quickTimeLabels = {
-        today: '今天',
-        '7d': '近7天',
-        '30d': '近30天',
-        custom: '精确筛选',
+        today: t('今天'),
+        '7d': t('近7天'),
+        '30d': t('近30天'),
+        custom: t('精确筛选'),
     };
     if (currentLogHistoryFilters.quickTime !== 'all') {
         labels.push(quickTimeLabels[currentLogHistoryFilters.quickTime] || currentLogHistoryFilters.quickTime);
@@ -1178,26 +1198,26 @@ function renderHistoryFilterBanner(baseEntries, totalCount = 0) {
 
     if (currentLogHistoryFilters.quickTime === 'custom'
         && (currentLogHistoryFilters.startDate || currentLogHistoryFilters.endDate)) {
-        labels.push(`${currentLogHistoryFilters.startDate || '开始'} - ${currentLogHistoryFilters.endDate || '结束'}`);
+        labels.push(t('{start} - {end}', { start: currentLogHistoryFilters.startDate || t('开始'), end: currentLogHistoryFilters.endDate || t('结束') }));
     }
 
     const timeRangeLabels = {
-        morning: '上午',
-        afternoon: '下午',
-        evening: '晚上',
-        night: '凌晨',
+        morning: t('上午'),
+        afternoon: t('下午'),
+        evening: t('晚上'),
+        night: t('凌晨'),
         custom: `${currentLogHistoryFilters.startTime || '00:00'} - ${currentLogHistoryFilters.endTime || '23:59'}`,
     };
     if (currentLogHistoryFilters.timeRange !== 'all') {
-        labels.push(timeRangeLabels[currentLogHistoryFilters.timeRange] || '自定义时段');
+        labels.push(timeRangeLabels[currentLogHistoryFilters.timeRange] || t('自定义时段'));
     }
 
     const kindLabels = {
-        text: '文字',
-        image: '图片',
-        video: '视频',
-        media: '媒体',
-        file: '文件',
+        text: t('文字'),
+        image: t('图片'),
+        video: t('视频'),
+        media: t('媒体'),
+        file: t('文件'),
     };
     if (currentLogHistoryFilters.kind !== 'all') {
         labels.push(kindLabels[currentLogHistoryFilters.kind] || currentLogHistoryFilters.kind);
@@ -1205,7 +1225,7 @@ function renderHistoryFilterBanner(baseEntries, totalCount = 0) {
 
     if (logHeatmapState.selectionDate && logHeatmapState.selectionHour != null) {
         const selectedCount = applyLogHeatmapSelection(baseEntries).length;
-        labels.push(`${formatHeatmapSelectionLabel(logHeatmapState.selectionDate, logHeatmapState.selectionHour)} · ${selectedCount} 条`);
+        labels.push(t('{selection} · {count} 条', { selection: formatHeatmapSelectionLabel(logHeatmapState.selectionDate, logHeatmapState.selectionHour), count: selectedCount }));
     }
 
     if (!labels.length) {
@@ -1218,7 +1238,7 @@ function renderHistoryFilterBanner(baseEntries, totalCount = 0) {
         ? applyLogHeatmapSelection(baseEntries).length
         : baseEntries.length;
 
-    text.textContent = `${labels.join(' · ')} · 共 ${count} 条记录`;
+    text.textContent = t('{filters} · 共 {count} 条记录', { filters: labels.join(' · '), count });
     banner.classList.remove('hidden');
 }
 
@@ -1229,12 +1249,12 @@ function renderLogList(entries, totalCount = 0) {
     if (!entries.length) {
         const hasSearchQuery = Boolean(normalizeSearchText(currentLogHistoryFilters.query));
         const emptyText = totalCount === 0
-            ? '等待接收...'
+            ? t('等待接收...')
             : logHeatmapState.selectionDate && logHeatmapState.selectionHour != null
-                ? '这个时段没有符合条件的记录'
+                ? t('这个时段没有符合条件的记录')
                 : hasSearchQuery
-                    ? '没有匹配的历史记录'
-                    : '没有符合筛选条件的记录';
+                    ? t('没有匹配的历史记录')
+                    : t('没有符合筛选条件的记录');
         list.innerHTML = `<p class="empty">${emptyText}</p>`;
         return;
     }
@@ -1400,13 +1420,13 @@ function parseClockMinutes(value) {
 
 function getLogKindLabel(kind = 'text') {
     const labels = {
-        text: '文字',
-        image: '图片',
-        video: '视频',
-        media: '媒体',
-        file: '文件',
+        text: t('文字'),
+        image: t('图片'),
+        video: t('视频'),
+        media: t('媒体'),
+        file: t('文件'),
     };
-    return labels[kind] || kind || '文字';
+    return labels[kind] || kind || t('文字');
 }
 
 function highlightLogText(text, fallback = '') {
@@ -1672,10 +1692,10 @@ function buildLogHeatmapStats(entries, visibleStart, visibleEnd) {
     });
 
     return [
-        { label: '窗口', value: `${formatShortDateLabel(visibleStart)} - ${formatShortDateLabel(visibleEnd)}` },
-        { label: '收到', value: `${visibleEntries.length} 条` },
-        { label: '高峰时段', value: peakHour == null ? '暂无' : `${pad2(peakHour)}:00 · ${peakHourCount}` },
-        { label: '最忙日期', value: peakDay ? `${formatShortDateLabel(peakDay)} · ${peakDayCount}` : '暂无' },
+        { label: t('窗口'), value: t('{start} - {end}', { start: formatShortDateLabel(visibleStart), end: formatShortDateLabel(visibleEnd) }) },
+        { label: t('收到'), value: t('{count} 条', { count: visibleEntries.length }) },
+        { label: t('高峰时段'), value: peakHour == null ? t('暂无') : `${pad2(peakHour)}:00 · ${peakHourCount}` },
+        { label: t('最忙日期'), value: peakDay ? `${formatShortDateLabel(peakDay)} · ${peakDayCount}` : t('暂无') },
     ];
 }
 
@@ -1703,7 +1723,10 @@ function syncLogHeatmapViewportMeta(baseEntries, counts, bounds) {
         </div>
     `).join('');
 
-    caption.textContent = `当前窗口 ${formatHeatmapDateLabel(visibleStart)} 至 ${formatHeatmapDateLabel(visibleEnd)}。左右滑动查看更多日期，点方块筛选该小时。`;
+    caption.textContent = t('当前窗口 {start} 至 {end}。左右滑动查看更多日期，点方块筛选该小时。', {
+        start: formatHeatmapDateLabel(visibleStart),
+        end: formatHeatmapDateLabel(visibleEnd),
+    });
     resetBtn.classList.toggle('hidden', startIndex >= getLogHeatmapMaxStartIndex(bounds));
 }
 
@@ -1753,7 +1776,7 @@ function renderLogHeatmap(baseEntries) {
     track.innerHTML = days.map((dayKey) => {
         const dayDate = dateKeyToUtcDate(dayKey);
         const headerLabel = dayKey === todayKey
-            ? '今天'
+            ? t('今天')
             : dayDate.toLocaleDateString('zh-CN', { weekday: 'short', timeZone: 'UTC' });
 
         const hoursHtml = Array.from({ length: LOG_HEATMAP_HOUR_SLOTS }, (_, hour) => {
@@ -1762,7 +1785,7 @@ function renderLogHeatmap(baseEntries) {
             const classes = ['heatmap-cell'];
             if (count > 0) classes.push('has-data');
             if (selected) classes.push('selected');
-            const label = `${formatHeatmapDateLabel(dayKey)} ${formatHeatmapHourLabel(hour)}，${count} 条`;
+            const label = t('{date} {hour}，{count} 条', { date: formatHeatmapDateLabel(dayKey), hour: formatHeatmapHourLabel(hour), count });
 
             return `
                 <button
@@ -1851,14 +1874,14 @@ function createLogElement(entryOrText, timestamp) {
     const sourceName = getLogEntryDeviceName(entry);
     const sourceDetail = getLogEntryDeviceDetail(entry);
     const kindLabel = entry.kind === 'image'
-        ? '图片'
+        ? t('图片')
         : entry.kind === 'video'
-            ? '视频'
+            ? t('视频')
             : entry.kind === 'media'
-                ? '媒体'
+                ? t('媒体')
                 : isFile
-                    ? '文件'
-                    : '文字';
+                    ? t('文件')
+                    : t('文字');
 
     const item = document.createElement('div');
     item.className = 'log-item';
@@ -1921,22 +1944,22 @@ function createLogElement(entryOrText, timestamp) {
         item.innerHTML = `
             ${headerHtml}
             <div class="log-image-row">
-                <div class="log-file-badge">文件</div>
+                <div class="log-file-badge">${t('文件')}</div>
                 <div class="log-image-meta">
-                    <div class="log-text">${highlightLogText(entry.text, '文件')}</div>
+                    <div class="log-text">${highlightLogText(entry.text, t('文件'))}</div>
                     <div class="log-image-hint">${escapeHtml(getLogEntryHint(entry))}</div>
                 </div>
             </div>
         `;
         item.addEventListener('click', async () => {
             if (!filePath) {
-                showToast('文件路径不可用');
+                showToast(t('文件路径不可用'));
                 return;
             }
             try {
                 await invoke('open_history_path', { path: filePath });
             } catch (error) {
-                showToast(`打开失败：${error}`);
+                showToast(t('打开失败：{error}', { error }));
             }
         });
         return item;
@@ -1948,7 +1971,7 @@ function createLogElement(entryOrText, timestamp) {
     `;
     item.addEventListener('click', () => {
         navigator.clipboard.writeText(entry.text || '');
-        showToast('已复制');
+        showToast(t('已复制'));
     });
     return item;
 }
@@ -1979,7 +2002,7 @@ function convertVaultEntry(entry) {
         mime_type: entry.mimeType || '',
         thumbnail_data_url: entry.thumbnailDataUrl || '',
         vault_media_hash: entry.vaultMediaHash || '',
-        client_name: entry.sourceDeviceName || entry.sourceDeviceId || '远程设备',
+        client_name: entry.sourceDeviceName || entry.sourceDeviceId || t('远程设备'),
         client_id: `vault-${entry.sourceDeviceId || 'unknown'}`,
         items,
         vault_remote: true,
@@ -2013,7 +2036,7 @@ async function openLogMediaItem(item) {
     const hash = item?.vault_media_hash || '';
     if (hash) {
         try {
-            showToast('正在从 Home Vault 取原件…');
+            showToast(t('正在从 Home Vault 取原件…'));
             const path = await invoke('download_vault_media', {
                 endpoint: VAULT_ENDPOINT,
                 hash,
@@ -2021,7 +2044,7 @@ async function openLogMediaItem(item) {
             });
             await invoke('open_history_path', { path });
         } catch (error) {
-            showToast(`从 Vault 打开失败：${error}`);
+            showToast(t('从 Vault 打开失败：{error}', { error }));
         }
         return true;
     }
@@ -2037,7 +2060,7 @@ function getLogEntryItems(entry) {
     if (entry.kind === 'image' || entry.kind === 'video') {
         return [normalizeLogItem({
             kind: entry.kind,
-            file_name: entry.file_name || entry.fileName || entry.text || '媒体',
+            file_name: entry.file_name || entry.fileName || entry.text || t('媒体'),
             mime_type: entry.mime_type || entry.mimeType || '',
             thumbnail_data_url: entry.thumbnail_data_url || entry.thumbnailDataUrl || '',
             file_path: entry.file_path || entry.filePath || entry.image_path || entry.imagePath || '',
@@ -2053,42 +2076,42 @@ function getLogEntryTitle(entry) {
     if (['image', 'video', 'media'].includes(entry.kind)) {
         const itemCount = Array.isArray(entry.items) ? entry.items.length : 0;
         return itemCount > 1
-            ? '点缩略图打开单个原文件，点卡片空白查看全部'
-            : '点击打开原文件';
+            ? t('点缩略图打开单个原文件，点卡片空白查看全部')
+            : t('点击打开原文件');
     }
     if (entry.kind === 'file') {
-        return '点击打开文件';
+        return t('点击打开文件');
     }
-    return '点击复制';
+    return t('点击复制');
 }
 
 function getLogEntryHint(entry) {
     if (entry.direction === 'desktop_to_mobile') {
-        return entry.save_target === 'gallery' ? '已保存到手机相册' : '已保存到手机下载';
+        return entry.save_target === 'gallery' ? t('已保存到手机相册') : t('已保存到手机下载');
     }
     if (entry.kind === 'image') {
-        return '点击打开原图';
+        return t('点击打开原图');
     }
     if (entry.kind === 'video' || entry.kind === 'media') {
-        return '点击打开原始媒体';
+        return t('点击打开原始媒体');
     }
     if (entry.kind === 'file') {
-        return '点击打开文件';
+        return t('点击打开文件');
     }
     return '';
 }
 
 function getLogEntryStatusLabel(entry) {
     if (entry.direction === 'desktop_to_mobile') {
-        if (entry.status === 'success') return '已保存';
-        if (entry.status === 'partial') return '部分成功';
-        if (entry.status === 'failed') return '失败';
-        return '发送中';
+        if (entry.status === 'success') return t('已保存');
+        if (entry.status === 'partial') return t('部分成功');
+        if (entry.status === 'failed') return t('失败');
+        return t('发送中');
     }
-    if (entry.status === 'success') return '已送达';
-    if (entry.status === 'partial') return '部分成功';
-    if (entry.status === 'failed') return '失败';
-    return '处理中';
+    if (entry.status === 'success') return t('已送达');
+    if (entry.status === 'partial') return t('部分成功');
+    if (entry.status === 'failed') return t('失败');
+    return t('处理中');
 }
 
 function renderLogMediaContent(entry, items) {
@@ -2113,7 +2136,7 @@ function renderLogMediaContent(entry, items) {
             }
             return `
                 <div class="log-media-cell log-media-cell-placeholder" data-media-index="${index}">
-                    <span class="log-media-placeholder">${item.kind === 'video' ? '视频' : item.kind === 'image' ? '图片' : '文件'}</span>
+                    <span class="log-media-placeholder">${item.kind === 'video' ? t('视频') : item.kind === 'image' ? t('图片') : t('文件')}</span>
                     ${countBadge}
                 </div>
             `;
@@ -2123,7 +2146,7 @@ function renderLogMediaContent(entry, items) {
             <div class="log-media-stack">
                 <div class="log-media-grid">${cells}</div>
                 <div class="log-image-meta">
-                    <div class="log-text">${highlightLogText(entry.text, '媒体')}</div>
+                    <div class="log-text">${highlightLogText(entry.text, t('媒体'))}</div>
                     <div class="log-image-hint">${escapeHtml(getLogEntryHint(entry))}</div>
                 </div>
             </div>
@@ -2134,17 +2157,17 @@ function renderLogMediaContent(entry, items) {
     const thumbContent = firstItem?.thumbnail_data_url
         ? `
             <div class="log-thumb-wrap">
-                <img class="log-image-thumb" src="${firstItem.thumbnail_data_url}" alt="${escapeHtml(firstItem.file_name || entry.text || '媒体')}">
+                <img class="log-image-thumb" src="${firstItem.thumbnail_data_url}" alt="${escapeHtml(firstItem.file_name || entry.text || t('媒体'))}">
                 ${firstItem.kind === 'video' ? '<span class="log-media-play log-media-play-single">▶</span>' : ''}
             </div>
         `
-        : `<div class="log-file-badge">${firstItem?.kind === 'video' ? '视频' : '图片'}</div>`;
+        : `<div class="log-file-badge">${firstItem?.kind === 'video' ? t('视频') : t('图片')}</div>`;
 
     return `
         <div class="log-image-row">
             ${thumbContent}
             <div class="log-image-meta">
-                <div class="log-text">${highlightLogText(entry.text, '媒体')}</div>
+                <div class="log-text">${highlightLogText(entry.text, t('媒体'))}</div>
                 <div class="log-image-hint">${escapeHtml(getLogEntryHint(entry))}</div>
             </div>
         </div>
@@ -2190,7 +2213,7 @@ function showHistoryMediaPreview(entry, items, { initialIndex = 0 } = {}) {
     const normalizedItems = (Array.isArray(items) ? items : [])
         .map((item) => normalizeLogItem(item));
     if (!normalizedItems.length) {
-        showToast('没有可预览的媒体内容');
+        showToast(t('没有可预览的媒体内容'));
         return;
     }
 
@@ -2200,8 +2223,8 @@ function showHistoryMediaPreview(entry, items, { initialIndex = 0 } = {}) {
         orderedItems.unshift(selected);
     }
 
-    title.textContent = entry.text || '媒体预览';
-    subtitle.textContent = getLogEntryHint(entry) || '查看这次传输里的媒体内容。';
+    title.textContent = entry.text || t('媒体预览');
+    subtitle.textContent = getLogEntryHint(entry) || t('查看这次传输里的媒体内容。');
     body.innerHTML = `
         <div class="history-media-preview-grid">
             ${orderedItems.map((item) => renderHistoryMediaPreviewItem(item)).join('')}
@@ -2239,10 +2262,10 @@ function closeHistoryMediaPreview() {
 }
 
 function renderHistoryMediaPreviewItem(item) {
-    const displayName = truncateFilenamePreserveExtension(item.file_name || '媒体');
+    const displayName = truncateFilenamePreserveExtension(item.file_name || t('媒体'));
     const thumb = item.thumbnail_data_url
-        ? `<img class="history-media-preview-thumb" src="${item.thumbnail_data_url}" alt="${escapeHtml(item.file_name || '媒体')}">`
-        : `<div class="history-media-preview-thumb-placeholder">${item.kind === 'video' ? '视频' : item.kind === 'image' ? '图片' : '文件'}</div>`;
+        ? `<img class="history-media-preview-thumb" src="${item.thumbnail_data_url}" alt="${escapeHtml(item.file_name || t('媒体'))}">`
+        : `<div class="history-media-preview-thumb-placeholder">${item.kind === 'video' ? t('视频') : item.kind === 'image' ? t('图片') : t('文件')}</div>`;
     const playBadge = item.kind === 'video'
         ? '<span class="log-media-play log-media-play-single">▶</span>'
         : '';
@@ -2261,14 +2284,14 @@ function renderHistoryMediaPreviewItem(item) {
                 ${playBadge}
             </div>
             <div class="history-media-preview-meta">
-                <div class="history-media-preview-name" title="${escapeHtml(item.file_name || '媒体')}">${escapeHtml(displayName)}</div>
+                <div class="history-media-preview-name" title="${escapeHtml(item.file_name || t('媒体'))}">${escapeHtml(displayName)}</div>
             </div>
         </div>
     `;
 }
 
 function truncateFilenamePreserveExtension(filename, maxBaseLength = 18, maxTotalLength = 32) {
-    const value = String(filename || '媒体').trim() || '媒体';
+    const value = String(filename || t('媒体')).trim() || t('媒体');
     if (value.length <= maxTotalLength) {
         return value;
     }
@@ -2360,7 +2383,7 @@ function getLogEntryDeviceName(entry) {
     if (entry.client_ip && entry.client_ip !== 'ws-client') {
         return entry.client_ip;
     }
-    return '未标记设备';
+    return t('未标记设备');
 }
 
 function getLogEntryDeviceDetail(entry) {
@@ -2389,7 +2412,7 @@ function getLogFilterDeviceLabel(deviceId, entries = []) {
 function formatLogTime(value) {
     const timestamp = new Date(value || '');
     if (Number.isNaN(timestamp.getTime())) {
-        return '未知时间';
+        return t('未知时间');
     }
 
     const tz = getDisplayTimeZone();
@@ -2400,7 +2423,7 @@ function formatLogTime(value) {
         timeZone: tz,
     });
     if (formatDateKey(timestamp) === formatDateKey(new Date())) {
-        return `今天 ${time}`;
+        return t('今天 {time}', { time });
     }
     const date = timestamp.toLocaleDateString('zh-CN', {
         month: '2-digit',
@@ -2413,7 +2436,7 @@ function formatLogTime(value) {
 function exportLog() {
     const log = getLog();
     if (log.length === 0) {
-        alert('没有记录可导出');
+        alert(t('没有记录可导出'));
         return;
     }
     const data = JSON.stringify(log, null, 2);
@@ -2529,7 +2552,7 @@ function formatShortDateLabel(value) {
 function formatHeatmapDateLabel(value) {
     const [year, month, day] = String(value).split('-').map(Number);
     if (!year || !month || !day) return value;
-    return `${year}年${month}月${day}日`;
+    return t('{year}年{month}月{day}日', { year, month, day });
 }
 
 function formatHeatmapHourLabel(hour) {

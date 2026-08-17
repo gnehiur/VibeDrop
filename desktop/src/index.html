@@ -18,19 +18,19 @@
                 <div class="permission-icon">
                     <img class="permission-icon-image" src="icon.png" alt="" width="40" height="40">
                 </div>
-                <p class="permission-kicker">辅助功能</p>
-                <h2>允许 VibeDrop 代表你输入文字</h2>
-                <p class="permission-desc">
+                <p class="permission-kicker" data-i18n>辅助功能</p>
+                <h2 data-i18n>允许 VibeDrop 代表你输入文字</h2>
+                <p class="permission-desc" data-i18n>
                     VibeDrop 需要「辅助功能」权限来模拟键盘输入，
                     这样手机发来的文字才能直接出现在当前光标位置。
                 </p>
                 <div class="permission-steps">
-                    <div class="step">打开系统设置中的辅助功能</div>
-                    <div class="step">在列表中找到 <strong>VibeDrop</strong></div>
-                    <div class="step">开启权限后回到这里重新检查</div>
+                    <div class="step" data-i18n>打开系统设置中的辅助功能</div>
+                    <div class="step"><span data-i18n>在列表中找到</span> <strong>VibeDrop</strong></div>
+                    <div class="step" data-i18n>开启权限后回到这里重新检查</div>
                 </div>
-                <button id="btn-open-settings" class="btn-primary">打开辅助功能设置</button>
-                <button id="btn-check-again" class="btn-secondary">重新检查权限</button>
+                <button id="btn-open-settings" class="btn-primary" data-i18n>打开辅助功能设置</button>
+                <button id="btn-check-again" class="btn-secondary" data-i18n>重新检查权限</button>
             </div>
         </section>
 
@@ -44,21 +44,21 @@
                     </div>
                 </div>
                 <div class="header-right">
-                    <select id="display-timezone-select" class="timezone-select" title="消息时间显示时区">
-                        <option value="system">本机时区</option>
-                        <option value="Asia/Shanghai">北京时间</option>
-                        <option value="America/Los_Angeles">美西时间</option>
+                    <select id="display-timezone-select" class="timezone-select" title="消息时间显示时区" data-i18n-title>
+                        <option value="system" data-i18n>本机时区</option>
+                        <option value="Asia/Shanghai" data-i18n>北京时间</option>
+                        <option value="America/Los_Angeles" data-i18n>美西时间</option>
                     </select>
                     <div class="status-badge" id="status-badge">
                         <span class="pulse"></span>
-                        服务在线
+                        <span data-i18n>服务在线</span>
                     </div>
                 </div>
             </header>
             <div class="desktop-shell">
                 <div class="desktop-tabbar" role="tablist" aria-label="桌面视图切换">
-                    <button type="button" class="desktop-tab is-active" id="desktop-tab-overview" data-tab="overview" role="tab" aria-selected="true">概览</button>
-                    <button type="button" class="desktop-tab" id="desktop-tab-history" data-tab="history" role="tab" aria-selected="false">历史</button>
+                    <button type="button" class="desktop-tab is-active" id="desktop-tab-overview" data-tab="overview" role="tab" aria-selected="true" data-i18n>概览</button>
+                    <button type="button" class="desktop-tab" id="desktop-tab-history" data-tab="history" role="tab" aria-selected="false" data-i18n>历史</button>
                 </div>
 
                 <div class="desktop-scroll" id="desktop-scroll">
@@ -67,38 +67,38 @@
                             <div class="overview-left-column">
                                 <section class="info-card host-card">
                                     <div class="info-row">
-                                        <span class="info-label">主机名</span>
-                                        <span class="info-value" id="hostname">加载中...</span>
+                                        <span class="info-label" data-i18n>主机名</span>
+                                        <span class="info-value" id="hostname" data-i18n>加载中...</span>
                                     </div>
-                                    <p class="host-card-caption">推荐在手机端使用“附近电脑 + 验证码配对”。手动连接参数默认已隐藏。</p>
+                                    <p class="host-card-caption" data-i18n>推荐在手机端使用“附近电脑 + 验证码配对”。手动连接参数默认已隐藏。</p>
                                 </section>
 
                                 <details class="info-card advanced-connect-card">
                                     <summary class="advanced-connect-summary">
                                         <div class="advanced-connect-copy">
-                                            <h3>高级连接信息</h3>
-                                            <p>默认不需要。只有自动发现失败或排障时，才需要手动查看 IP、端口和 PIN。</p>
+                                            <h3 data-i18n>高级连接信息</h3>
+                                            <p data-i18n>默认不需要。只有自动发现失败或排障时，才需要手动查看 IP、端口和 PIN。</p>
                                         </div>
-                                        <span class="advanced-connect-toggle">手动连接</span>
+                                        <span class="advanced-connect-toggle" data-i18n>手动连接</span>
                                     </summary>
                                     <div class="advanced-connect-body">
                                         <div class="info-row">
-                                            <span class="info-label">IP 地址</span>
-                                            <span class="info-value copyable" id="ip-address" title="点击复制">加载中...</span>
+                                            <span class="info-label" data-i18n>IP 地址</span>
+                                            <span class="info-value copyable" id="ip-address" title="点击复制" data-i18n-title data-i18n>加载中...</span>
                                         </div>
                                         <div class="info-row">
-                                            <span class="info-label">端口</span>
-                                            <span class="info-value copyable" id="port" title="点击复制">加载中...</span>
+                                            <span class="info-label" data-i18n>端口</span>
+                                            <span class="info-value copyable" id="port" title="点击复制" data-i18n-title data-i18n>加载中...</span>
                                         </div>
                                         <div class="info-row">
                                             <span class="info-label">PIN</span>
-                                            <span class="info-value mono copyable" id="pin" title="点击复制">加载中...</span>
+                                            <span class="info-value mono copyable" id="pin" title="点击复制" data-i18n-title data-i18n>加载中...</span>
                                         </div>
                                     </div>
                                 </details>
 
                                 <section class="info-card tip-card">
-                                    <p>手机端默认通过“附近电脑”发起配对，确认同一验证码后会自动保存并连接这台 Mac。</p>
+                                    <p data-i18n>手机端默认通过“附近电脑”发起配对，确认同一验证码后会自动保存并连接这台 Mac。</p>
                                 </section>
                             </div>
 
@@ -106,13 +106,13 @@
                                 <section class="connected-devices-card" aria-label="当前已连接设备">
                                     <div class="connected-devices-header">
                                         <div>
-                                            <h2>当前已连接设备</h2>
-                                            <p class="connected-devices-caption">这里展示已认证连接到这台 Mac 的移动端列表，以及它们是否支持接收文件。</p>
+                                            <h2 data-i18n>当前已连接设备</h2>
+                                            <p class="connected-devices-caption" data-i18n>这里展示已认证连接到这台 Mac 的移动端列表，以及它们是否支持接收文件。</p>
                                         </div>
                                         <span id="connected-devices-count" class="connected-devices-count">0</span>
                                     </div>
                                     <div id="connected-device-list" class="connected-device-list"></div>
-                                    <div id="connected-device-empty" class="connected-device-empty">
+                                    <div id="connected-device-empty" class="connected-device-empty" data-i18n>
                                         还没有设备连上来。手机端连接成功后，这里会实时显示。
                                     </div>
                                 </section>
@@ -120,13 +120,13 @@
                                 <section class="pair-requests-card" aria-label="待确认配对请求">
                                     <div class="pair-requests-header">
                                         <div>
-                                            <h2>待确认配对</h2>
-                                            <p class="pair-requests-caption">手机端发起自动配对时，会在这里显示验证码和确认按钮。</p>
+                                            <h2 data-i18n>待确认配对</h2>
+                                            <p class="pair-requests-caption" data-i18n>手机端发起自动配对时，会在这里显示验证码和确认按钮。</p>
                                         </div>
                                         <span id="pair-requests-count" class="connected-devices-count">0</span>
                                     </div>
                                     <div id="pair-request-list" class="pair-request-list"></div>
-                                    <div id="pair-request-empty" class="connected-device-empty">
+                                    <div id="pair-request-empty" class="connected-device-empty" data-i18n>
                                         还没有新的配对请求。手机端扫描到这台 Mac 后发起配对，这里会实时出现。
                                     </div>
                                 </section>
@@ -136,16 +136,16 @@
                         <section class="drop-send-card" aria-label="发送到手机">
                             <div class="drop-send-header">
                                 <div>
-                                    <h2>发送到手机</h2>
-                                    <p id="drop-send-caption" class="drop-send-caption">把 Finder 里的文件或文件夹拖进这个窗口，图片/视频会进相册，其它内容进下载目录。</p>
+                                    <h2 data-i18n>发送到手机</h2>
+                                    <p id="drop-send-caption" class="drop-send-caption" data-i18n>把 Finder 里的文件或文件夹拖进这个窗口，图片/视频会进相册，其它内容进下载目录。</p>
                                 </div>
                             </div>
                             <div id="drop-client-row" class="drop-client-row"></div>
-                            <p id="drop-client-empty" class="drop-client-empty hidden">当前没有已连接的手机 App，先在手机端连上这台 Mac。</p>
+                            <p id="drop-client-empty" class="drop-client-empty hidden" data-i18n>当前没有已连接的手机 App，先在手机端连上这台 Mac。</p>
                             <div id="drop-zone" class="drop-zone">
                                 <div class="drop-zone-icon" aria-hidden="true">⇪</div>
-                                <div class="drop-zone-title">拖入文件或文件夹</div>
-                                <p class="drop-zone-desc">单个图片/视频直接进手机相册；其它单文件进下载，多文件和文件夹会按规则自动发送或打包。</p>
+                                <div class="drop-zone-title" data-i18n>拖入文件或文件夹</div>
+                                <p class="drop-zone-desc" data-i18n>单个图片/视频直接进手机相册；其它单文件进下载，多文件和文件夹会按规则自动发送或打包。</p>
                             </div>
                             <div id="drop-transfer-list" class="drop-transfer-list hidden"></div>
                         </section>
@@ -155,93 +155,93 @@
                     <section class="desktop-page hidden" id="desktop-page-history" data-page="history">
                         <div class="history-panel-header">
                             <div>
-                                <h2>传输历史</h2>
-                                <p class="history-panel-caption">桌面端收到的内容，以及发送到手机的图片、视频和文件，都会收进这里。热力图、快速时间筛选和精确筛选都集中放在历史页顶部。</p>
+                                <h2 data-i18n>传输历史</h2>
+                                <p class="history-panel-caption" data-i18n>桌面端收到的内容，以及发送到手机的图片、视频和文件，都会收进这里。热力图、快速时间筛选和精确筛选都集中放在历史页顶部。</p>
                             </div>
-                            <button id="btn-export-log" class="btn-small" title="导出备份">导出</button>
+                            <button id="btn-export-log" class="btn-small" title="导出备份" data-i18n-title data-i18n>导出</button>
                         </div>
 
                         <div class="desktop-history-search-bar">
                             <label class="desktop-history-search-field" for="desktop-history-search-input">
-                                <span class="desktop-history-search-prefix">搜索</span>
-                                <input id="desktop-history-search-input" type="search" placeholder="搜索内容、设备或文件名" autocomplete="off" spellcheck="false">
+                                <span class="desktop-history-search-prefix" data-i18n>搜索</span>
+                                <input id="desktop-history-search-input" type="search" placeholder="搜索内容、设备或文件名" data-i18n-placeholder autocomplete="off" spellcheck="false">
                             </label>
-                            <button id="desktop-history-search-clear-btn" class="btn-small hidden" type="button">清空</button>
+                            <button id="desktop-history-search-clear-btn" class="btn-small hidden" type="button" data-i18n>清空</button>
                         </div>
                         <div class="desktop-history-filter-row" id="desktop-history-device-filter"></div>
                         <div class="desktop-history-filter-row" id="desktop-history-kind-filter">
-                            <button type="button" class="desktop-history-filter-btn is-active" data-kind-filter="all">全部类型</button>
-                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="text">文字</button>
-                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="image">图片</button>
-                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="video">视频</button>
-                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="file">文件</button>
+                            <button type="button" class="desktop-history-filter-btn is-active" data-kind-filter="all" data-i18n>全部类型</button>
+                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="text" data-i18n>文字</button>
+                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="image" data-i18n>图片</button>
+                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="video" data-i18n>视频</button>
+                            <button type="button" class="desktop-history-filter-btn" data-kind-filter="file" data-i18n>文件</button>
                         </div>
                         <div class="desktop-history-filter-row" id="desktop-history-availability-filter">
-                            <button type="button" class="desktop-history-filter-btn is-active" data-availability-filter="available">有原件</button>
-                            <button type="button" class="desktop-history-filter-btn" data-availability-filter="all">全部(含已丢失)</button>
+                            <button type="button" class="desktop-history-filter-btn is-active" data-availability-filter="available" data-i18n>有原件</button>
+                            <button type="button" class="desktop-history-filter-btn" data-availability-filter="all" data-i18n>全部(含已丢失)</button>
                         </div>
                         <div class="desktop-history-filter-row" id="desktop-history-time-filter">
-                            <button type="button" class="desktop-history-filter-btn" data-time-filter="all">全部时间</button>
-                            <button type="button" class="desktop-history-filter-btn" data-time-filter="today">今天</button>
-                            <button type="button" class="desktop-history-filter-btn" data-time-filter="7d">近7天</button>
-                            <button type="button" class="desktop-history-filter-btn" data-time-filter="30d">近30天</button>
-                            <button type="button" class="desktop-history-filter-btn" data-time-filter="custom">自定义</button>
+                            <button type="button" class="desktop-history-filter-btn" data-time-filter="all" data-i18n>全部时间</button>
+                            <button type="button" class="desktop-history-filter-btn" data-time-filter="today" data-i18n>今天</button>
+                            <button type="button" class="desktop-history-filter-btn" data-time-filter="7d" data-i18n>近7天</button>
+                            <button type="button" class="desktop-history-filter-btn" data-time-filter="30d" data-i18n>近30天</button>
+                            <button type="button" class="desktop-history-filter-btn" data-time-filter="custom" data-i18n>自定义</button>
                         </div>
 
                         <section id="desktop-history-advanced-panel" class="desktop-history-advanced-panel hidden" aria-label="精确筛选">
                             <div class="desktop-history-advanced-grid">
                                 <label class="desktop-history-field">
-                                    <span>开始日期</span>
+                                    <span data-i18n>开始日期</span>
                                     <input id="desktop-history-start-date" type="date">
                                 </label>
                                 <label class="desktop-history-field">
-                                    <span>结束日期</span>
+                                    <span data-i18n>结束日期</span>
                                     <input id="desktop-history-end-date" type="date">
                                 </label>
                                 <label class="desktop-history-field">
-                                    <span>时间范围</span>
+                                    <span data-i18n>时间范围</span>
                                     <select id="desktop-history-time-range">
-                                        <option value="all">全天</option>
-                                        <option value="morning">上午 06:00 - 11:59</option>
-                                        <option value="afternoon">下午 12:00 - 17:59</option>
-                                        <option value="evening">晚上 18:00 - 23:59</option>
-                                        <option value="night">凌晨 00:00 - 05:59</option>
-                                        <option value="custom">自定义时段</option>
+                                        <option value="all" data-i18n>全天</option>
+                                        <option value="morning" data-i18n>上午 06:00 - 11:59</option>
+                                        <option value="afternoon" data-i18n>下午 12:00 - 17:59</option>
+                                        <option value="evening" data-i18n>晚上 18:00 - 23:59</option>
+                                        <option value="night" data-i18n>凌晨 00:00 - 05:59</option>
+                                        <option value="custom" data-i18n>自定义时段</option>
                                     </select>
                                 </label>
                                 <label class="desktop-history-field">
-                                    <span>开始时间</span>
+                                    <span data-i18n>开始时间</span>
                                     <input id="desktop-history-start-time" type="time" disabled>
                                 </label>
                                 <label class="desktop-history-field">
-                                    <span>结束时间</span>
+                                    <span data-i18n>结束时间</span>
                                     <input id="desktop-history-end-time" type="time" disabled>
                                 </label>
                                 <label class="desktop-history-field">
-                                    <span>记录类型</span>
+                                    <span data-i18n>记录类型</span>
                                     <select id="desktop-history-kind-filter">
-                                        <option value="all">全部类型</option>
-                                        <option value="text">文字</option>
-                                        <option value="image">图片</option>
-                                        <option value="video">视频</option>
-                                        <option value="media">媒体</option>
-                                        <option value="file">文件</option>
+                                        <option value="all" data-i18n>全部类型</option>
+                                        <option value="text" data-i18n>文字</option>
+                                        <option value="image" data-i18n>图片</option>
+                                        <option value="video" data-i18n>视频</option>
+                                        <option value="media" data-i18n>媒体</option>
+                                        <option value="file" data-i18n>文件</option>
                                     </select>
                                 </label>
                             </div>
                             <div class="desktop-history-advanced-actions">
-                                <button id="desktop-history-advanced-reset" class="btn-small" type="button">重置</button>
-                                <button id="desktop-history-advanced-apply" class="btn-small" type="button">应用筛选</button>
+                                <button id="desktop-history-advanced-reset" class="btn-small" type="button" data-i18n>重置</button>
+                                <button id="desktop-history-advanced-apply" class="btn-small" type="button" data-i18n>应用筛选</button>
                             </div>
                         </section>
 
                         <section class="heatmap-card" aria-label="接收热力图">
                             <div class="heatmap-header">
                                 <div>
-                                    <h3>接收热力图</h3>
-                                    <p id="log-heatmap-caption" class="heatmap-caption">当前窗口内每个方块代表某天某小时的传输记录数量。左右滑动查看更多日期，点方块筛选该小时。</p>
+                                    <h3 data-i18n>接收热力图</h3>
+                                    <p id="log-heatmap-caption" class="heatmap-caption" data-i18n>当前窗口内每个方块代表某天某小时的传输记录数量。左右滑动查看更多日期，点方块筛选该小时。</p>
                                 </div>
-                                <button id="btn-log-heatmap-reset" class="btn-small hidden" title="回到最近">回到最近</button>
+                                <button id="btn-log-heatmap-reset" class="btn-small hidden" title="回到最近" data-i18n-title data-i18n>回到最近</button>
                             </div>
                             <div id="log-heatmap-stats" class="heatmap-stats"></div>
                             <div class="heatmap-board">
@@ -259,23 +259,23 @@
                                 </div>
                             </div>
                             <div class="heatmap-legend" aria-hidden="true">
-                                <span>少</span>
+                                <span data-i18n>少</span>
                                 <div class="heatmap-legend-scale"></div>
-                                <span>多</span>
+                                <span data-i18n>多</span>
                             </div>
                         </section>
 
                         <section id="history-filter-banner" class="history-filter-banner hidden">
                             <div class="history-filter-banner-copy">
-                                <span class="history-filter-kicker">当前筛选</span>
+                                <span class="history-filter-kicker" data-i18n>当前筛选</span>
                                 <p id="history-filter-text" class="history-filter-text"></p>
                             </div>
-                            <button id="btn-clear-history-filter" class="btn-small" title="清除历史筛选">清除</button>
+                            <button id="btn-clear-history-filter" class="btn-small" title="清除历史筛选" data-i18n-title data-i18n>清除</button>
                         </section>
 
                         <div class="history-list-card">
                             <div class="log-list" id="log-list">
-                                <p class="empty">等待接收...</p>
+                                <p class="empty" data-i18n>等待接收...</p>
                             </div>
                         </div>
                     </section>
@@ -286,8 +286,8 @@
 
     <div id="window-drop-overlay" class="window-drop-overlay hidden" aria-hidden="true">
         <div class="window-drop-overlay-card">
-            <div class="window-drop-overlay-title">松手发送到手机</div>
-            <p id="window-drop-overlay-text" class="window-drop-overlay-text">纯图片/视频会逐个保存到相册，其它内容会进下载或打包 ZIP。</p>
+            <div class="window-drop-overlay-title" data-i18n>松手发送到手机</div>
+            <p id="window-drop-overlay-text" class="window-drop-overlay-text" data-i18n>纯图片/视频会逐个保存到相册，其它内容会进下载或打包 ZIP。</p>
         </div>
     </div>
 
@@ -296,14 +296,14 @@
         <div class="history-media-preview-card" role="dialog" aria-modal="true" aria-labelledby="history-media-preview-title">
             <div class="history-media-preview-header">
                 <div class="history-media-preview-copy">
-                    <h3 id="history-media-preview-title">媒体预览</h3>
-                    <p id="history-media-preview-subtitle" class="history-media-preview-subtitle">查看这次传输里的媒体内容。</p>
+                    <h3 id="history-media-preview-title" data-i18n>媒体预览</h3>
+                    <p id="history-media-preview-subtitle" class="history-media-preview-subtitle" data-i18n>查看这次传输里的媒体内容。</p>
                 </div>
-                <button id="history-media-preview-close" type="button" class="btn-small">关闭</button>
+                <button id="history-media-preview-close" type="button" class="btn-small" data-i18n>关闭</button>
             </div>
             <div id="history-media-preview-body" class="history-media-preview-body"></div>
             <div class="history-media-preview-actions">
-                <button id="history-media-preview-open-all" type="button" class="btn-small hidden">打开全部原文件</button>
+                <button id="history-media-preview-open-all" type="button" class="btn-small hidden" data-i18n>打开全部原文件</button>
             </div>
         </div>
     </div>
