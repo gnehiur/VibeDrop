@@ -8,11 +8,24 @@
     let dict = {};                                   // 当前语言词典:中文原文 → 译文
     let currentLang = 'zh-CN';
 
+    // 支持的语言与系统语言映射;新增语言 = 此表加一行 + locales/<lang>.json 一个文件
+    const LANG_MAP = [
+        { prefix: ['zh-tw', 'zh-hant', 'zh-hk', 'zh-mo'], lang: 'zh-TW' },
+        { prefix: ['zh'], lang: 'zh-CN' },
+        { prefix: ['ja'], lang: 'ja' },
+        { prefix: ['ko'], lang: 'ko' },
+        { prefix: ['es'], lang: 'es' },
+        { prefix: ['fr'], lang: 'fr' },
+        { prefix: ['de'], lang: 'de' },
+    ];
+
     function detectLang() {
         const saved = localStorage.getItem(LANG_KEY);
         if (saved && saved !== 'system') return saved;
         const nav = String(navigator.language || 'zh').toLowerCase();
-        if (nav.startsWith('zh')) return 'zh-CN';
+        for (const entry of LANG_MAP) {
+            if (entry.prefix.some((p) => nav.startsWith(p))) return entry.lang;
+        }
         return 'en';
     }
 
