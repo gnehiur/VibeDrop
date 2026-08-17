@@ -71,6 +71,126 @@ def resolve_target_label(e) -> str:
     return _FP_LABELS[fp]
 
 
+TREND_JS = """
+<script>
+(function () {
+  var D = window.TREND_DATA || { days: {}, todayHours: {}, latestDay: "" };
+  var state = { range: "30d", metric: 0 };
+
+  function dayKeysSorted() { return Object.keys(D.days).sort(); }
+  function shiftDay(key, delta) {
+    var p = key.split("-").map(Number);
+    var dt = new Date(Date.UTC(p[0], p[1] - 1, p[2] + delta));
+    return dt.toISOString().slice(0, 10);
+  }
+  function sumRangeDays(fromKey) {
+    var out = [];
+    var k = fromKey;
+    while (k <= D.latestDay) { out.push(k); k = shiftDay(k, 1); }
+    return out;
+  }
+  function buckets() {
+    var m = state.metric;
+    if (state.range === "today") {
+      var hs = D.todayHours, arr = [];
+      for (var h = 0; h < 24; h++) {
+        var v = hs[h] || hs[String(h)] || [0, 0];
+        arr.push({ label: h + "时", value: v[m], tick: h % 6 === 0 ? String(h) : "" });
+      }
+      return { bars: arr, caption: D.latestDay + " 每小时" };
+    }
+    if (state.range === "7d" || state.range === "30d") {
+      var n = state.range === "7d" ? 7 : 30;
+      var days = sumRangeDays(shiftDay(D.latestDay, -(n - 1)));
+      var step = state.range === "7d" ? 1 : 5;
+      return { bars: days.map(function (k, i) {
+        var v = D.days[k] || [0, 0];
+        return { label: k.slice(5), value: v[m], tick: i % step === 0 ? k.slice(5) : "" };
+      }), caption: "近 " + n + " 天,每天" };
+    }
+    if (state.range === "3m") {
+      var days3 = sumRangeDays(shiftDay(D.latestDay, -89));
+      var weeks = {};
+      days3.forEach(function (k) {
+        var d = new Date(k + "T00:00:00Z");
+        var monday = shiftDay(k, -((d.getUTCDay() + 6) % 7));
+        weeks[monday] = (weeks[monday] || 0) + ((D.days[k] || [0, 0])[m]);
+      });
+      var wk = Object.keys(weeks).sort();
+      return { bars: wk.map(function (k, i) {
+        return { label: k.slice(5) + "周", value: weeks[k], tick: i % 2 === 0 ? k.slice(5) : "" };
+      }), caption: "近 3 个月,每周" };
+    }
+    var months = {};
+    dayKeysSorted().forEach(function (k) {
+      var mo = k.slice(0, 7);
+      months[mo] = (months[mo] || 0) + ((D.days[k] || [0, 0])[m]);
+    });
+    var mk = Object.keys(months).sort();
+    return { bars: mk.map(function (k) {
+      return { label: k, value: months[k], tick: k.slice(2) };
+    }), caption: "全部时间,每月" };
+  }
+
+  function fmt(n) { return n >= 10000 ? (n / 10000).toFixed(1) + "万" : String(n); }
+
+  function render() {
+    var chart = document.getElementById("trend-chart");
+    var xaxis = document.getElementById("trend-xaxis");
+    var cap = document.getElementById("trend-caption");
+    if (!chart) return;
+    var b = buckets();
+    var unit = state.metric === 0 ? "条" : "字";
+    var max = 1, total = 0;
+    b.bars.forEach(function (x) { if (x.value > max) max = x.value; total += x.value; });
+    cap.textContent = b.caption + " · 共 " + fmt(total) + " " + unit;
+    chart.innerHTML = "";
+    xaxis.innerHTML = "";
+    b.bars.forEach(function (x) {
+      var col = document.createElement("div");
+      col.className = "trend-bar" + (x.value === max && x.value > 0 ? " max" : "");
+      col.style.height = Math.max(2, Math.round(x.value / max * 100)) + "%";
+      col.title = x.label + " · " + fmt(x.value) + " " + unit;
+      chart.appendChild(col);
+      var t = document.createElement("span");
+      t.textContent = x.tick;
+      xaxis.appendChild(t);
+    });
+  }
+
+  function wire(groupId, key) {
+    var el = document.getElementById(groupId);
+    if (!el) return;
+    el.addEventListener("click", function (e) {
+      var btn = e.target.closest("button");
+      if (!btn) return;
+      el.querySelectorAll("button").forEach(function (x) { x.classList.remove("on"); });
+      btn.classList.add("on");
+      state[key] = key === "metric" ? Number(btn.dataset.metric) : btn.dataset.range;
+      render();
+    });
+  }
+  wire("trend-ranges", "range");
+  wire("trend-metrics", "metric");
+  render();
+})();
+</script>
+<style>
+.trend-wrap { background: #fff; border-radius: 10px; padding: 16px; }
+.trend-controls { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.trend-group button { border: 1px solid #c9d4e5; background: #fff; color: #4a5468; font-size: 12px;
+  padding: 4px 10px; border-radius: 999px; cursor: pointer; margin-right: 4px; }
+.trend-group button.on { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+.trend-caption { font-size: 12px; color: #8a94a6; margin: 10px 0 6px; }
+.trend-chart { display: flex; align-items: flex-end; gap: 2px; height: 150px; }
+.trend-bar { flex: 1; background: #9db9f4; border-radius: 3px 3px 0 0; min-height: 2px; }
+.trend-bar.max { background: #2f6fed; }
+.trend-xaxis { display: flex; gap: 2px; margin-top: 4px; }
+.trend-xaxis span { flex: 1; font-size: 10px; color: #8a94a6; text-align: center; overflow: visible; white-space: nowrap; }
+</style>
+"""
+
+
 def main():
     entries = fetch()
     word_freq = collections.Counter()
@@ -82,6 +202,8 @@ def main():
     for e in entries:
         resolve_target_label(e)  # 预扫描:先让所有机器指纹学到短名,计数那遍才能全归并
     targets = collections.Counter()
+    day_stats = {}
+    hour_stats = {}
     total_chars = 0
     longest = max(entries, key=lambda e: len(e["text"]))
     seen_texts = set()
@@ -104,6 +226,18 @@ def main():
             hours[datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).hour] += 1
         except Exception:
             pass
+        dkey = ts[:10]
+        if len(dkey) == 10:
+            day_stats.setdefault(dkey, [0, 0])
+            day_stats[dkey][0] += 1
+            day_stats[dkey][1] += len(text)
+            try:
+                h = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).hour
+                hour_stats.setdefault(dkey, {}).setdefault(h, [0, 0])
+                hour_stats[dkey][h][0] += 1
+                hour_stats[dkey][h][1] += len(text)
+            except Exception:
+                pass
         targets[resolve_target_label(e)] += 1
 
         toks = tokens_of(text)
@@ -170,6 +304,35 @@ def main():
         f"<small>{esc(str(e.get('timestamp', ''))[:19])}</small></p>"
         for i, e in enumerate(top_longest)
     )
+    latest_day = max(day_stats) if day_stats else ""
+    trend_data_json = json.dumps({
+        "days": day_stats,
+        "todayHours": hour_stats.get(latest_day, {}),
+        "latestDay": latest_day,
+    }, ensure_ascii=False)
+    trend_section = (
+        "<h2>发送趋势</h2>"
+        "<div class='trend-wrap'>"
+        "<div class='trend-controls'>"
+        "<span class='trend-group' id='trend-ranges'>"
+        "<button data-range='today'>今天</button>"
+        "<button data-range='7d'>近7天</button>"
+        "<button data-range='30d' class='on'>近30天</button>"
+        "<button data-range='3m'>近3月</button>"
+        "<button data-range='all'>全部</button>"
+        "</span>"
+        "<span class='trend-group' id='trend-metrics'>"
+        "<button data-metric='0' class='on'>条数</button>"
+        "<button data-metric='1'>字数</button>"
+        "</span>"
+        "</div>"
+        "<div class='trend-caption' id='trend-caption'></div>"
+        "<div class='trend-chart' id='trend-chart'></div>"
+        "<div class='trend-xaxis' id='trend-xaxis'></div>"
+        "</div>"
+        "<script>window.TREND_DATA = " + trend_data_json + ";</script>"
+        + TREND_JS
+    )
     target_rows = "".join(f"<tr><td>{esc(t)}</td><td>{c}</td></tr>" for t, c in targets.most_common(8))
 
     out_arg = os.environ.get("SELF_STUDY_OUTPUT", "")
@@ -192,6 +355,7 @@ td,th{{padding:7px 12px;border-bottom:1px solid #eef1f6;text-align:left;font-siz
 <div class="stat"><b>{len(longest['text'])}</b>最长一条字数</div><div class="stat"><b>{max(month_counts, key=month_counts.get)}</b>话最多的月份</div>
 <div class="stat"><b>{total_chars/189106:.2f} 本</b>相当于《三体》第一部(189,106字·微信读书)</div>
 <div class="stat"><b>{total_chars/884061:.2f} 本</b>相当于《三体》全集(884,061字·微信读书)</div></div>
+{trend_section}
 <h2>词云 · 你最常说的 60 个词</h2><div class="cloud">{cloud}</div>
 <h2>发送时段分布(24小时)</h2><div class="hours">{hour_bars}</div>
 <div class="grid"><div><h2>高频实义词 Top 50</h2><table><tr><th>#</th><th>词</th><th>次数</th></tr>{word_rows}</table></div>
