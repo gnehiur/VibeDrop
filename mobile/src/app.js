@@ -4082,7 +4082,31 @@ function createP2pCard() {
     return card;
 }
 
+function renderNearbyPhones() {
+    const list = $('nearby-phones-list');
+    const empty = $('nearby-phones-empty');
+    if (!list || !empty) return;
+    if (!p2pPeers.length) {
+        list.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+    }
+    empty.classList.add('hidden');
+    list.innerHTML = p2pPeers.map((peer) => `
+        <div class="nearby-desktop-item">
+            <div class="nearby-desktop-top">
+                <div>
+                    <div class="nearby-desktop-name">${escapeHtml(peer.name || peer.id)}</div>
+                    <div class="nearby-desktop-meta">${peer.can_receive_files ? t('支持接收文件') : t('仅文字')}</div>
+                </div>
+                <span class="nearby-desktop-badge is-paired">${t('在线')}</span>
+            </div>
+        </div>
+    `).join('');
+}
+
 function syncP2pCard(container) {
+    ensureP2pPolling(); // 必须先于早退:否则"没手机→不轮询→永远没手机"死锁
     let card = document.getElementById('card-p2p');
     const want = isP2pCardEnabled() && p2pPeers.length > 0;
     if (!want) {
@@ -6158,6 +6182,7 @@ function connectDevice(deviceId, ip, port, pin) {
         }
 
         if (data.action === 'peer_phones') {
+            renderNearbyPhones();
             p2pPeers = Array.isArray(data.phones) ? data.phones : [];
             const container = $('send-cards');
             if (container) syncP2pCard(container);
