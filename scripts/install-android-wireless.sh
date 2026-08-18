@@ -1,22 +1,30 @@
 #!/bin/bash
-# 在 Mini 上运行:从 MacBook 取最新 APK,经无线 adb 装到两台一加(免数据线)。
-# 前提:手机开着"无线调试"。配对关系已持久(Mini 名下),只需 connect。
-# 端口每次开关无线调试会轮换:连不上时看手机无线调试页当前端口,作为参数传入。
-#   用法: ./install-android-wireless.sh [Ace5端口] [竞速版端口]
-# 已知怪癖:adb pair 会报 protocol fault,但不影响——信任已存在,直接 connect 即可。
+# 在 Mini 上运行:mDNS 自动发现两台一加的无线 adb 端口,取 MacBook 最新 APK 安装。
+# 前提只有一个:手机开着"无线调试"(重启后该开关会自动关,需手动再开;配对信任永久)。
+# 端口/IP 全自动发现,无需任何参数。怪癖:adb pair 报 protocol fault 无害,connect 直通。
 set -euo pipefail
-ACE5="192.168.3.6:${1:-40511}"
-RACING="192.168.3.46:${2:-40247}"
+declare -A PHONES=( ["3B6F4FE910B8KRLS"]="一加 Ace 5" ["3B15B8017W600000"]="一加 Ace 5 竞速版" )
 APK=/tmp/vibedrop-latest.apk
 echo "[wireless] 取最新 APK..."
 scp -q overlord@overlorddeMacBook-Air-4.local:"~/Documents/安卓发送mac输入文字app/mobile/src-tauri/gen/android/app/build/outputs/apk/universal/release/VibeDrop-signed.apk" "$APK"
-for target in "$ACE5" "$RACING"; do
-  echo "[wireless] $target ..."
-  if adb connect "$target" 2>&1 | grep -q "connected"; then
-    adb -s "$target" install -r "$APK" 2>&1 | tail -1
-    adb -s "$target" shell am start -n com.vibedrop.mobile/.MainActivity >/dev/null 2>&1 || true
-    echo "[wireless] $target ✅"
+echo "[wireless] mDNS 扫描无线调试设备..."
+SERVICES=$(adb mdns services 2>/dev/null | grep "_adb-tls-connect" || true)
+FOUND=0
+for serial in "${!PHONES[@]}"; do
+  name="${PHONES[$serial]}"
+  addr=$(echo "$SERVICES" | grep "$serial" | awk '{print $3}' | head -1)
+  if [ -z "$addr" ]; then
+    echo "[wireless] $name ⚠️ 未发现(无线调试没开?)"
+    continue
+  fi
+  echo "[wireless] $name @ $addr"
+  if adb connect "$addr" 2>&1 | grep -q "connected"; then
+    adb -s "$addr" install -r "$APK" 2>&1 | tail -1
+    adb -s "$addr" shell am start -n com.vibedrop.mobile/.MainActivity >/dev/null 2>&1 || true
+    echo "[wireless] $name ✅"
+    FOUND=$((FOUND+1))
   else
-    echo "[wireless] $target ⚠️ 连不上(手机没开无线调试或端口已轮换,看手机报新端口)"
+    echo "[wireless] $name ⚠️ 连接失败"
   fi
 done
+echo "[wireless] 完成:$FOUND/${#PHONES[@]} 台"
