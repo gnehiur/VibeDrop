@@ -2485,7 +2485,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                                 .clients
                                                 .lock()
                                                 .ok()
-                                                .and_then(|clients| clients.get(&target_id).cloned());
+                                                .and_then(|clients| {
+                                                    clients
+                                                        .values()
+                                                        .filter(|c| {
+                                                            let base = if c.base_id.is_empty() { c.id.clone() } else { c.base_id.clone() };
+                                                            (base == target_id || c.id == target_id) && c.can_receive_files
+                                                        })
+                                                        .cloned()
+                                                        .next()
+                                                });
                                             let app_for_relay = state
                                                 .app_handle
                                                 .lock()
@@ -2952,18 +2961,41 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                 if !authenticated {
                                     continue;
                                 }
+                                // 同一台手机会有多条连接(前端主连接+原生后台剪贴板),按设备本体归并,
+                                // 否则名册出现重影(2026-08-19 用户实测:2台安卓显示成4条)
                                 let phones: Vec<serde_json::Value> = state
                                     .clients
                                     .lock()
                                     .map(|clients| {
-                                        clients
-                                            .values()
-                                            .filter(|c| c.id != current_client_id)
-                                            .map(|c| {
+                                        let requester_base = clients
+                                            .get(&current_client_id)
+                                            .map(|c| if c.base_id.is_empty() { c.id.clone() } else { c.base_id.clone() })
+                                            .unwrap_or_default();
+                                        let mut by_base: std::collections::HashMap<String, (String, String, bool)> =
+                                            std::collections::HashMap::new();
+                                        for c in clients.values() {
+                                            let base = if c.base_id.is_empty() { c.id.clone() } else { c.base_id.clone() };
+                                            if base == requester_base {
+                                                continue;
+                                            }
+                                            let entry = by_base.entry(base.clone()).or_insert((
+                                                base.clone(),
+                                                c.name.clone(),
+                                                false,
+                                            ));
+                                            // 能收文件的那条连接更"正面",名片以它为准
+                                            if c.can_receive_files {
+                                                entry.1 = c.name.clone();
+                                                entry.2 = true;
+                                            }
+                                        }
+                                        by_base
+                                            .into_values()
+                                            .map(|(base, name, can_files)| {
                                                 serde_json::json!({
-                                                    "id": c.id,
-                                                    "name": c.name,
-                                                    "can_receive_files": c.can_receive_files,
+                                                    "id": base,
+                                                    "name": name,
+                                                    "can_receive_files": can_files,
                                                 })
                                             })
                                             .collect()
@@ -2983,35 +3015,49 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                 let target_id = client_msg.relay_to.clone().unwrap_or_default();
                                 let text = client_msg.text.clone().unwrap_or_default();
                                 let transfer_id = client_msg.transfer_id.clone().unwrap_or_default();
-                                let target = state
+                                let targets: Vec<ConnectedClient> = state
                                     .clients
                                     .lock()
-                                    .ok()
-                                    .and_then(|clients| clients.get(&target_id).cloned());
-                                let reply = match target {
-                                    Some(target_client) if !text.is_empty() => {
-                                        let push = serde_json::json!({
-                                            "action": "clipboard",
-                                            "text": text,
-                                        });
+                                    .map(|clients| {
+                                        clients
+                                            .values()
+                                            .filter(|c| {
+                                                let base = if c.base_id.is_empty() { c.id.clone() } else { c.base_id.clone() };
+                                                base == target_id || c.id == target_id
+                                            })
+                                            .cloned()
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let reply = if !targets.is_empty() && !text.is_empty() {
+                                    let push = serde_json::json!({
+                                        "action": "clipboard",
+                                        "text": text,
+                                    });
+                                    let mut delivered = false;
+                                    for target_client in &targets {
                                         if target_client.sender.send(push.to_string()).is_ok() {
-                                            serde_json::json!({
-                                                "action": "relay_ok",
-                                                "transfer_id": transfer_id,
-                                            })
-                                        } else {
-                                            serde_json::json!({
-                                                "action": "relay_error",
-                                                "transfer_id": transfer_id,
-                                                "error": "目标手机连接已失效",
-                                            })
+                                            delivered = true;
                                         }
                                     }
-                                    _ => serde_json::json!({
+                                    if delivered {
+                                        serde_json::json!({
+                                            "action": "relay_ok",
+                                            "transfer_id": transfer_id,
+                                        })
+                                    } else {
+                                        serde_json::json!({
+                                            "action": "relay_error",
+                                            "transfer_id": transfer_id,
+                                            "error": "目标手机连接已失效",
+                                        })
+                                    }
+                                } else {
+                                    serde_json::json!({
                                         "action": "relay_error",
                                         "transfer_id": transfer_id,
                                         "error": "目标手机不在线",
-                                    }),
+                                    })
                                 };
                                 let _ = ws_sender.send(Message::Text(reply.to_string().into())).await;
                             }
