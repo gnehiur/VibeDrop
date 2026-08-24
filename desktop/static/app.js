@@ -65,6 +65,31 @@ probe('appjs-build', 'smartcard-v1-20260811');
     });
 })();
 
+// iOS 固定布局的选择性松绑:焦点在智能卡(顶部)→保持焊死,页面纹丝不动(既有效果);
+// 焦点在其余输入框(互传卡等,位置靠下会被键盘盖住)→临时放行系统键盘上推;
+// 失焦/键盘收起→焊回并归位到静止位。Android 端此命令为空操作,零影响。
+(function iosSelectiveScrollPin() {
+    const setPin = (enabled) => {
+        try {
+            window.__TAURI__?.core?.invoke?.('set_ios_scroll_pin', { enabled: Boolean(enabled) });
+        } catch (_) { /* 非 Tauri 环境忽略 */ }
+    };
+    let repinTimer = null;
+    document.addEventListener('focusin', (event) => {
+        const el = event.target;
+        if (!el || typeof el.matches !== 'function' || !el.matches('textarea, input')) return;
+        if (repinTimer) { clearTimeout(repinTimer); repinTimer = null; }
+        setPin(Boolean(el.closest('#card-smart')));
+    });
+    document.addEventListener('focusout', (event) => {
+        const el = event.target;
+        if (!el || typeof el.matches !== 'function' || !el.matches('textarea, input')) return;
+        if (repinTimer) clearTimeout(repinTimer);
+        // 缓一拍:若焦点只是在输入框之间切换,由紧随其后的 focusin 决定钉与不钉
+        repinTimer = setTimeout(() => { repinTimer = null; setPin(true); }, 120);
+    });
+})();
+
 // ============================================
 // VibeDrop — 前端逻辑（动态多设备版）
 // ============================================
