@@ -3828,6 +3828,12 @@ function smartTargetLabel() {
 function updateSmartCardUI() {
     const chip = $('smart-target-chip');
     if (chip) chip.textContent = smartTargetLabel();
+    // 智能卡的锁门/解锁与传统卡同责:无可用电脑锁死,恢复即解锁
+    // (传统卡由 updateDeviceUI 管,智能卡没有专属连接事件,由每秒心跳管;发送进行中不插手)
+    const card = document.getElementById('card-smart');
+    if (card && !card.querySelector('.send-btn.sending')) {
+        setActionButtonsDisabled('smart', !getSmartReadyDevices().length);
+    }
 }
 
 function cycleSmartTarget() {
@@ -3876,7 +3882,7 @@ async function smartDispatch(kind) {
     localStorage.setItem(SMART_LAST_KEY, targetId);
 
     if (kind === 'enter') {
-        await sendEnter(targetId);
+        await sendEnter(targetId, 'smart');
         return;
     }
 
@@ -3894,9 +3900,9 @@ async function smartDispatch(kind) {
     localStorage.removeItem(SMART_DRAFT_KEY);
 
     if (kind === 'send') {
-        await sendText(targetId, 'sendbtn-smart', text);
+        await sendText(targetId, { uiId: 'smart', text });
     } else if (kind === 'send_enter') {
-        await sendTextAndEnter(targetId, 'sendenterbtn-smart', text);
+        await sendTextAndEnter(targetId, { uiId: 'smart', text });
     }
 }
 
@@ -4035,6 +4041,7 @@ async function p2pSendFiles(files, buttonId) {
             successToast: t('已发送到 {name}', { name: peer.name }),
             relayTo: peer.id,
             readChunkBase64: (offsetBytes, lengthBytes) => readBlobChunkAsBase64(file, offsetBytes, lengthBytes),
+            uiId: 'p2p',
         });
     }
 }
@@ -4051,10 +4058,10 @@ function createP2pCard() {
             </div>
             <div class="input-group">
                 <textarea id="input-p2p" placeholder="${t('发到对方剪贴板...')}" rows="3"></textarea>
-                <button class="send-btn combo-btn" id="p2pbtn-send">${t('发送')}</button>
+                <button class="send-btn combo-btn" id="sendbtn-p2p">${t('发送')}</button>
                 <div class="send-actions media-actions">
-                    <button class="send-btn image-btn" id="p2pbtn-image">${t('传图到相册')}</button>
-                    <button class="send-btn image-btn" id="p2pbtn-file">${t('传文件到下载')}</button>
+                    <button class="send-btn image-btn" id="imagebtn-p2p">${t('传图到相册')}</button>
+                    <button class="send-btn image-btn" id="filebtn-p2p">${t('传文件到下载')}</button>
                 </div>
                 <input type="file" id="p2pimageinput" accept="image/*" class="hidden-file-input" multiple>
                 <input type="file" id="p2pfileinput" class="hidden-file-input" multiple>
@@ -4063,21 +4070,21 @@ function createP2pCard() {
     card.querySelector('#p2p-target').addEventListener('change', (e) => {
         localStorage.setItem(P2P_TARGET_KEY, e.target.value);
     });
-    card.querySelector('#p2pbtn-send').addEventListener('click', p2pSendText);
-    keepKeyboardOnPress(card.querySelector('#p2pbtn-send'));
+    card.querySelector('#sendbtn-p2p').addEventListener('click', p2pSendText);
+    keepKeyboardOnPress(card.querySelector('#sendbtn-p2p'));
     const imageInput = card.querySelector('#p2pimageinput');
     const fileInput = card.querySelector('#p2pfileinput');
-    card.querySelector('#p2pbtn-image').addEventListener('click', () => imageInput.click());
-    card.querySelector('#p2pbtn-file').addEventListener('click', () => fileInput.click());
+    card.querySelector('#imagebtn-p2p').addEventListener('click', () => imageInput.click());
+    card.querySelector('#filebtn-p2p').addEventListener('click', () => fileInput.click());
     imageInput.addEventListener('change', async (e) => {
         const files = Array.from(e.target.files || []);
         e.target.value = '';
-        if (files.length) await p2pSendFiles(files, 'p2pbtn-image');
+        if (files.length) await p2pSendFiles(files, 'imagebtn-p2p');
     });
     fileInput.addEventListener('change', async (e) => {
         const files = Array.from(e.target.files || []);
         e.target.value = '';
-        if (files.length) await p2pSendFiles(files, 'p2pbtn-file');
+        if (files.length) await p2pSendFiles(files, 'filebtn-p2p');
     });
     return card;
 }
@@ -4123,6 +4130,10 @@ function syncP2pCard(container) {
     }
     syncP2pTargetOptions();
     ensureP2pPolling();
+    // 互传卡锁门/解锁与传统卡同责:中继Mac不在线锁死,恢复即解锁(发送进行中不插手)
+    if (!card.querySelector('.send-btn.sending')) {
+        setActionButtonsDisabled('p2p', !getP2pRelayConnId());
+    }
 }
 
 // 发送类按钮拒绝抢焦点:按下时 preventDefault,输入框不失焦→键盘/语音输入不收起,
@@ -4200,7 +4211,7 @@ function createSmartCard() {
                 showToast(t('当前共享内容不是图片，请使用"传到收件箱"'));
                 return;
             }
-            sendPendingSharedImage(targetId);
+            sendPendingSharedImage(targetId, 'smart');
             return;
         }
         smartPendingMediaTarget = targetId; // 锁定按下瞬间的光标目标,选图回来直接用
@@ -4211,9 +4222,9 @@ function createSmartCard() {
         if (!targetId) return;
         if (pendingSharedContents.length) {
             if (pendingSharedContents.length > 1) {
-                sendPendingSharedFilesBatch(targetId);
+                sendPendingSharedFilesBatch(targetId, 'smart');
             } else {
-                sendPendingSharedFile(targetId);
+                sendPendingSharedFile(targetId, 'smart');
             }
             return;
         }
@@ -4226,7 +4237,7 @@ function createSmartCard() {
         const targetId = smartPendingMediaTarget || (file ? resolveSmartMediaTarget() : null);
         smartPendingMediaTarget = null;
         if (targetId && file) {
-            await sendSelectedImage(targetId, file, 'imagebtn-smart');
+            await sendSelectedImage(targetId, file, 'smart');
         }
     });
     smartFileInput.addEventListener('change', async (event) => {
@@ -4236,9 +4247,9 @@ function createSmartCard() {
         smartPendingMediaTarget = null;
         if (!targetId || !files.length) return;
         if (files.length > 1) {
-            await sendSelectedFilesBatch(targetId, files, 'filebtn-smart');
+            await sendSelectedFilesBatch(targetId, files, 'smart');
         } else {
-            await sendSelectedFile(targetId, files[0], 'filebtn-smart');
+            await sendSelectedFile(targetId, files[0], 'smart');
         }
     });
     return card;
@@ -6830,17 +6841,49 @@ function updateDeviceUI(deviceId, status, detail) {
 // 发送文字
 // ============================================
 
-function setActionButtonsDisabled(deviceId, disabled) {
-    const sendBtn = $(`sendbtn-${deviceId}`);
-    const enterBtn = $(`enterbtn-${deviceId}`);
-    const sendEnterBtn = $(`sendenterbtn-${deviceId}`);
-    const imageBtn = $(`imagebtn-${deviceId}`);
-    const fileBtn = $(`filebtn-${deviceId}`);
+// uiId = 按钮/输入框所在卡片的界面ID:传统卡=设备ID,智能卡='smart',互传卡='p2p'。
+// 发送机器的"连哪台电脑"(deviceId)与"在哪张卡做反馈"(uiId)是两个概念,
+// 混用曾是智能卡系列bug的总根源(锁门锁空/摸隐藏卡按钮崩溃/勾恢复不了)。
+function setActionButtonsDisabled(uiId, disabled) {
+    const sendBtn = $(`sendbtn-${uiId}`);
+    const enterBtn = $(`enterbtn-${uiId}`);
+    const sendEnterBtn = $(`sendenterbtn-${uiId}`);
+    const imageBtn = $(`imagebtn-${uiId}`);
+    const fileBtn = $(`filebtn-${uiId}`);
     if (sendBtn) sendBtn.disabled = disabled;
     if (enterBtn) enterBtn.disabled = disabled;
     if (sendEnterBtn) sendEnterBtn.disabled = disabled;
     if (imageBtn) imageBtn.disabled = disabled;
     if (fileBtn) fileBtn.disabled = disabled;
+}
+
+// 瞬态按钮开工登记:静止文案记在元素上,恢复一律回它,绝不用"捕获瞬间的文字"——
+// 若捕获落在上一轮✓/✗未褪去的窗口,瞬态会被当常态永久钉死(0823智能卡勾不回去bug)。
+// 同时取消上一轮未执行的恢复,避免旧定时器在新一轮进行中把按钮闪回静止态。
+function captureButtonIdleLabel(btn) {
+    if (!btn) return '';
+    const inFlight = btn.classList.contains('sending')
+        || btn.classList.contains('success')
+        || btn.classList.contains('fail');
+    if (!inFlight) btn.dataset.idleLabel = btn.textContent;
+    if (btn._restoreTimer) {
+        clearTimeout(btn._restoreTimer);
+        btn._restoreTimer = null;
+    }
+    return btn.dataset.idleLabel || btn.textContent;
+}
+
+// 瞬态按钮统一收尾:延时后清反馈样式、恢复静止文案,再执行收尾回调(如解锁按钮)
+function scheduleButtonIdleRestore(btn, idleLabel, delayMs, onRestore = null) {
+    const timer = setTimeout(() => {
+        if (btn) {
+            btn.classList.remove('sending', 'success', 'fail');
+            btn.textContent = btn.dataset.idleLabel || idleLabel;
+            if (btn._restoreTimer === timer) btn._restoreTimer = null;
+        }
+        if (onRestore) onRestore();
+    }, delayMs);
+    if (btn) btn._restoreTimer = timer;
 }
 
 function isConnectionReady(conn) {
@@ -6949,9 +6992,10 @@ async function sendDeviceAction(deviceId, {
     failureToast = false,
     successToast = '',
     timeoutMs = 5000,
+    uiId = deviceId,
 }) {
     const btn = $(buttonId);
-    const input = $(`input-${deviceId}`);
+    const input = $(`input-${uiId}`);
     let conn = connections[deviceId];
 
     debugLog('sendAction:start', {
@@ -6984,10 +7028,10 @@ async function sendDeviceAction(deviceId, {
 
     debugLog('sendAction:ready', { deviceId, action });
 
-    const originalText = btn ? btn.textContent : '';
+    const originalText = captureButtonIdleLabel(btn);
     if (btn) btn.classList.add('sending');
     if (btn) btn.textContent = pendingText;
-    setActionButtonsDisabled(deviceId, true);
+    setActionButtonsDisabled(uiId, true);
 
     try {
         const result = await sendDesktopRequest(conn, { action, ...payload }, timeoutMs);
@@ -7010,7 +7054,7 @@ async function sendDeviceAction(deviceId, {
             if (btn) btn.textContent = '✓';
             if (clearInput && input) {
                 input.value = '';
-                setSendDraft(deviceId, '');
+                setSendDraft(uiId, '');
             }
             return { ok: true };
         }
@@ -7042,18 +7086,16 @@ async function sendDeviceAction(deviceId, {
         if (btn) btn.textContent = '✗';
         return { ok: false, error: e.message || t('操作失败') };
     } finally {
-        setTimeout(() => {
-            if (btn) btn.classList.remove('sending', 'success', 'fail');
-            if (btn) btn.textContent = originalText;
-            setActionButtonsDisabled(deviceId, !conn.authenticated);
-        }, 800);
+        scheduleButtonIdleRestore(btn, originalText, 800, () => {
+            setActionButtonsDisabled(uiId, !conn.authenticated);
+        });
     }
 
 }
 
-async function sendText(deviceId, buttonIdOverride = null, textOverride = null) {
-    debugLog('sendText:start', { deviceId });
-    const text = textOverride != null ? String(textOverride).trim() : await resolveTextToSend(deviceId);
+async function sendText(deviceId, { uiId = deviceId, buttonId = null, text: textOverride = null } = {}) {
+    debugLog('sendText:start', { deviceId, uiId });
+    const text = textOverride != null ? String(textOverride).trim() : await resolveTextToSend(uiId);
     if (!text) {
         debugLog('sendText:no_text', { deviceId });
         return;
@@ -7084,34 +7126,36 @@ async function sendText(deviceId, buttonIdOverride = null, textOverride = null) 
     await sendDeviceAction(deviceId, {
         action: outing ? 'clipboard_text' : 'type',
         payload: { text, transfer_id: historyEntry.transferId },
-        buttonId: buttonIdOverride || `sendbtn-${deviceId}`,
+        buttonId: buttonId || `sendbtn-${uiId}`,
         pendingText: outing ? t('同步中...') : t('发送中...'),
         clearInput: true,
         historyEntry,
         failureToast: true,
+        uiId,
     });
 }
 
-async function sendEnter(deviceId) {
+async function sendEnter(deviceId, uiId = deviceId) {
     await sendDeviceAction(deviceId, {
         action: 'enter',
-        buttonId: `enterbtn-${deviceId}`,
+        buttonId: `enterbtn-${uiId}`,
         pendingText: t('回车中...'),
+        uiId,
     });
 }
 
-async function sendTextAndEnter(deviceId, buttonIdOverride = null, textOverride = null) {
+async function sendTextAndEnter(deviceId, { uiId = deviceId, text: textOverride = null } = {}) {
     if (isOutingMode()) {
         // 外出模式下没有"回车"语义（回车要在被控电脑上手动按），统一走剪贴板同步。
         // 按钮状态动画落在蓝色大按钮（此模式下唯一可见的按钮）上。
-        await sendText(deviceId, buttonIdOverride || `sendenterbtn-${deviceId}`, textOverride);
+        await sendText(deviceId, { uiId, buttonId: `sendenterbtn-${uiId}`, text: textOverride });
         return;
     }
 
-    const input = $(`input-${deviceId}`);
+    const input = $(`input-${uiId}`);
 
-    debugLog('sendTextAndEnter:start', { deviceId });
-    const text = textOverride != null ? String(textOverride).trim() : await resolveTextToSend(deviceId);
+    debugLog('sendTextAndEnter:start', { deviceId, uiId });
+    const text = textOverride != null ? String(textOverride).trim() : await resolveTextToSend(uiId);
     if (!text) {
         debugLog('sendTextAndEnter:no_text', { deviceId });
         return;
@@ -7141,11 +7185,12 @@ async function sendTextAndEnter(deviceId, buttonIdOverride = null, textOverride 
     const result = await sendDeviceAction(deviceId, {
         action: 'type_enter',
         payload: { text, transfer_id: historyEntry.transferId },
-        buttonId: buttonIdOverride || `sendenterbtn-${deviceId}`,
+        buttonId: `sendenterbtn-${uiId}`,
         pendingText: t('发送并回车中...'),
         clearInput: true,
         historyEntry,
         failureToast: true,
+        uiId,
     });
 
     if (!result.ok && result.error && result.error.startsWith('文字已发送')) {
@@ -7153,13 +7198,13 @@ async function sendTextAndEnter(deviceId, buttonIdOverride = null, textOverride 
         updateHistory(historyEntry);
         if (input) {
             input.value = '';
-            setSendDraft(deviceId, '');
+            setSendDraft(uiId, '');
         }
     }
 }
 
-async function resolveTextToSend(deviceId) {
-    const input = $(`input-${deviceId}`);
+async function resolveTextToSend(uiId) {
+    const input = $(`input-${uiId}`);
     const typedText = (input?.value || '').trim();
     if (typedText) {
         return typedText;
@@ -7515,6 +7560,7 @@ async function sendFileToDesktopInChunks(deviceId, {
     successToast = '',
     readChunkBase64,
     relayTo = null,
+    uiId = deviceId,
 }) {
     const conn = connections[deviceId];
     const btn = $(buttonId);
@@ -7523,10 +7569,10 @@ async function sendFileToDesktopInChunks(deviceId, {
         return { ok: false, error: t('未连接') };
     }
 
-    const originalText = btn ? btn.textContent : '';
+    const originalText = captureButtonIdleLabel(btn);
     if (btn) btn.classList.add('sending');
     if (btn) btn.textContent = pendingText;
-    setActionButtonsDisabled(deviceId, true);
+    setActionButtonsDisabled(uiId, true);
 
     try {
         const result = await transferFileToDesktop(deviceId, {
@@ -7557,11 +7603,9 @@ async function sendFileToDesktopInChunks(deviceId, {
         if (btn) btn.textContent = '✗';
         return result;
     } finally {
-        setTimeout(() => {
-            if (btn) btn.classList.remove('sending', 'success', 'fail');
-            if (btn) btn.textContent = originalText;
-            setActionButtonsDisabled(deviceId, !conn.authenticated);
-        }, 800);
+        scheduleButtonIdleRestore(btn, originalText, 800, () => {
+            setActionButtonsDisabled(uiId, !conn.authenticated);
+        });
     }
 }
 
@@ -7628,6 +7672,7 @@ function buildBatchTransferSummaryToast({ totalCount, successCount, failedCount 
 async function sendFilesToDesktopBatch(deviceId, items, {
     buttonId,
     pendingText = t('批量传输中...'),
+    uiId = deviceId,
 }) {
     const conn = connections[deviceId];
     const btn = $(buttonId);
@@ -7638,14 +7683,14 @@ async function sendFilesToDesktopBatch(deviceId, items, {
     }
 
     const historyEntry = createOutboundBatchHistoryEntry(deviceId, normalizedItems);
-    const originalText = btn ? btn.textContent : '';
+    const originalText = captureButtonIdleLabel(btn);
     let successCount = 0;
     let failedCount = 0;
     const failedIndexes = [];
 
     if (btn) btn.classList.add('sending');
     if (btn) btn.textContent = pendingText;
-    setActionButtonsDisabled(deviceId, true);
+    setActionButtonsDisabled(uiId, true);
 
     try {
         for (let index = 0; index < normalizedItems.length; index += 1) {
@@ -7712,11 +7757,9 @@ async function sendFilesToDesktopBatch(deviceId, items, {
             failedIndexes,
         };
     } finally {
-        setTimeout(() => {
-            if (btn) btn.classList.remove('sending', 'success', 'fail');
-            if (btn) btn.textContent = originalText;
-            setActionButtonsDisabled(deviceId, !conn.authenticated);
-        }, 900);
+        scheduleButtonIdleRestore(btn, originalText, 900, () => {
+            setActionButtonsDisabled(uiId, !conn.authenticated);
+        });
     }
 }
 
@@ -7771,7 +7814,7 @@ function createThumbnailDataUrl(sourceDataUrl, outputType = 'image/jpeg') {
     });
 }
 
-async function sendSelectedImage(deviceId, file, buttonIdOverride = null) {
+async function sendSelectedImage(deviceId, file, uiId = deviceId) {
     if (!file) return;
     // 从系统选图器返回瞬间 WS 可能还没重连上,等它就绪再发(静默放弃是"选完图没反应"的病根)
     const conn = await ensureReadyConnectionForSend(deviceId);
@@ -7826,12 +7869,13 @@ async function sendSelectedImage(deviceId, file, buttonIdOverride = null) {
                 mime_type: file.type,
                 image_base64: imageBase64,
             },
-            buttonId: buttonIdOverride || `imagebtn-${deviceId}`,
+            buttonId: `imagebtn-${uiId}`,
             pendingText: t('传图中...'),
             historyEntry,
             failureToast: true,
             successToast: t('图片已放入 Mac 剪贴板'),
             timeoutMs: 20000,
+            uiId,
         });
     } catch (error) {
         historyEntry.status = 'failed';
@@ -7840,7 +7884,7 @@ async function sendSelectedImage(deviceId, file, buttonIdOverride = null) {
     }
 }
 
-async function sendSelectedFile(deviceId, file, buttonIdOverride = null) {
+async function sendSelectedFile(deviceId, file, uiId = deviceId) {
     if (!file) return;
     const conn = await ensureReadyConnectionForSend(deviceId);
     if (!isConnectionReady(conn)) return;
@@ -7863,12 +7907,13 @@ async function sendSelectedFile(deviceId, file, buttonIdOverride = null) {
             fileName: file.name,
             mimeType: file.type || 'application/octet-stream',
             sizeBytes: file.size,
-            buttonId: buttonIdOverride || `filebtn-${deviceId}`,
+            buttonId: `filebtn-${uiId}`,
             pendingText: t('传文件中...'),
             historyEntry,
             failureToast: true,
             successToast: t('文件已保存到 VibeDrop 收件箱'),
             readChunkBase64: (offsetBytes, lengthBytes) => readBlobChunkAsBase64(file, offsetBytes, lengthBytes),
+            uiId,
         });
     } catch (error) {
         historyEntry.status = 'failed';
@@ -7877,7 +7922,7 @@ async function sendSelectedFile(deviceId, file, buttonIdOverride = null) {
     }
 }
 
-async function sendSelectedFilesBatch(deviceId, files, buttonIdOverride = null) {
+async function sendSelectedFilesBatch(deviceId, files, uiId = deviceId) {
     const normalizedFiles = Array.from(files || []).filter(Boolean);
     if (normalizedFiles.length <= 1) return;
     // 从系统选择器返回瞬间 WS 可能没重连上,等就绪再发
@@ -7893,8 +7938,9 @@ async function sendSelectedFilesBatch(deviceId, files, buttonIdOverride = null) 
     }));
 
     await sendFilesToDesktopBatch(deviceId, batchItems, {
-        buttonId: buttonIdOverride || `filebtn-${deviceId}`,
+        buttonId: `filebtn-${uiId}`,
         pendingText: t('批量传输中...'),
+        uiId,
     });
 }
 
@@ -8109,7 +8155,7 @@ function retainPendingSharedContentsByIndexes(indexes = []) {
     renderPendingSharedContent();
 }
 
-async function sendPendingSharedImage(deviceId) {
+async function sendPendingSharedImage(deviceId, uiId = deviceId) {
     const shared = getPrimaryPendingSharedContent();
     const conn = connections[deviceId];
     if (!shared || pendingSharedContents.length !== 1 || !shared.isImage || !conn || !conn.authenticated || !conn.ws) {
@@ -8148,12 +8194,13 @@ async function sendPendingSharedImage(deviceId) {
                 mime_type: shared.mimeType,
                 image_base64: imageBase64,
             },
-            buttonId: `imagebtn-${deviceId}`,
+            buttonId: `imagebtn-${uiId}`,
             pendingText: t('传图中...'),
             historyEntry,
             failureToast: true,
             successToast: t('图片已放入 Mac 剪贴板'),
             timeoutMs: 20000,
+            uiId,
         });
 
         if (result.ok) {
@@ -8166,7 +8213,7 @@ async function sendPendingSharedImage(deviceId) {
     }
 }
 
-async function sendPendingSharedFile(deviceId) {
+async function sendPendingSharedFile(deviceId, uiId = deviceId) {
     const shared = getPrimaryPendingSharedContent();
     const conn = connections[deviceId];
     if (!shared || pendingSharedContents.length !== 1 || !conn || !conn.authenticated || !conn.ws) {
@@ -8190,7 +8237,7 @@ async function sendPendingSharedFile(deviceId) {
             fileName: shared.displayName,
             mimeType: shared.mimeType,
             sizeBytes: shared.sizeBytes,
-            buttonId: `filebtn-${deviceId}`,
+            buttonId: `filebtn-${uiId}`,
             pendingText: t('传文件中...'),
             historyEntry,
             failureToast: true,
@@ -8198,6 +8245,7 @@ async function sendPendingSharedFile(deviceId) {
             readChunkBase64: (offsetBytes, lengthBytes) => (
                 Promise.resolve(readPendingSharedContentChunkBase64At(0, offsetBytes, lengthBytes))
             ),
+            uiId,
         });
 
         if (result.ok) {
@@ -8210,7 +8258,7 @@ async function sendPendingSharedFile(deviceId) {
     }
 }
 
-async function sendPendingSharedFilesBatch(deviceId) {
+async function sendPendingSharedFilesBatch(deviceId, uiId = deviceId) {
     const conn = connections[deviceId];
     if (pendingSharedContents.length <= 1 || !conn || !conn.authenticated || !conn.ws) {
         return;
@@ -8228,8 +8276,9 @@ async function sendPendingSharedFilesBatch(deviceId) {
     }));
 
     const result = await sendFilesToDesktopBatch(deviceId, batchItems, {
-        buttonId: `filebtn-${deviceId}`,
+        buttonId: `filebtn-${uiId}`,
         pendingText: t('批量传输中...'),
+        uiId,
     });
 
     if (result.ok) {
