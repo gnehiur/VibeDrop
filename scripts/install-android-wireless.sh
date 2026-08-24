@@ -22,7 +22,8 @@ TOTAL=0
 for serial in $SERIALS; do
   TOTAL=$((TOTAL+1))
   name=$(name_of "$serial")
-  addr=$(echo "$SERVICES" | grep "$serial" | awk '{print $3}' | head -1)
+  # grep 落空返回1,在 set -euo pipefail 下会杀掉整个脚本,必须兜底(0823踩过)
+  addr=$(echo "$SERVICES" | grep "$serial" | awk '{print $3}' | head -1 || true)
   if [ -z "$addr" ]; then
     echo "[wireless] $name ⚠️ 未发现(无线调试没开?)"
     continue
