@@ -1847,7 +1847,114 @@ fn apply_scroll_lock(window: &tauri::WebviewWindow) {
         let _: () = msg_send![&*scroll_view, setScrollEnabled: false];
         let _: () = msg_send![&*scroll_view, setBounces: false];
         ios_scroll_pin::attach(scroll_view);
+        ios_keyboard_watch::attach(wk);
     });
+}
+
+#[cfg(target_os = "ios")]
+mod ios_keyboard_watch {
+    // 键盘高度的权威信源:WKWebView 里键盘弹出不改变 visualViewport(与 Safari 的著名差异,
+    // 2026-08-25 自绘避让因此测不到重叠),只能听 UIKit 键盘通知,把高度亲口告诉网页。
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject, NSObject};
+    use objc2::{define_class, msg_send, AllocAnyThread, Encode, Encoding};
+    use std::ffi::CString;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use super::ios_scroll_pin::CGPoint;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct CGSize {
+        pub width: f64,
+        pub height: f64,
+    }
+    unsafe impl Encode for CGSize {
+        const ENCODING: Encoding = Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct CGRect {
+        pub origin: CGPoint,
+        pub size: CGSize,
+    }
+    unsafe impl Encode for CGRect {
+        const ENCODING: Encoding =
+            Encoding::Struct("CGRect", &[CGPoint::ENCODING, CGSize::ENCODING]);
+    }
+
+    static WEBVIEW: AtomicUsize = AtomicUsize::new(0);
+    static OBSERVING: AtomicBool = AtomicBool::new(false);
+
+    unsafe fn nsstring(text: &str) -> *mut AnyObject {
+        let c = CString::new(text).unwrap();
+        let cls = AnyClass::get(c"NSString").unwrap();
+        msg_send![cls, stringWithUTF8String: c.as_ptr()]
+    }
+
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[name = "VDKeyboardWatch"]
+        pub struct VDKeyboardWatch;
+
+        impl VDKeyboardWatch {
+            #[unsafe(method(keyboardChanged:))]
+            fn keyboard_changed(&self, notification: *mut AnyObject) {
+                unsafe {
+                    let wk = WEBVIEW.load(Ordering::SeqCst) as *mut AnyObject;
+                    if wk.is_null() || notification.is_null() {
+                        return;
+                    }
+                    let user_info: *mut AnyObject = msg_send![&*notification, userInfo];
+                    if user_info.is_null() {
+                        return;
+                    }
+                    // UIKit 的 userInfo 键常量值与符号名同文,可用字面量取
+                    let key = nsstring("UIKeyboardFrameEndUserInfoKey");
+                    let value: *mut AnyObject = msg_send![&*user_info, objectForKey: &*key];
+                    if value.is_null() {
+                        return;
+                    }
+                    let rect: CGRect = msg_send![&*value, CGRectValue];
+                    let screen_cls = AnyClass::get(c"UIScreen").unwrap();
+                    let screen: *mut AnyObject = msg_send![screen_cls, mainScreen];
+                    let bounds: CGRect = msg_send![&*screen, bounds];
+                    // 键盘遮挡高度=屏高-键盘顶边;收起时 origin.y==屏高→0
+                    let covered = (bounds.size.height - rect.origin.y).max(0.0);
+                    let js = format!(
+                        "window.__vdKeyboardHeight={covered};window.dispatchEvent(new Event('vd-keyboard'))"
+                    );
+                    let js_ns = nsstring(&js);
+                    let _: () = msg_send![
+                        &*wk,
+                        evaluateJavaScript: &*js_ns,
+                        completionHandler: std::ptr::null_mut::<AnyObject>()
+                    ];
+                }
+            }
+        }
+    );
+
+    pub unsafe fn attach(webview: *mut AnyObject) {
+        WEBVIEW.store(webview as usize, Ordering::SeqCst);
+        // 观察者进程级只挂一次;与 App 同寿命
+        if OBSERVING.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let watcher: Retained<VDKeyboardWatch> = msg_send![VDKeyboardWatch::alloc(), init];
+        let watcher_ptr = Retained::into_raw(watcher);
+        let center_cls = AnyClass::get(c"NSNotificationCenter").unwrap();
+        let center: *mut AnyObject = msg_send![center_cls, defaultCenter];
+        let name = nsstring("UIKeyboardWillChangeFrameNotification");
+        let _: () = msg_send![
+            &*center,
+            addObserver: watcher_ptr as *mut AnyObject,
+            selector: objc2::sel!(keyboardChanged:),
+            name: &*name,
+            object: std::ptr::null_mut::<AnyObject>()
+        ];
+    }
 }
 
 #[tauri::command]

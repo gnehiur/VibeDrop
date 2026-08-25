@@ -71,25 +71,35 @@ probe('appjs-build', 'smartcard-v1-20260811');
 // 揭示滚动在松钉指令送达前已发生并被钉回(2026-08-25)。visualViewport 一变即重算。
 // 智能卡(顶部)聚焦时抬升量恒0。Android 走系统 adjustResize,重叠恒≤0,此段自然失效。
 (function keyboardOverlapAvoidance() {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    document.body.style.transition = 'transform 0.25s ease-out';
-    const lift = () => {
+    // 键盘高度来自原生 UIKit 通知(vd-keyboard 事件+__vdKeyboardHeight 变量)——
+    // WKWebView 里键盘不改变 visualViewport,靠它测重叠恒为0(2026-08-25 实测教训)。
+    let kbHeight = 0;
+    const lift = (why) => {
+        if (!document.body) return;
         const el = document.activeElement;
         const needs = el && typeof el.matches === 'function'
             && el.matches('textarea, input') && !el.closest('#card-smart');
         let offset = 0;
-        if (needs) {
-            const keyboardTop = vv.offsetTop + vv.height;
-            const overlap = el.getBoundingClientRect().bottom + 16 - keyboardTop;
+        let overlap = 0;
+        if (needs && kbHeight > 0) {
+            const visibleBottom = window.innerHeight - kbHeight;
+            overlap = el.getBoundingClientRect().bottom + 16 - visibleBottom;
             if (overlap > 0) offset = Math.round(overlap);
         }
+        probe('kb-lift', JSON.stringify({
+            why, kb: Math.round(kbHeight), needs: Boolean(needs),
+            ov: Math.round(overlap), off: offset, ih: window.innerHeight,
+        }));
+        document.body.style.transition = 'transform 0.25s ease-out';
         document.body.style.transform = offset ? `translateY(-${offset}px)` : '';
     };
-    vv.addEventListener('resize', lift);
-    // 键盘弹出动画有时不触发 resize 到位,聚焦/失焦后补测两拍
-    document.addEventListener('focusin', () => { setTimeout(lift, 80); setTimeout(lift, 350); });
-    document.addEventListener('focusout', () => { setTimeout(lift, 80); setTimeout(lift, 350); });
+    window.addEventListener('vd-keyboard', () => {
+        kbHeight = Number(window.__vdKeyboardHeight) || 0;
+        lift('kb');
+    });
+    // 焦点变化后补测两拍:通知先于焦点到位、或焦点切换时键盘高度不变都不丢帧
+    document.addEventListener('focusin', () => { setTimeout(() => lift('fi'), 80); setTimeout(() => lift('fi2'), 350); });
+    document.addEventListener('focusout', () => { setTimeout(() => lift('fo'), 80); setTimeout(() => lift('fo2'), 350); });
 })();
 
 // ============================================
