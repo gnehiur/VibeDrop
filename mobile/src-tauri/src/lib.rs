@@ -2091,6 +2091,7 @@ mod ios_keyboard_watch {
                     // 弹出/换高:WillChangeFrame 立刻缩短(新露区域被键盘盖着,无闪);
                     // 收起:本通知不动作,等 DidHide(系统保证动画结束后送达)再恢复全高。
                     // 曾用"读动画时长+延时恢复"实测定时器在键盘动画期不保证开火,残留半高白块。
+                    kb_probe(wk, "nwcf", covered);
                     if covered > 0.0 {
                         resize_webview(wk, covered);
                     }
@@ -2104,6 +2105,7 @@ mod ios_keyboard_watch {
                     if wk.is_null() {
                         return;
                     }
+                    kb_probe(wk, "ndhide", 0.0);
                     resize_webview(wk, 0.0);
                 }
             }
@@ -2119,6 +2121,18 @@ mod ios_keyboard_watch {
         let mut frame: CGRect = msg_send![&*wk, frame];
         frame.size.height = sv_bounds.size.height - covered;
         let _: () = msg_send![&*wk, setFrame: frame];
+        kb_probe(wk, "nsetframe", frame.size.height);
+    }
+
+    // 键盘链路黑匣子的原生打点口:走 JS 侧 __vdKbProbe 落盘+上传(2026-08-25 用户点名的debug方式)
+    unsafe fn kb_probe(wk: *mut AnyObject, stage: &str, value: f64) {
+        let js = format!("window.__vdKbProbe&&window.__vdKbProbe('{stage}',{value})");
+        let js_ns = nsstring(&js);
+        let _: () = msg_send![
+            &*wk,
+            evaluateJavaScript: &*js_ns,
+            completionHandler: std::ptr::null_mut::<AnyObject>()
+        ];
     }
 
     pub unsafe fn attach(webview: *mut AnyObject) {
