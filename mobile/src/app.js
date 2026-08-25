@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kb-native-resize-v6-20260825';
+window.__vdBuild = 'kb-native-resize-v7-cardanchor-20260825';
 probe('appjs-build', window.__vdBuild);
 
 // iOS 外层滚动锁:启动+每次回前台补一次(幂等),防冷启动时序漏锁
@@ -82,7 +82,13 @@ probe('appjs-build', window.__vdBuild);
     window.addEventListener('resize', () => {
         const el = document.activeElement;
         if (el && typeof el.matches === 'function' && el.matches('textarea, input')) {
-            setTimeout(() => el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
+            // 锚定规则(2026-08-25 用户定):聚焦输入框所在整张卡片,以卡片底边贴住
+            // 标签栏对齐(block:'end')。顶部的智能卡按此规则滚动量为零,天然不动。
+            const card = el.closest('.mac-card');
+            setTimeout(() => (card || el).scrollIntoView({
+                block: card ? 'end' : 'nearest',
+                behavior: 'smooth',
+            }), 50);
         }
     });
 })();
