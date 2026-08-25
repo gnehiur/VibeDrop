@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kb-native-resize-v10-oneframe-20260825';
+window.__vdBuild = 'kb-native-v11-nobar-20260825';
 probe('appjs-build', window.__vdBuild);
 
 // iOS 外层滚动锁:启动+每次回前台补一次(幂等),防冷启动时序漏锁

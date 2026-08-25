@@ -1851,10 +1851,65 @@ fn apply_scroll_lock(window: &tauri::WebviewWindow) {
         }
         ios_scroll_pin::attach(scroll_view);
         ios_keyboard_watch::attach(wk);
+        ios_kill_accessory_bar::apply(scroll_view);
         // 借道此命令做缓存自愈:新旧两代 JS 启动时都会调 apply_ios_scroll_lock,
         // 旧前端会自己送上门来触发指纹核对→清缓存重载,无需它配合升级
         ios_cache_guard::check_and_heal(wk);
     });
+}
+
+#[cfg(target_os = "ios")]
+mod ios_kill_accessory_bar {
+    // WKWebView 弹键盘自带的"表单助手条"(∧∨跳字段+✓收键盘)对本 App 无用且占约44pt,
+    // 苹果无官方开关(2026-08-25 用户点名去掉)。通用原生手法:运行时给 WKContentView
+    // 造子类,覆盖 inputAccessoryView 返回空,再把实例换到子类上。幂等:类只注册一次,
+    // 已换过类的实例(类名带前缀)跳过。
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use std::ffi::{c_void, CStr, CString};
+
+    unsafe extern "C-unwind" fn nil_accessory(_this: *mut c_void, _cmd: *mut c_void) -> *mut c_void {
+        std::ptr::null_mut()
+    }
+
+    pub unsafe fn apply(scroll_view: *mut AnyObject) {
+        let subviews: *mut AnyObject = msg_send![&*scroll_view, subviews];
+        if subviews.is_null() {
+            return;
+        }
+        let count: usize = msg_send![&*subviews, count];
+        for i in 0..count {
+            let view: *mut AnyObject = msg_send![&*subviews, objectAtIndex: i];
+            if view.is_null() {
+                continue;
+            }
+            let cls = objc2::ffi::object_getClass(view.cast());
+            if cls.is_null() {
+                continue;
+            }
+            let name = CStr::from_ptr(objc2::ffi::class_getName(cls)).to_string_lossy();
+            if !name.starts_with("WKContent") || name.starts_with("VDNoBar") {
+                continue;
+            }
+            let sub_name = CString::new(format!("VDNoBar_{name}")).unwrap();
+            let mut sub = objc2::ffi::objc_getClass(sub_name.as_ptr()) as *mut objc2::ffi::objc_class;
+            if sub.is_null() {
+                sub = objc2::ffi::objc_allocateClassPair(cls, sub_name.as_ptr(), 0);
+                if sub.is_null() {
+                    return;
+                }
+                let sel = objc2::ffi::sel_registerName(c"inputAccessoryView".as_ptr());
+                let imp: objc2::ffi::IMP = Some(std::mem::transmute::<
+                    unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> *mut c_void,
+                    unsafe extern "C-unwind" fn(),
+                >(nil_accessory));
+                objc2::ffi::class_addMethod(sub, sel, imp, c"@@:".as_ptr());
+                objc2::ffi::objc_registerClassPair(sub);
+            }
+            objc2::ffi::object_setClass(view.cast(), sub);
+            break;
+        }
+    }
 }
 
 // 只为让 cargo 把前端文件当正式依赖追踪(generate_context! 嵌资产不产生依赖记录,
