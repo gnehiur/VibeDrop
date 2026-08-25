@@ -1898,11 +1898,13 @@ mod ios_kill_accessory_bar {
                 if sub.is_null() {
                     return;
                 }
-                let sel = objc2::ffi::sel_registerName(c"inputAccessoryView".as_ptr());
-                let imp: objc2::ffi::IMP = Some(std::mem::transmute::<
+                let Some(sel) = objc2::ffi::sel_registerName(c"inputAccessoryView".as_ptr()) else {
+                    return;
+                };
+                let imp = std::mem::transmute::<
                     unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> *mut c_void,
                     unsafe extern "C-unwind" fn(),
-                >(nil_accessory));
+                >(nil_accessory);
                 objc2::ffi::class_addMethod(sub, sel, imp, c"@@:".as_ptr());
                 objc2::ffi::objc_registerClassPair(sub);
             }
