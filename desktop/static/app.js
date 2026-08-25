@@ -65,29 +65,31 @@ probe('appjs-build', 'smartcard-v1-20260811');
     });
 })();
 
-// iOS 固定布局的选择性松绑:焦点在智能卡(顶部)→保持焊死,页面纹丝不动(既有效果);
-// 焦点在其余输入框(互传卡等,位置靠下会被键盘盖住)→临时放行系统键盘上推;
-// 失焦/键盘收起→焊回并归位到静止位。Android 端此命令为空操作,零影响。
-(function iosSelectiveScrollPin() {
-    const setPin = (enabled) => {
-        try {
-            window.__TAURI__?.core?.invoke?.('set_ios_scroll_pin', { enabled: Boolean(enabled) });
-        } catch (_) { /* 非 Tauri 环境忽略 */ }
+// iOS 键盘避让(自绘版):外层滚动被原生钉死(智能卡纹丝不动的根基,永不松),
+// 下方输入框(互传卡等)被键盘盖住时改用 CSS 位移把整页抬起,抬升量=输入框底边
+// 与键盘顶边的实测重叠。不依赖 WebKit 自动揭示——松钉放行曾实测输给时序竞态:
+// 揭示滚动在松钉指令送达前已发生并被钉回(2026-08-25)。visualViewport 一变即重算。
+// 智能卡(顶部)聚焦时抬升量恒0。Android 走系统 adjustResize,重叠恒≤0,此段自然失效。
+(function keyboardOverlapAvoidance() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    document.body.style.transition = 'transform 0.25s ease-out';
+    const lift = () => {
+        const el = document.activeElement;
+        const needs = el && typeof el.matches === 'function'
+            && el.matches('textarea, input') && !el.closest('#card-smart');
+        let offset = 0;
+        if (needs) {
+            const keyboardTop = vv.offsetTop + vv.height;
+            const overlap = el.getBoundingClientRect().bottom + 16 - keyboardTop;
+            if (overlap > 0) offset = Math.round(overlap);
+        }
+        document.body.style.transform = offset ? `translateY(-${offset}px)` : '';
     };
-    let repinTimer = null;
-    document.addEventListener('focusin', (event) => {
-        const el = event.target;
-        if (!el || typeof el.matches !== 'function' || !el.matches('textarea, input')) return;
-        if (repinTimer) { clearTimeout(repinTimer); repinTimer = null; }
-        setPin(Boolean(el.closest('#card-smart')));
-    });
-    document.addEventListener('focusout', (event) => {
-        const el = event.target;
-        if (!el || typeof el.matches !== 'function' || !el.matches('textarea, input')) return;
-        if (repinTimer) clearTimeout(repinTimer);
-        // 缓一拍:若焦点只是在输入框之间切换,由紧随其后的 focusin 决定钉与不钉
-        repinTimer = setTimeout(() => { repinTimer = null; setPin(true); }, 120);
-    });
+    vv.addEventListener('resize', lift);
+    // 键盘弹出动画有时不触发 resize 到位,聚焦/失焦后补测两拍
+    document.addEventListener('focusin', () => { setTimeout(lift, 80); setTimeout(lift, 350); });
+    document.addEventListener('focusout', () => { setTimeout(lift, 80); setTimeout(lift, 350); });
 })();
 
 // ============================================
