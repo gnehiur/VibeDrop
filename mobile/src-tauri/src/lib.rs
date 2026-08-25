@@ -1846,6 +1846,16 @@ fn apply_scroll_lock(window: &tauri::WebviewWindow) {
     });
 }
 
+// 只为让 cargo 把前端文件当正式依赖追踪(generate_context! 嵌资产不产生依赖记录,
+// 只改 JS/CSS 不改 Rust 时会装到旧前端——iOS 2026-08-25 一晚四连装实锤,安卓同理),
+// 运行时不使用,编译器会把未引用的常量剥掉,不进最终二进制。
+#[allow(dead_code)]
+mod frontend_dep_tracker {
+    const _APP_JS: &str = include_str!("../../src/app.js");
+    const _STYLE_CSS: &str = include_str!("../../src/style.css");
+    const _INDEX_HTML: &str = include_str!("../../src/index.html");
+}
+
 #[cfg(target_os = "ios")]
 mod ios_cache_guard {
     // WKWebView 会把 tauri 自定义协议的响应写进磁盘缓存,App 更新后缓存照旧命中,

@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kb-native-resize-v7-cardanchor-20260825';
+window.__vdBuild = 'kb-native-resize-v8-navsink-20260825';
 probe('appjs-build', window.__vdBuild);
 
 // iOS 外层滚动锁:启动+每次回前台补一次(幂等),防冷启动时序漏锁
@@ -79,6 +79,17 @@ probe('appjs-build', window.__vdBuild);
 // (此前五版 JS 抬升方案已全部拆除——2026-08-25 做减法。)
 // 这里只留一件小事:窗口一变,把聚焦的输入框滚进可视区(内层 #app-scroll 承担滚动)。
 (function keyboardFocusReveal() {
+    // 键盘开启期间标签栏没用(点它也是收键盘),沉下去把空间让给卡片——
+    // 卡片底边于是直接贴输入法顶边(2026-08-25 用户定稿版式),双端同一逻辑
+    const isEditable = (el) => Boolean(el && typeof el.matches === 'function' && el.matches('textarea, input'));
+    document.addEventListener('focusin', (e) => {
+        if (isEditable(e.target)) document.body.classList.add('kb-open');
+    });
+    document.addEventListener('focusout', () => {
+        setTimeout(() => {
+            if (!isEditable(document.activeElement)) document.body.classList.remove('kb-open');
+        }, 100);
+    });
     window.addEventListener('resize', () => {
         const el = document.activeElement;
         if (el && typeof el.matches === 'function' && el.matches('textarea, input')) {

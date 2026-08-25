@@ -2619,6 +2619,11 @@ body.media-viewer-open {
     z-index: 120;
 }
 
+/* 键盘开启时标签栏沉没(点它也只是收键盘),空间让给内容区,卡片底边直接贴输入法顶边 */
+body.kb-open #bottom-nav {
+    display: none;
+}
+
 .nav-btn {
     flex: 1;
     display: flex;
