@@ -1855,6 +1855,8 @@ fn apply_scroll_lock(window: &tauri::WebviewWindow) {
 mod ios_keyboard_watch {
     // 键盘高度的权威信源:WKWebView 里键盘弹出不改变 visualViewport(与 Safari 的著名差异,
     // 2026-08-25 自绘避让因此测不到重叠),只能听 UIKit 键盘通知,把高度亲口告诉网页。
+    // 注:generate_context! 嵌前端资产不被 cargo 依赖追踪,只改 JS 不改 Rust 时可能装到旧前端;
+    // 前端排查改动务必连带触碰本文件(或换 appjs-build 水印验证)。
     use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, NSObject};
     use objc2::{define_class, msg_send, AllocAnyThread, Encode, Encoding};

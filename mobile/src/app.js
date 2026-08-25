@@ -50,7 +50,8 @@ function scheduleProbeUpload(delay) {
     }, delay);
 }
 probe('script-start');
-probe('appjs-build', 'smartcard-v1-20260811');
+// 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS
+probe('appjs-build', 'kbavoid-v3-20260825');
 
 // iOS 外层滚动锁:启动+每次回前台补一次(幂等),防冷启动时序漏锁
 (function ensureIosScrollLock() {
