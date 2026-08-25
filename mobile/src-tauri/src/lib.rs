@@ -2087,19 +2087,59 @@ mod ios_keyboard_watch {
                     // 键盘遮挡高度=屏高-键盘顶边;收起时 origin.y==屏高→0
                     let covered = (bounds.size.height - rect.origin.y).max(0.0);
                     // 安卓 adjustResize 的 iOS 同构:把 WebView 窗口缩短键盘高,页面自己重排——
-                    // 上面的不动/下面的上浮/导航骑上键盘全部自然发生,零 JS 参与(2026-08-25 减法版)
-                    let superview: *mut AnyObject = msg_send![&*wk, superview];
-                    if superview.is_null() {
+                    // 上面的不动/下面的上浮全部自然发生,零 JS 参与(2026-08-25 减法版)。
+                    // 弹出:立刻缩短(终局画面一步到位,新露区域被键盘盖着,无闪)。
+                    // 收起:等键盘滑完(时长读系统通知)再恢复全高——立刻恢复会让"还没来得及
+                    // 绘制的新增内容条"被下滑中的键盘边缘揭开,闪一帧错位(2026-08-25 实测)。
+                    let nsobj = AnyClass::get(c"NSObject").unwrap();
+                    let _: () = msg_send![
+                        nsobj,
+                        cancelPreviousPerformRequestsWithTarget: self,
+                        selector: objc2::sel!(vdRestoreFrame:),
+                        object: std::ptr::null_mut::<AnyObject>()
+                    ];
+                    if covered > 0.0 {
+                        resize_webview(wk, covered);
+                    } else {
+                        let mut duration: f64 = 0.3;
+                        let dur_key = nsstring("UIKeyboardAnimationDurationUserInfoKey");
+                        let dur_num: *mut AnyObject = msg_send![&*user_info, objectForKey: &*dur_key];
+                        if !dur_num.is_null() {
+                            duration = msg_send![&*dur_num, doubleValue];
+                        }
+                        let _: () = msg_send![
+                            self,
+                            performSelector: objc2::sel!(vdRestoreFrame:),
+                            withObject: std::ptr::null_mut::<AnyObject>(),
+                            afterDelay: duration + 0.02
+                        ];
+                    }
+                }
+            }
+
+            #[unsafe(method(vdRestoreFrame:))]
+            fn vd_restore_frame(&self, _obj: *mut AnyObject) {
+                unsafe {
+                    let wk = WEBVIEW.load(Ordering::SeqCst) as *mut AnyObject;
+                    if wk.is_null() {
                         return;
                     }
-                    let sv_bounds: CGRect = msg_send![&*superview, bounds];
-                    let mut frame: CGRect = msg_send![&*wk, frame];
-                    frame.size.height = sv_bounds.size.height - covered;
-                    let _: () = msg_send![&*wk, setFrame: frame];
+                    resize_webview(wk, 0.0);
                 }
             }
         }
     );
+
+    unsafe fn resize_webview(wk: *mut AnyObject, covered: f64) {
+        let superview: *mut AnyObject = msg_send![&*wk, superview];
+        if superview.is_null() {
+            return;
+        }
+        let sv_bounds: CGRect = msg_send![&*superview, bounds];
+        let mut frame: CGRect = msg_send![&*wk, frame];
+        frame.size.height = sv_bounds.size.height - covered;
+        let _: () = msg_send![&*wk, setFrame: frame];
+    }
 
     pub unsafe fn attach(webview: *mut AnyObject) {
         WEBVIEW.store(webview as usize, Ordering::SeqCst);
