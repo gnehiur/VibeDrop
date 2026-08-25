@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kbavoid-v5-stable-20260825';
+window.__vdBuild = 'kb-native-resize-v6-20260825';
 probe('appjs-build', window.__vdBuild);
 
 // iOS 外层滚动锁:启动+每次回前台补一次(幂等),防冷启动时序漏锁
@@ -74,46 +74,17 @@ probe('appjs-build', window.__vdBuild);
 // 与键盘顶边的实测重叠。不依赖 WebKit 自动揭示——松钉放行曾实测输给时序竞态:
 // 揭示滚动在松钉指令送达前已发生并被钉回(2026-08-25)。visualViewport 一变即重算。
 // 智能卡(顶部)聚焦时抬升量恒0。Android 走系统 adjustResize,重叠恒≤0,此段自然失效。
-(function keyboardOverlapAvoidance() {
-    // 键盘高度来自原生 UIKit 通知(vd-keyboard 事件+__vdKeyboardHeight 变量)——
-    // WKWebView 里键盘不改变 visualViewport,靠它测重叠恒为0(2026-08-25 实测教训)。
-    let kbHeight = 0;
-    let currentLift = 0; // 当前已施加的位移;测量必须先还原它,否则"抬完再量"会得出
-                         // 更小的需求量→放下→再量又要抬,页面上下跳(2026-08-25 v4实测)
-    const lift = (why) => {
-        if (!document.body) return;
+// iOS 键盘避让 = 原生把 WebView 窗口缩短键盘高(与安卓 adjustResize 同构),页面自己重排:
+// 上面的自然不动、下面的自然上浮、导航自然骑到键盘上,全是浏览器份内事,无需任何特判。
+// (此前五版 JS 抬升方案已全部拆除——2026-08-25 做减法。)
+// 这里只留一件小事:窗口一变,把聚焦的输入框滚进可视区(内层 #app-scroll 承担滚动)。
+(function keyboardFocusReveal() {
+    window.addEventListener('resize', () => {
         const el = document.activeElement;
-        const needs = el && typeof el.matches === 'function'
-            && el.matches('textarea, input') && !el.closest('#card-smart');
-        let offset = 0;
-        let overlap = 0;
-        if (needs && kbHeight > 0) {
-            const rect = el.getBoundingClientRect();
-            // getBoundingClientRect 含 transform 效果,加回 currentLift 还原真实版面坐标
-            const trueTop = rect.top + currentLift;
-            const trueBottom = rect.bottom + currentLift;
-            overlap = trueBottom + 16 - (window.innerHeight - kbHeight);
-            // 安卓式整页上抬(2026-08-25 用户点名):目标是连底部导航一起抬到键盘上方,
-            // 即整体位移≈键盘高;但不许把聚焦输入框顶出屏幕顶(留24px),取安全值;
-            // 无论如何至少抬出重叠量,保证输入框脱离键盘遮挡
-            const fullLift = Math.min(kbHeight, Math.max(0, trueTop - 24));
-            offset = Math.round(Math.max(Math.max(overlap, 0), fullLift));
+        if (el && typeof el.matches === 'function' && el.matches('textarea, input')) {
+            setTimeout(() => el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 50);
         }
-        currentLift = offset;
-        probe('kb-lift', JSON.stringify({
-            why, kb: Math.round(kbHeight), needs: Boolean(needs),
-            ov: Math.round(overlap), off: offset, ih: window.innerHeight,
-        }));
-        document.body.style.transition = 'transform 0.25s ease-out';
-        document.body.style.transform = offset ? `translateY(-${offset}px)` : '';
-    };
-    window.addEventListener('vd-keyboard', () => {
-        kbHeight = Number(window.__vdKeyboardHeight) || 0;
-        lift('kb');
     });
-    // 焦点变化后补测两拍:通知先于焦点到位、或焦点切换时键盘高度不变都不丢帧
-    document.addEventListener('focusin', () => { setTimeout(() => lift('fi'), 80); setTimeout(() => lift('fi2'), 350); });
-    document.addEventListener('focusout', () => { setTimeout(() => lift('fo'), 80); setTimeout(() => lift('fo2'), 350); });
 })();
 
 // ============================================

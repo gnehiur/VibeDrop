@@ -1761,14 +1761,6 @@ mod ios_scroll_pin {
         );
     }
 
-    // 焊死开关:焦点在智能卡(顶部,不该动)时开;焦点在下方输入框(互传卡等)时
-    // 由前端临时关掉,放行 WebKit 键盘揭示的程序化上推,否则键盘会盖住输入框。
-    static ENABLED: AtomicBool = AtomicBool::new(true);
-
-    pub fn set_enabled(enabled: bool) {
-        ENABLED.store(enabled, Ordering::SeqCst);
-    }
-
     define_class!(
         // KVO 观察者:contentOffset 一变就在渲染前归零——预防级固定,肉眼看不到任何移动
         #[unsafe(super(NSObject))]
@@ -1785,7 +1777,7 @@ mod ios_scroll_pin {
                 _context: *mut c_void,
             ) {
                 unsafe {
-                    if object.is_null() || !ENABLED.load(Ordering::SeqCst) {
+                    if object.is_null() {
                         return;
                     }
                     // 静止位不是(0,0):安全区内嵌下 contentOffset 的自然值是负的内嵌量。
@@ -2016,15 +2008,16 @@ mod ios_keyboard_watch {
                     let bounds: CGRect = msg_send![&*screen, bounds];
                     // 键盘遮挡高度=屏高-键盘顶边;收起时 origin.y==屏高→0
                     let covered = (bounds.size.height - rect.origin.y).max(0.0);
-                    let js = format!(
-                        "window.__vdKeyboardHeight={covered};window.dispatchEvent(new Event('vd-keyboard'))"
-                    );
-                    let js_ns = nsstring(&js);
-                    let _: () = msg_send![
-                        &*wk,
-                        evaluateJavaScript: &*js_ns,
-                        completionHandler: std::ptr::null_mut::<AnyObject>()
-                    ];
+                    // 安卓 adjustResize 的 iOS 同构:把 WebView 窗口缩短键盘高,页面自己重排——
+                    // 上面的不动/下面的上浮/导航骑上键盘全部自然发生,零 JS 参与(2026-08-25 减法版)
+                    let superview: *mut AnyObject = msg_send![&*wk, superview];
+                    if superview.is_null() {
+                        return;
+                    }
+                    let sv_bounds: CGRect = msg_send![&*superview, bounds];
+                    let mut frame: CGRect = msg_send![&*wk, frame];
+                    frame.size.height = sv_bounds.size.height - covered;
+                    let _: () = msg_send![&*wk, setFrame: frame];
                 }
             }
         }
@@ -2061,37 +2054,6 @@ fn apply_ios_scroll_lock(window: tauri::WebviewWindow) {
     }
 }
 
-// 选择性松绑:焦点在智能卡时焊死(enabled=true),焦点在下方输入框时放行
-// 键盘上推(enabled=false);焊回时把页面归位到系统静止位。Android/桌面为空操作。
-#[tauri::command]
-fn set_ios_scroll_pin(window: tauri::WebviewWindow, enabled: bool) {
-    #[cfg(target_os = "ios")]
-    {
-        ios_scroll_pin::set_enabled(enabled);
-        if enabled {
-            let _ = window.with_webview(|webview| unsafe {
-                use objc2::msg_send;
-                use objc2::runtime::AnyObject;
-                let wk = webview.inner() as *mut AnyObject;
-                if wk.is_null() {
-                    return;
-                }
-                let scroll_view: *mut AnyObject = msg_send![&*wk, scrollView];
-                if scroll_view.is_null() {
-                    return;
-                }
-                let insets: ios_scroll_pin::UIEdgeInsets =
-                    msg_send![&*scroll_view, adjustedContentInset];
-                let rest = ios_scroll_pin::CGPoint { x: -insets.left, y: -insets.top };
-                let _: () = msg_send![&*scroll_view, setContentOffset: rest];
-            });
-        }
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-        let _ = (window, enabled);
-    }
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -2126,7 +2088,6 @@ pub fn run() {
             resolve_media_path,
             get_device_model,
             apply_ios_scroll_lock,
-            set_ios_scroll_pin,
             check_paths_exist,
             vault_upload_media,
             get_discovery_diagnostics,
