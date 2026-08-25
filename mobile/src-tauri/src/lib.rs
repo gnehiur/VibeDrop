@@ -1838,6 +1838,17 @@ fn apply_scroll_lock(window: &tauri::WebviewWindow) {
         }
         let _: () = msg_send![&*scroll_view, setScrollEnabled: false];
         let _: () = msg_send![&*scroll_view, setBounces: false];
+        // 父视图底色刷成页面同色(#eef1f5):键盘爬升的0.25秒里窗口缩短后露出的
+        // 底部条带不再闪异色(2026-08-25 用户抓到的"中间闪一下")
+        let superview: *mut AnyObject = msg_send![&*wk, superview];
+        if !superview.is_null() {
+            let color_cls = objc2::runtime::AnyClass::get(c"UIColor").unwrap();
+            let bg: *mut AnyObject = msg_send![
+                color_cls,
+                colorWithRed: 0.933_f64, green: 0.945_f64, blue: 0.961_f64, alpha: 1.0_f64
+            ];
+            let _: () = msg_send![&*superview, setBackgroundColor: &*bg];
+        }
         ios_scroll_pin::attach(scroll_view);
         ios_keyboard_watch::attach(wk);
         // 借道此命令做缓存自愈:新旧两代 JS 启动时都会调 apply_ios_scroll_lock,
