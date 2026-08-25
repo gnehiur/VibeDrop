@@ -1848,7 +1848,99 @@ fn apply_scroll_lock(window: &tauri::WebviewWindow) {
         let _: () = msg_send![&*scroll_view, setBounces: false];
         ios_scroll_pin::attach(scroll_view);
         ios_keyboard_watch::attach(wk);
+        // 借道此命令做缓存自愈:新旧两代 JS 启动时都会调 apply_ios_scroll_lock,
+        // 旧前端会自己送上门来触发指纹核对→清缓存重载,无需它配合升级
+        ios_cache_guard::check_and_heal(wk);
     });
+}
+
+#[cfg(target_os = "ios")]
+mod ios_cache_guard {
+    // WKWebView 会把 tauri 自定义协议的响应写进磁盘缓存,App 更新后缓存照旧命中,
+    // 前端永远停在旧版(2026-08-25 实锤:一晚四连装全被缓存吞掉,水印纹丝不动)。
+    // 自愈:核对页面里 window.__vdBuild 指纹与二进制内嵌资产的指纹,不符即
+    // 清 Disk/Memory 缓存(不动 localStorage,历史设置无损)并重载页面。
+    use block2::RcBlock;
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use std::ffi::{CStr, CString};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // include_str! 让 cargo 把前端当正式依赖追踪,顺带根治"只改JS不触发重编译"的嵌资产坑
+    const EMBEDDED_APPJS: &str = include_str!("../../src/app.js");
+
+    // 每次冷启动最多自愈一次,防指纹永远对不上时无限重载
+    static HEAL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    fn expected_build() -> Option<&'static str> {
+        let key = "window.__vdBuild = '";
+        let start = EMBEDDED_APPJS.find(key)? + key.len();
+        let rest = &EMBEDDED_APPJS[start..];
+        Some(&rest[..rest.find('\'')?])
+    }
+
+    unsafe fn nsstring(text: &str) -> *mut AnyObject {
+        let c = CString::new(text).unwrap();
+        let cls = AnyClass::get(c"NSString").unwrap();
+        msg_send![cls, stringWithUTF8String: c.as_ptr()]
+    }
+
+    unsafe fn from_nsstring(s: *mut AnyObject) -> String {
+        if s.is_null() {
+            return String::new();
+        }
+        let utf8: *const std::os::raw::c_char = msg_send![&*s, UTF8String];
+        if utf8.is_null() {
+            return String::new();
+        }
+        CStr::from_ptr(utf8).to_string_lossy().into_owned()
+    }
+
+    pub unsafe fn check_and_heal(wk: *mut AnyObject) {
+        let Some(expected) = expected_build() else {
+            return;
+        };
+        let expected = expected.to_string();
+        let wk_addr = wk as usize;
+        let completion = RcBlock::new(move |result: *mut AnyObject, _error: *mut AnyObject| {
+            let running = unsafe { from_nsstring(result) };
+            if running == expected {
+                return;
+            }
+            if HEAL_COUNT.fetch_add(1, Ordering::SeqCst) >= 1 {
+                return;
+            }
+            unsafe { purge_and_reload(wk_addr as *mut AnyObject) };
+        });
+        let js = nsstring("window.__vdBuild||''");
+        let _: () = msg_send![&*wk, evaluateJavaScript: &*js, completionHandler: &*completion];
+    }
+
+    unsafe fn purge_and_reload(wk: *mut AnyObject) {
+        let array_cls = AnyClass::get(c"NSMutableArray").unwrap();
+        let types_arr: *mut AnyObject = msg_send![array_cls, array];
+        // WebKit 数据类型常量的值与符号名同文,字面量即可;只清缓存,不碰 LocalStorage
+        for name in ["WKWebsiteDataTypeDiskCache", "WKWebsiteDataTypeMemoryCache"] {
+            let s = nsstring(name);
+            let _: () = msg_send![&*types_arr, addObject: &*s];
+        }
+        let set_cls = AnyClass::get(c"NSSet").unwrap();
+        let types: *mut AnyObject = msg_send![set_cls, setWithArray: &*types_arr];
+        let date_cls = AnyClass::get(c"NSDate").unwrap();
+        let past: *mut AnyObject = msg_send![date_cls, distantPast];
+        let store_cls = AnyClass::get(c"WKWebsiteDataStore").unwrap();
+        let store: *mut AnyObject = msg_send![store_cls, defaultDataStore];
+        let wk_addr = wk as usize;
+        let done = RcBlock::new(move || {
+            let _: *mut AnyObject = unsafe { msg_send![wk_addr as *mut AnyObject, reload] };
+        });
+        let _: () = msg_send![
+            &*store,
+            removeDataOfTypes: &*types,
+            modifiedSince: &*past,
+            completionHandler: &*done
+        ];
+    }
 }
 
 #[cfg(target_os = "ios")]
