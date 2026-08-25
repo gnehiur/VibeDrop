@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kbavoid-v4-fullpage-20260825';
+window.__vdBuild = 'kbavoid-v5-stable-20260825';
 probe('appjs-build', window.__vdBuild);
 
 // iOS 外层滚动锁:启动+每次回前台补一次(幂等),防冷启动时序漏锁
@@ -78,6 +78,8 @@ probe('appjs-build', window.__vdBuild);
     // 键盘高度来自原生 UIKit 通知(vd-keyboard 事件+__vdKeyboardHeight 变量)——
     // WKWebView 里键盘不改变 visualViewport,靠它测重叠恒为0(2026-08-25 实测教训)。
     let kbHeight = 0;
+    let currentLift = 0; // 当前已施加的位移;测量必须先还原它,否则"抬完再量"会得出
+                         // 更小的需求量→放下→再量又要抬,页面上下跳(2026-08-25 v4实测)
     const lift = (why) => {
         if (!document.body) return;
         const el = document.activeElement;
@@ -87,13 +89,17 @@ probe('appjs-build', window.__vdBuild);
         let overlap = 0;
         if (needs && kbHeight > 0) {
             const rect = el.getBoundingClientRect();
-            overlap = rect.bottom + 16 - (window.innerHeight - kbHeight);
+            // getBoundingClientRect 含 transform 效果,加回 currentLift 还原真实版面坐标
+            const trueTop = rect.top + currentLift;
+            const trueBottom = rect.bottom + currentLift;
+            overlap = trueBottom + 16 - (window.innerHeight - kbHeight);
             // 安卓式整页上抬(2026-08-25 用户点名):目标是连底部导航一起抬到键盘上方,
             // 即整体位移≈键盘高;但不许把聚焦输入框顶出屏幕顶(留24px),取安全值;
             // 无论如何至少抬出重叠量,保证输入框脱离键盘遮挡
-            const fullLift = Math.min(kbHeight, Math.max(0, rect.top - 24));
+            const fullLift = Math.min(kbHeight, Math.max(0, trueTop - 24));
             offset = Math.round(Math.max(Math.max(overlap, 0), fullLift));
         }
+        currentLift = offset;
         probe('kb-lift', JSON.stringify({
             why, kb: Math.round(kbHeight), needs: Boolean(needs),
             ov: Math.round(overlap), off: offset, ih: window.innerHeight,
