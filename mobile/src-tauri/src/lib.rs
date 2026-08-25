@@ -2086,39 +2086,19 @@ mod ios_keyboard_watch {
                     let bounds: CGRect = msg_send![&*screen, bounds];
                     // 键盘遮挡高度=屏高-键盘顶边;收起时 origin.y==屏高→0
                     let covered = (bounds.size.height - rect.origin.y).max(0.0);
-                    // 安卓 adjustResize 的 iOS 同构:把 WebView 窗口缩短键盘高,页面自己重排——
-                    // 上面的不动/下面的上浮全部自然发生,零 JS 参与(2026-08-25 减法版)。
-                    // 弹出:立刻缩短(终局画面一步到位,新露区域被键盘盖着,无闪)。
-                    // 收起:等键盘滑完(时长读系统通知)再恢复全高——立刻恢复会让"还没来得及
-                    // 绘制的新增内容条"被下滑中的键盘边缘揭开,闪一帧错位(2026-08-25 实测)。
-                    let nsobj = AnyClass::get(c"NSObject").unwrap();
-                    let _: () = msg_send![
-                        nsobj,
-                        cancelPreviousPerformRequestsWithTarget: self,
-                        selector: objc2::sel!(vdRestoreFrame:),
-                        object: std::ptr::null_mut::<AnyObject>()
-                    ];
+                    // 安卓 adjustResize 的 iOS 同构:把 WebView 窗口缩短键盘高,页面自己重排。
+                    // 时序纪律(2026-08-25 定):零定时器,全部系统事件驱动——
+                    // 弹出/换高:WillChangeFrame 立刻缩短(新露区域被键盘盖着,无闪);
+                    // 收起:本通知不动作,等 DidHide(系统保证动画结束后送达)再恢复全高。
+                    // 曾用"读动画时长+延时恢复"实测定时器在键盘动画期不保证开火,残留半高白块。
                     if covered > 0.0 {
                         resize_webview(wk, covered);
-                    } else {
-                        let mut duration: f64 = 0.3;
-                        let dur_key = nsstring("UIKeyboardAnimationDurationUserInfoKey");
-                        let dur_num: *mut AnyObject = msg_send![&*user_info, objectForKey: &*dur_key];
-                        if !dur_num.is_null() {
-                            duration = msg_send![&*dur_num, doubleValue];
-                        }
-                        let _: () = msg_send![
-                            self,
-                            performSelector: objc2::sel!(vdRestoreFrame:),
-                            withObject: std::ptr::null_mut::<AnyObject>(),
-                            afterDelay: duration + 0.02
-                        ];
                     }
                 }
             }
 
-            #[unsafe(method(vdRestoreFrame:))]
-            fn vd_restore_frame(&self, _obj: *mut AnyObject) {
+            #[unsafe(method(vdKeyboardDidHide:))]
+            fn vd_keyboard_did_hide(&self, _notification: *mut AnyObject) {
                 unsafe {
                     let wk = WEBVIEW.load(Ordering::SeqCst) as *mut AnyObject;
                     if wk.is_null() {
@@ -2157,6 +2137,14 @@ mod ios_keyboard_watch {
             addObserver: watcher_ptr as *mut AnyObject,
             selector: objc2::sel!(keyboardChanged:),
             name: &*name,
+            object: std::ptr::null_mut::<AnyObject>()
+        ];
+        let hide_name = nsstring("UIKeyboardDidHideNotification");
+        let _: () = msg_send![
+            &*center,
+            addObserver: watcher_ptr as *mut AnyObject,
+            selector: objc2::sel!(vdKeyboardDidHide:),
+            name: &*hide_name,
             object: std::ptr::null_mut::<AnyObject>()
         ];
     }
