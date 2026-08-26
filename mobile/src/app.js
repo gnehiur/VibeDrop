@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kb-v18-coldbase-refocus-20260826';
+window.__vdBuild = 'kb-v19-android-v14restore-20260826';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -98,18 +98,17 @@ probe('appjs-build', window.__vdBuild);
     const isEditable = (el) => Boolean(el && typeof el.matches === 'function' && el.matches('textarea, input'));
     // 2026-08-25 深夜定版:回退到 v8 手感(用户拍板"至少没有奇怪体验")——
     // 聚焦即藏标签栏,平滑动画滚动定位;"瞬时/单帧"路线实测每步都引入新怪相,全部放弃。
-    let nudgeGuardUntil = 0; // 重聚焦自愈会再触发 focusin,用时间闸防递归
+    // 安卓行为=2026-08-26 用户验收过的 v14 原样(v17基准只增/v18重聚焦两版补丁实测更差,已撤);
+    // 唯一保留的一行:聚焦时把基准往全高抬(方向上只会让"键盘开着"判断更准,不可能反向出错)。
+    let nudgeGuardUntil = 0; // iOS 重聚焦自愈会再触发 focusin,用时间闸防递归
     document.addEventListener('focusin', (e) => {
         const el = e.target;
         if (!isEditable(el)) return;
         document.body.classList.add('kb-open');
-        // 聚焦瞬间键盘必然还没弹出,窗口是全高——在这里校准基准,堵死
-        // "脚本加载时页面未排完版取到残缺小值→首次弹键盘误判"的冷启动窗口(2026-08-26 安卓实测)
         baseHeight = Math.max(baseHeight, window.innerHeight);
-        if (Date.now() < nudgeGuardUntil) return;
-        // iOS 光标覆盖层竞态自愈:聚焦瞬间系统按旧几何画光标,窗口随后缩短它不重算,
-        // 光标偶发跑到屏幕最左(打个字才归位)。键盘落定后逼系统重画:
-        // 有内容→原地重设选区;空框→重设是无操作(v15教训),改快速失焦重聚焦。
+        // 光标覆盖层竞态自愈是 iOS 专属病(窗口缩短不重画),安卓一律不做,免生副作用
+        const isIosApp = typeof getNativeMobilePlatform === 'function' && getNativeMobilePlatform() === 'ios';
+        if (!isIosApp || Date.now() < nudgeGuardUntil) return;
         setTimeout(() => {
             if (document.activeElement !== el) return;
             try {
@@ -140,13 +139,8 @@ probe('appjs-build', window.__vdBuild);
             document.body.classList.remove('kb-open');
         }
     };
-    // 无键盘时的窗口高度基准:只许长高不许压矮——"没聚焦就采样"曾在输入框切换的
-    // 焦点缝隙里把基准记成键盘开着的矮高度,键盘一变高矮标签栏就误现(2026-08-26 安卓实测)。
-    // 唯一合法的重校准是转屏,单独处理。
+    // 无键盘时的窗口高度基准:没有输入框聚焦时随时校准(转屏/分屏自适应)——v14 原样
     let baseHeight = window.innerHeight;
-    window.addEventListener('orientationchange', () => {
-        setTimeout(() => { baseHeight = window.innerHeight; }, 300);
-    });
     window.addEventListener('resize', () => {
         const el = document.activeElement;
         window.__vdKbProbe('resize', String(window.innerHeight));
@@ -154,7 +148,11 @@ probe('appjs-build', window.__vdBuild);
         if (nativeKbCovered !== null) {
             kbOpen = nativeKbCovered > 0;
         } else {
-            baseHeight = Math.max(baseHeight, window.innerHeight);
+            if (!isEditable(el)) {
+                baseHeight = window.innerHeight;
+            } else {
+                baseHeight = Math.max(baseHeight, window.innerHeight);
+            }
             kbOpen = window.innerHeight < baseHeight - 60;
         }
         if (!kbOpen) {
