@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kb-v12-probe-20260825';
+window.__vdBuild = 'kb-v13-rollback-v8feel-20260825';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -91,21 +91,26 @@ probe('appjs-build', window.__vdBuild);
     // 必须在"窗口尺寸变化"这一个事件里同步一次完成,一次重绘直达终局;
     // 分拍执行(focusin藏栏→resize滚动)会被肉眼抓到中间态的四不像帧(2026-08-25 实测)。
     const isEditable = (el) => Boolean(el && typeof el.matches === 'function' && el.matches('textarea, input'));
-    let baseHeight = window.innerHeight; // 无键盘时的窗口高度基准(转屏等场景自动更新)
+    // 2026-08-25 深夜定版:回退到 v8 手感(用户拍板"至少没有奇怪体验")——
+    // 聚焦即藏标签栏,平滑动画滚动定位;"瞬时/单帧"路线实测每步都引入新怪相,全部放弃。
+    document.addEventListener('focusin', (e) => {
+        if (isEditable(e.target)) document.body.classList.add('kb-open');
+    });
+    document.addEventListener('focusout', () => {
+        setTimeout(() => {
+            if (!isEditable(document.activeElement)) document.body.classList.remove('kb-open');
+        }, 100);
+    });
     window.addEventListener('resize', () => {
         const el = document.activeElement;
-        const focused = isEditable(el);
-        const kbUp = focused && window.innerHeight < baseHeight - 60;
-        window.__vdKbProbe('resize', JSON.stringify({
-            ih: window.innerHeight, base: baseHeight, focused, kbUp,
-        }));
-        if (!kbUp) baseHeight = Math.max(baseHeight, window.innerHeight);
-        document.body.classList.toggle('kb-open', kbUp);
-        if (kbUp) {
-            // 锚定规则(2026-08-25 用户定):聚焦输入框所在整张卡片底边贴住输入法顶边;
-            // 顶部的智能卡按此规则滚动量为零,天然不动。behavior:'auto'=瞬时,拒绝动画偷时间
+        window.__vdKbProbe('resize', String(window.innerHeight));
+        if (isEditable(el)) {
+            // 锚定规则:聚焦输入框所在整张卡片底边贴住输入法顶边;顶部智能卡滚动量为零天然不动
             const card = el.closest('.mac-card');
-            (card || el).scrollIntoView({ block: card ? 'end' : 'nearest', behavior: 'auto' });
+            setTimeout(() => (card || el).scrollIntoView({
+                block: card ? 'end' : 'nearest',
+                behavior: 'smooth',
+            }), 50);
         }
     });
 })();

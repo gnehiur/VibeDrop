@@ -2087,26 +2087,11 @@ mod ios_keyboard_watch {
                     // 键盘遮挡高度=屏高-键盘顶边;收起时 origin.y==屏高→0
                     let covered = (bounds.size.height - rect.origin.y).max(0.0);
                     // 安卓 adjustResize 的 iOS 同构:把 WebView 窗口缩短键盘高,页面自己重排。
-                    // 时序纪律(2026-08-25 定):零定时器,全部系统事件驱动——
-                    // 弹出/换高:WillChangeFrame 立刻缩短(新露区域被键盘盖着,无闪);
-                    // 收起:本通知不动作,等 DidHide(系统保证动画结束后送达)再恢复全高。
-                    // 曾用"读动画时长+延时恢复"实测定时器在键盘动画期不保证开火,残留半高白块。
+                    // 2026-08-25 深夜定版:回退 v8 时序——弹出收起都在本通知立即调整,
+                    // 不搞延时恢复(定时器不保证开火→白块)也不等 DidHide(实测体验更怪),
+                    // 收起瞬间的一帧重排由 JS 侧平滑滚动动画盖过,用户拍板此手感可接受。
                     kb_probe(wk, "nwcf", covered);
-                    if covered > 0.0 {
-                        resize_webview(wk, covered);
-                    }
-                }
-            }
-
-            #[unsafe(method(vdKeyboardDidHide:))]
-            fn vd_keyboard_did_hide(&self, _notification: *mut AnyObject) {
-                unsafe {
-                    let wk = WEBVIEW.load(Ordering::SeqCst) as *mut AnyObject;
-                    if wk.is_null() {
-                        return;
-                    }
-                    kb_probe(wk, "ndhide", 0.0);
-                    resize_webview(wk, 0.0);
+                    resize_webview(wk, covered);
                 }
             }
         }
@@ -2151,14 +2136,6 @@ mod ios_keyboard_watch {
             addObserver: watcher_ptr as *mut AnyObject,
             selector: objc2::sel!(keyboardChanged:),
             name: &*name,
-            object: std::ptr::null_mut::<AnyObject>()
-        ];
-        let hide_name = nsstring("UIKeyboardDidHideNotification");
-        let _: () = msg_send![
-            &*center,
-            addObserver: watcher_ptr as *mut AnyObject,
-            selector: objc2::sel!(vdKeyboardDidHide:),
-            name: &*hide_name,
             object: std::ptr::null_mut::<AnyObject>()
         ];
     }
