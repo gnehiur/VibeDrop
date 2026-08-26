@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kb-v14-android-navback-20260826';
+window.__vdBuild = 'kb-v15-caret-renudge-20260826';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -94,7 +94,18 @@ probe('appjs-build', window.__vdBuild);
     // 2026-08-25 深夜定版:回退到 v8 手感(用户拍板"至少没有奇怪体验")——
     // 聚焦即藏标签栏,平滑动画滚动定位;"瞬时/单帧"路线实测每步都引入新怪相,全部放弃。
     document.addEventListener('focusin', (e) => {
-        if (isEditable(e.target)) document.body.classList.add('kb-open');
+        const el = e.target;
+        if (!isEditable(el)) return;
+        document.body.classList.add('kb-open');
+        // iOS 光标覆盖层竞态自愈:聚焦瞬间系统按旧几何画光标,窗口随后缩短它不重算,
+        // 光标偶发跑到屏幕最左(打个字才归位)。键盘落定后原地重设一次选区逼它重画。
+        setTimeout(() => {
+            if (document.activeElement !== el || typeof el.setSelectionRange !== 'function') return;
+            try {
+                const pos = el.selectionStart || 0;
+                el.setSelectionRange(pos, pos);
+            } catch (_) { /* 忽略 */ }
+        }, 400);
     });
     document.addEventListener('focusout', () => {
         setTimeout(() => {
