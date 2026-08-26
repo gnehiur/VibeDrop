@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kb-v13-rollback-v8feel-20260825';
+window.__vdBuild = 'kb-v14-android-navback-20260826';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -101,10 +101,25 @@ probe('appjs-build', window.__vdBuild);
             if (!isEditable(document.activeElement)) document.body.classList.remove('kb-open');
         }, 100);
     });
+    // 无键盘时的窗口高度基准:没有输入框聚焦时随时校准(转屏/分屏自适应)
+    let baseHeight = window.innerHeight;
     window.addEventListener('resize', () => {
         const el = document.activeElement;
         window.__vdKbProbe('resize', String(window.innerHeight));
+        if (!isEditable(el)) {
+            baseHeight = window.innerHeight;
+        } else {
+            baseHeight = Math.max(baseHeight, window.innerHeight);
+        }
+        const kbOpen = window.innerHeight < baseHeight - 60;
+        if (!kbOpen) {
+            // 键盘确实走了就立刻放回标签栏,不等失焦——安卓上滑/返回手势收键盘
+            // 不触发失焦,光靠 focusout 标签栏会失踪到下次乱点(2026-08-26 用户实测)
+            document.body.classList.remove('kb-open');
+            return;
+        }
         if (isEditable(el)) {
+            document.body.classList.add('kb-open');
             // 锚定规则:聚焦输入框所在整张卡片底边贴住输入法顶边;顶部智能卡滚动量为零天然不动
             const card = el.closest('.mac-card');
             setTimeout(() => (card || el).scrollIntoView({
