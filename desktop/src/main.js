@@ -2676,3 +2676,8 @@ function showToast(message) {
         toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2000);
     }, 150);
 }
+
+// 失焦即暂停装饰动画(呼吸灯等):后台空烧CPU的元凶,机理见 style.css .pulse 注释(2026-08-26)
+window.addEventListener('blur', () => document.body.classList.add('vd-bg'));
+window.addEventListener('focus', () => document.body.classList.remove('vd-bg'));
+if (!document.hasFocus()) document.body.classList.add('vd-bg');

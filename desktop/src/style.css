@@ -390,17 +390,36 @@ h1 {
     height: 8px;
     border-radius: 50%;
     background: var(--success);
+    position: relative;
+}
+
+/* 呼吸环只用 transform/opacity(合成器直通,CPU零参与)——box-shadow 动画每帧惊动
+   整条渲染管线,曾把两台 Mac 的 WebView 进程各烧到 85-92% CPU(2026-08-26 采样实锤) */
+.pulse::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: 50%;
+    border: 2px solid rgba(52, 199, 89, 0.4);
     animation: pulse 1.8s infinite;
+    will-change: transform, opacity;
+}
+
+/* 窗口失焦时暂停一切装饰动画:桌面端绝大部分时间躺后台,不为没人看的灯烧电 */
+body.vd-bg * {
+    animation-play-state: paused !important;
 }
 
 @keyframes pulse {
-    0%,
-    100% {
-        box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.24);
+    0% {
+        transform: scale(0.6);
+        opacity: 0.9;
     }
 
-    50% {
-        box-shadow: 0 0 0 7px rgba(52, 199, 89, 0);
+    70%,
+    100% {
+        transform: scale(2.2);
+        opacity: 0;
     }
 }
 
