@@ -121,7 +121,9 @@ img {
     z-index: 1;
     max-width: 460px;
     margin: 0 auto;
-    height: 100dvh;
+    /* --kb=iOS 原生播报的键盘高度(安卓恒为0走系统 adjustResize):用 CSS 缩矮应用壳,
+       而不是缩 WebView 窗口——改窗口会让网页进程排版变脏、光标几何缺失画到屏幕最左 */
+    height: calc(100dvh - var(--kb, 0px));
     display: flex;
     flex-direction: column;
 }

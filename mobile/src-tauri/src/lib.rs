@@ -1838,17 +1838,6 @@ fn apply_scroll_lock(window: &tauri::WebviewWindow) {
         }
         let _: () = msg_send![&*scroll_view, setScrollEnabled: false];
         let _: () = msg_send![&*scroll_view, setBounces: false];
-        // 父视图底色刷成页面同色(#eef1f5):键盘爬升的0.25秒里窗口缩短后露出的
-        // 底部条带不再闪异色(2026-08-25 用户抓到的"中间闪一下")
-        let superview: *mut AnyObject = msg_send![&*wk, superview];
-        if !superview.is_null() {
-            let color_cls = objc2::runtime::AnyClass::get(c"UIColor").unwrap();
-            let bg: *mut AnyObject = msg_send![
-                color_cls,
-                colorWithRed: 0.933_f64, green: 0.945_f64, blue: 0.961_f64, alpha: 1.0_f64
-            ];
-            let _: () = msg_send![&*superview, setBackgroundColor: &*bg];
-        }
         ios_scroll_pin::attach(scroll_view);
         ios_keyboard_watch::attach(wk);
         ios_kill_accessory_bar::apply(scroll_view);
@@ -2086,28 +2075,14 @@ mod ios_keyboard_watch {
                     let bounds: CGRect = msg_send![&*screen, bounds];
                     // 键盘遮挡高度=屏高-键盘顶边;收起时 origin.y==屏高→0
                     let covered = (bounds.size.height - rect.origin.y).max(0.0);
-                    // 安卓 adjustResize 的 iOS 同构:把 WebView 窗口缩短键盘高,页面自己重排。
-                    // 2026-08-25 深夜定版:回退 v8 时序——弹出收起都在本通知立即调整,
-                    // 不搞延时恢复(定时器不保证开火→白块)也不等 DidHide(实测体验更怪),
-                    // 收起瞬间的一帧重排由 JS 侧平滑滚动动画盖过,用户拍板此手感可接受。
+                    // 2026-08-28 终版:原生只播报键盘遮挡高度,不再改 WebView 窗口尺寸——
+                    // 改窗口会让网页进程排版变脏,光标几何缺失画到屏幕最左(打字才归位)。
+                    // 页面缩矮由 JS 侧 CSS 变量 --kb 完成,视口尺寸恒定。
                     kb_probe(wk, "nwcf", covered);
-                    resize_webview(wk, covered);
                 }
             }
         }
     );
-
-    unsafe fn resize_webview(wk: *mut AnyObject, covered: f64) {
-        let superview: *mut AnyObject = msg_send![&*wk, superview];
-        if superview.is_null() {
-            return;
-        }
-        let sv_bounds: CGRect = msg_send![&*superview, bounds];
-        let mut frame: CGRect = msg_send![&*wk, frame];
-        frame.size.height = sv_bounds.size.height - covered;
-        let _: () = msg_send![&*wk, setFrame: frame];
-        kb_probe(wk, "nsetframe", frame.size.height);
-    }
 
     // 键盘链路黑匣子的原生打点口:走 JS 侧 __vdKbProbe 落盘+上传(2026-08-25 用户点名的debug方式)
     unsafe fn kb_probe(wk: *mut AnyObject, stage: &str, value: f64) {

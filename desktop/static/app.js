@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kb-v19-android-v14restore-20260826';
+window.__vdBuild = 'kb-v20-cssvar-noresize-20260828';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -96,32 +96,25 @@ probe('appjs-build', window.__vdBuild);
     // 必须在"窗口尺寸变化"这一个事件里同步一次完成,一次重绘直达终局;
     // 分拍执行(focusin藏栏→resize滚动)会被肉眼抓到中间态的四不像帧(2026-08-25 实测)。
     const isEditable = (el) => Boolean(el && typeof el.matches === 'function' && el.matches('textarea, input'));
-    // 2026-08-25 深夜定版:回退到 v8 手感(用户拍板"至少没有奇怪体验")——
-    // 聚焦即藏标签栏,平滑动画滚动定位;"瞬时/单帧"路线实测每步都引入新怪相,全部放弃。
-    // 安卓行为=2026-08-26 用户验收过的 v14 原样(v17基准只增/v18重聚焦两版补丁实测更差,已撤);
-    // 唯一保留的一行:聚焦时把基准往全高抬(方向上只会让"键盘开着"判断更准,不可能反向出错)。
-    let nudgeGuardUntil = 0; // iOS 重聚焦自愈会再触发 focusin,用时间闸防递归
+    // 锚定规则:聚焦输入框所在整张卡片底边贴住输入法顶边;顶部智能卡滚动量为零天然不动。
+    // 平滑动画+一拍延时是用户拍板的手感(v8),别再改瞬时。
+    const revealFocusedCard = (el) => {
+        if (!isEditable(el)) return;
+        const card = el.closest('.mac-card');
+        setTimeout(() => (card || el).scrollIntoView({
+            block: card ? 'end' : 'nearest',
+            behavior: 'smooth',
+        }), 50);
+    };
+    // 2026-08-25 定版:聚焦即藏标签栏,平滑动画滚动定位;"瞬时/单帧"路线实测每步都引入新怪相,全部放弃。
+    // 安卓行为=2026-08-26 用户验收过的 v14 原样;唯一保留的一行:聚焦时把基准往全高抬
+    // (方向上只会让"键盘开着"判断更准,不可能反向出错)。
+    // 光标"失焦重聚焦"哄画补丁已拆:病根(改窗口尺寸)拔除后它只剩副作用风险。
     document.addEventListener('focusin', (e) => {
         const el = e.target;
         if (!isEditable(el)) return;
         document.body.classList.add('kb-open');
         baseHeight = Math.max(baseHeight, window.innerHeight);
-        // 光标覆盖层竞态自愈是 iOS 专属病(窗口缩短不重画),安卓一律不做,免生副作用
-        const isIosApp = typeof getNativeMobilePlatform === 'function' && getNativeMobilePlatform() === 'ios';
-        if (!isIosApp || Date.now() < nudgeGuardUntil) return;
-        setTimeout(() => {
-            if (document.activeElement !== el) return;
-            try {
-                if (el.value === '') {
-                    nudgeGuardUntil = Date.now() + 1000;
-                    el.blur();
-                    el.focus();
-                } else if (typeof el.setSelectionRange === 'function') {
-                    const pos = el.selectionStart || 0;
-                    el.setSelectionRange(pos, pos);
-                }
-            } catch (_) { /* 忽略 */ }
-        }, 400);
     });
     document.addEventListener('focusout', () => {
         setTimeout(() => {
@@ -130,14 +123,15 @@ probe('appjs-build', window.__vdBuild);
     });
     // 键盘状态的两种真理来源:iOS=原生通知亲口播报(权威,收到过一次后永远用它);
     // 安卓=无原生信号,用"窗口高度对比基准"启发式(系统adjustResize的值可信,已验证)
+    // iOS 键盘避让终版(2026-08-28):原生只播报键盘高度,网页用 CSS 变量 --kb 把 #app 缩矮
+    // 同样高度——页面效果与"缩 WebView 窗口"完全一致,但视口尺寸恒定,网页进程排版永不变脏,
+    // 光标几何数据永远完整(改窗口曾致光标偶发画到屏幕最左,打字才归位)。
     let nativeKbCovered = null;
     window.__vdKbSignal = (covered) => {
         nativeKbCovered = covered;
-        if (covered > 0) {
-            document.body.classList.add('kb-open');
-        } else {
-            document.body.classList.remove('kb-open');
-        }
+        document.documentElement.style.setProperty('--kb', `${Math.max(0, Math.round(covered))}px`);
+        document.body.classList.toggle('kb-open', covered > 0);
+        if (covered > 0) revealFocusedCard(document.activeElement);
     };
     // 无键盘时的窗口高度基准:没有输入框聚焦时随时校准(转屏/分屏自适应)——v14 原样
     let baseHeight = window.innerHeight;
@@ -163,12 +157,7 @@ probe('appjs-build', window.__vdBuild);
         }
         if (isEditable(el)) {
             document.body.classList.add('kb-open');
-            // 锚定规则:聚焦输入框所在整张卡片底边贴住输入法顶边;顶部智能卡滚动量为零天然不动
-            const card = el.closest('.mac-card');
-            setTimeout(() => (card || el).scrollIntoView({
-                block: card ? 'end' : 'nearest',
-                behavior: 'smooth',
-            }), 50);
+            revealFocusedCard(el);
         }
     });
 })();
