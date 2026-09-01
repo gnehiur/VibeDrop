@@ -8,14 +8,14 @@
 
 **Telefonowan Macwan portapapelesta tinkuchinapaq, qillqatawan archivokunatawan apachinapaq yanapakuy — local redpi chiqalla tinkun, mana cloudta munaspa**
 
-[![release](https://img.shields.io/github/v/release/jncdke/VibeDrop?color=2f6fed)](https://github.com/jncdke/VibeDrop/releases)
-[![license](https://img.shields.io/github/license/jncdke/VibeDrop?color=green)](LICENSE)
+[![release](https://img.shields.io/github/v/release/gnehiur/VibeDrop?color=2f6fed)](https://github.com/gnehiur/VibeDrop/releases)
+[![license](https://img.shields.io/github/license/gnehiur/VibeDrop?color=green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Android%20%7C%20iOS-8a63d2)
 ![i18n](https://img.shields.io/badge/languages-11-2f6fed)
 ![tauri](https://img.shields.io/badge/Tauri-2.x-ffc131?logo=tauri&logoColor=white)
 ![rust](https://img.shields.io/badge/Rust-stable-e43717?logo=rust)
 
-[Release urquy](https://github.com/jncdke/VibeDrop/releases) · [Ruraykuna](#ruraykuna) · [Willay kikillanmanta taqwiy](#willay-kikillanmanta-taqwiy-hinaspa-simi-kuti-yupay-informe)
+[Release urquy](https://github.com/gnehiur/VibeDrop/releases) · [Ruraykuna](#ruraykuna) · [Willay kikillanmanta taqwiy](#willay-kikillanmanta-taqwiy-hinaspa-simi-kuti-yupay-informe)
 
 </div>
 

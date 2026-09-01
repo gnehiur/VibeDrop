@@ -1003,7 +1003,7 @@ function openExternalUrl(url) {
 }
 
 function initAboutSection() {
-    const GITHUB_REPO_URL = 'https://github.com/jncdke/VibeDrop';
+    const GITHUB_REPO_URL = 'https://github.com/gnehiur/VibeDrop';
     let currentVersion = '';
     const versionEl = $('app-version');
     try {
@@ -1020,7 +1020,7 @@ function initAboutSection() {
         if (!updateResult) return;
         updateResult.textContent = t('检查中...');
         try {
-            const res = await fetch('https://api.github.com/repos/jncdke/VibeDrop/releases/latest');
+            const res = await fetch('https://api.github.com/repos/gnehiur/VibeDrop/releases/latest');
             const data = await res.json();
             const latest = String(data.tag_name || '').replace(/^v/, '');
             if (!latest) throw new Error('no tag');

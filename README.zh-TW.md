@@ -8,14 +8,14 @@
 
 **手機與 Mac 之間的剪貼簿同步、文字與檔案傳輸工具 —— 區域網路直接連線，不依賴雲端**
 
-[![release](https://img.shields.io/github/v/release/jncdke/VibeDrop?color=2f6fed)](https://github.com/jncdke/VibeDrop/releases)
-[![license](https://img.shields.io/github/license/jncdke/VibeDrop?color=green)](LICENSE)
+[![release](https://img.shields.io/github/v/release/gnehiur/VibeDrop?color=2f6fed)](https://github.com/gnehiur/VibeDrop/releases)
+[![license](https://img.shields.io/github/license/gnehiur/VibeDrop?color=green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Android%20%7C%20iOS-8a63d2)
 ![i18n](https://img.shields.io/badge/languages-11-2f6fed)
 ![tauri](https://img.shields.io/badge/Tauri-2.x-ffc131?logo=tauri&logoColor=white)
 ![rust](https://img.shields.io/badge/Rust-stable-e43717?logo=rust)
 
-[下載 Release](https://github.com/jncdke/VibeDrop/releases) · [功能一覽](#功能一覽) · [訊息自我研究](#訊息自我研究詞頻統計報告)
+[下載 Release](https://github.com/gnehiur/VibeDrop/releases) · [功能一覽](#功能一覽) · [訊息自我研究](#訊息自我研究詞頻統計報告)
 
 </div>
 

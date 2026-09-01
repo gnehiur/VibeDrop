@@ -8,14 +8,14 @@
 
 **手机与 Mac 之间的剪贴板同步、文字与文件传输工具 —— 局域网直连，无云依赖**
 
-[![release](https://img.shields.io/github/v/release/jncdke/VibeDrop?color=2f6fed)](https://github.com/jncdke/VibeDrop/releases)
-[![license](https://img.shields.io/github/license/jncdke/VibeDrop?color=green)](LICENSE)
+[![release](https://img.shields.io/github/v/release/gnehiur/VibeDrop?color=2f6fed)](https://github.com/gnehiur/VibeDrop/releases)
+[![license](https://img.shields.io/github/license/gnehiur/VibeDrop?color=green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Android%20%7C%20iOS-8a63d2)
 ![i18n](https://img.shields.io/badge/languages-11-2f6fed)
 ![tauri](https://img.shields.io/badge/Tauri-2.x-ffc131?logo=tauri&logoColor=white)
 ![rust](https://img.shields.io/badge/Rust-stable-e43717?logo=rust)
 
-[下载 Release](https://github.com/jncdke/VibeDrop/releases) · [功能一览](#功能一览) · [消息自我研究](#消息自我研究词频统计报告)
+[下载 Release](https://github.com/gnehiur/VibeDrop/releases) · [功能一览](#功能一览) · [消息自我研究](#消息自我研究词频统计报告)
 
 </div>
 

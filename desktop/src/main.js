@@ -272,7 +272,7 @@ function initDesktopSettingsPage() {
         } catch (_) { /* 保持占位 */ }
     }
 
-    const GITHUB_REPO_URL = 'https://github.com/jncdke/VibeDrop';
+    const GITHUB_REPO_URL = 'https://github.com/gnehiur/VibeDrop';
     document.getElementById('github-open-btn')?.addEventListener('click', async () => {
         try { await invoke('plugin:shell|open', { path: GITHUB_REPO_URL }); } catch (_) { /* 忽略 */ }
     });
@@ -282,7 +282,7 @@ function initDesktopSettingsPage() {
         if (!updateResult) return;
         updateResult.textContent = t('检查中...');
         try {
-            const res = await fetch('https://api.github.com/repos/jncdke/VibeDrop/releases/latest');
+            const res = await fetch('https://api.github.com/repos/gnehiur/VibeDrop/releases/latest');
             const data = await res.json();
             const latest = String(data.tag_name || '').replace(/^v/, '');
             if (!latest) throw new Error('no tag');

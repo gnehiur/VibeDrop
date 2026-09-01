@@ -8,14 +8,14 @@
 
 **Clipboard sync and text/file transfer between your phone and Mac — direct LAN connection, with no cloud dependency**
 
-[![release](https://img.shields.io/github/v/release/jncdke/VibeDrop?color=2f6fed)](https://github.com/jncdke/VibeDrop/releases)
-[![license](https://img.shields.io/github/license/jncdke/VibeDrop?color=green)](LICENSE)
+[![release](https://img.shields.io/github/v/release/gnehiur/VibeDrop?color=2f6fed)](https://github.com/gnehiur/VibeDrop/releases)
+[![license](https://img.shields.io/github/license/gnehiur/VibeDrop?color=green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Android%20%7C%20iOS-8a63d2)
 ![i18n](https://img.shields.io/badge/languages-11-2f6fed)
 ![tauri](https://img.shields.io/badge/Tauri-2.x-ffc131?logo=tauri&logoColor=white)
 ![rust](https://img.shields.io/badge/Rust-stable-e43717?logo=rust)
 
-[Download Release](https://github.com/jncdke/VibeDrop/releases) · [Features](#features) · [message self study](#message-self-study-and-word-frequency-report)
+[Download Release](https://github.com/gnehiur/VibeDrop/releases) · [Features](#features) · [message self study](#message-self-study-and-word-frequency-report)
 
 </div>
 

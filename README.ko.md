@@ -8,14 +8,14 @@
 
 **휴대폰과 Mac 사이에서 클립보드를 동기화하고 텍스트와 파일을 전송하는 도구 — 로컬 네트워크에서 직접 연결하며 클라우드가 필요 없습니다**
 
-[![release](https://img.shields.io/github/v/release/jncdke/VibeDrop?color=2f6fed)](https://github.com/jncdke/VibeDrop/releases)
-[![license](https://img.shields.io/github/license/jncdke/VibeDrop?color=green)](LICENSE)
+[![release](https://img.shields.io/github/v/release/gnehiur/VibeDrop?color=2f6fed)](https://github.com/gnehiur/VibeDrop/releases)
+[![license](https://img.shields.io/github/license/gnehiur/VibeDrop?color=green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Android%20%7C%20iOS-8a63d2)
 ![i18n](https://img.shields.io/badge/languages-11-2f6fed)
 ![tauri](https://img.shields.io/badge/Tauri-2.x-ffc131?logo=tauri&logoColor=white)
 ![rust](https://img.shields.io/badge/Rust-stable-e43717?logo=rust)
 
-[Release 다운로드](https://github.com/jncdke/VibeDrop/releases) · [기능 개요](#기능-개요) · [메시지 독학](#메시지-독학-및-단어-빈도-통계-보고서)
+[Release 다운로드](https://github.com/gnehiur/VibeDrop/releases) · [기능 개요](#기능-개요) · [메시지 독학](#메시지-독학-및-단어-빈도-통계-보고서)
 
 </div>
 
