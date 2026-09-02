@@ -15,7 +15,6 @@
 		958659BF5690525589BB5164 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5B5D8EB00AA6447CE2D93C8F /* main.mm */; };
 		97D357396B73BD40483DAC48 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0723096F3FC9775787D2F863 /* CoreGraphics.framework */; };
 		A732081D26B8D7ED2AC2E53B /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 767814DDF07EB72CB4C9B9E2 /* assets */; };
-		BF57FC8B096E5ABE440CDB19 /* libapp.a in Resources */ = {isa = PBXBuildFile; fileRef = 1B3C603F9E1A882B8C3E8E50 /* libapp.a */; };
 		D12988EF761B82E6B8953075 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D806F991B40DDA345549343C /* QuartzCore.framework */; };
 		E9525455DEFF79856940495E /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3D6608E9CD8CE9373096A4D9 /* WebKit.framework */; };
 		F1F50B3E8459589F4517BA79 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F9F36A0DA72FE348C3615D3C /* Security.framework */; };
@@ -25,7 +24,6 @@
 /* Begin PBXFileReference section */
 		0723096F3FC9775787D2F863 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		080A89692663AADFC6C986A4 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
-		1B3C603F9E1A882B8C3E8E50 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		3D6608E9CD8CE9373096A4D9 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		3EEF1E730B63485109E520DD /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		4B0D3D03751D659588475576 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
@@ -63,14 +61,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		0B2E20E6A6623D897B12C305 /* debug */ = {
-			isa = PBXGroup;
-			children = (
-				1B3C603F9E1A882B8C3E8E50 /* libapp.a */,
-			);
-			path = debug;
-			sourceTree = "<group>";
-		};
 		3FEE53EF35955F35B95EAB79 /* bindings */ = {
 			isa = PBXGroup;
 			children = (
@@ -129,14 +119,6 @@
 			path = "vibedrop-mobile_iOS";
 			sourceTree = "<group>";
 		};
-		CBBF20D6DA918CFEC3BAC605 /* arm64 */ = {
-			isa = PBXGroup;
-			children = (
-				0B2E20E6A6623D897B12C305 /* debug */,
-			);
-			path = arm64;
-			sourceTree = "<group>";
-		};
 		D96E23E40933C25F2C60F144 /* vibedrop-mobile */ = {
 			isa = PBXGroup;
 			children = (
@@ -152,28 +134,12 @@
 				767814DDF07EB72CB4C9B9E2 /* assets */,
 				5769E7F3343758BE56944AA0 /* Assets.xcassets */,
 				B7722912B95859A489832722 /* LaunchScreen.storyboard */,
-				F9ACF105A120DE29547DCC1D /* Externals */,
 				7BEC8861E24D909E505EE6B2 /* Sources */,
 				99BAC5741DBD9F91FF18DF02 /* src */,
 				C9D0AAB80B67C26E5C96A5A6 /* vibedrop-mobile_iOS */,
 				7CF5D4F119C7F536A5BBB45B /* Frameworks */,
 				8CB123C8A4391FE3F33902DE /* Products */,
 			);
-			sourceTree = "<group>";
-		};
-		F9ACF105A120DE29547DCC1D /* Externals */ = {
-			isa = PBXGroup;
-			children = (
-				CBBF20D6DA918CFEC3BAC605 /* arm64 */,
-			);
-			path = Externals;
-			sourceTree = "<group>";
-		};
-		"TEMP_0E2E02AC-5921-4E66-847D-30D80033158A" /* x86_64 */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			path = x86_64;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -240,7 +206,6 @@
 				6A26DA7FBC7BD2785752740C /* Assets.xcassets in Resources */,
 				FBB1A3077F6C6ABDF019BABB /* LaunchScreen.storyboard in Resources */,
 				A732081D26B8D7ED2AC2E53B /* assets in Resources */,
-				BF57FC8B096E5ABE440CDB19 /* libapp.a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -261,7 +226,6 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
 				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
 			);
 			runOnlyForDeploymentPostprocessing = 0;

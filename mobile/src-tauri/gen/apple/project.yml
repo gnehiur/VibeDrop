@@ -31,7 +31,6 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
-      - path: Externals
       - path: vibedrop-mobile_iOS
       - path: assets
         buildPhase: resources
@@ -87,5 +86,4 @@ targets:
         name: Build Rust Code
         basedOnDependencyAnalysis: false
         outputFiles:
-          - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
           - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
