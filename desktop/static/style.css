@@ -2614,7 +2614,9 @@ body.media-viewer-open {
     flex-shrink: 0;
     display: flex;
     gap: 8px;
-    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+    /* 底部安全区只留四成(2026-09-02 用户点名):整段 34pt 留白在 iOS 上是一条空白带,
+       安卓该值为 0 天然贴底;取 0.4 倍后按钮下沿仍在 Home 指示条之上,不被压住 */
+    padding: 8px 12px calc(6px + env(safe-area-inset-bottom) * 0.4);
     background: rgba(255, 255, 255, 0.88);
     border-top: 1px solid rgba(15, 23, 42, 0.08);
     backdrop-filter: blur(28px);
