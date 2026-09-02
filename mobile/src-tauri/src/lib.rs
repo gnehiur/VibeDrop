@@ -1887,14 +1887,18 @@ mod ios_kill_accessory_bar {
                 if sub.is_null() {
                     return;
                 }
-                let Some(sel) = objc2::ffi::sel_registerName(c"inputAccessoryView".as_ptr()) else {
-                    return;
-                };
                 let imp = std::mem::transmute::<
                     unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> *mut c_void,
                     unsafe extern "C-unwind" fn(),
                 >(nil_accessory);
-                objc2::ffi::class_addMethod(sub, sel, imp, c"@@:".as_ptr());
+                // iOS 26 把助手条做成独立容器(inputAccessoryViewController 提供):只覆盖
+                // inputAccessoryView 会留下一个空的圆角外壳继续占位,键盘上报高度也把它算进去,
+                // 页面因此多缩一截(2026-09-02 用户截图实锤)。两个入口都返回空。
+                for name in [c"inputAccessoryView", c"inputAccessoryViewController"] {
+                    if let Some(sel) = objc2::ffi::sel_registerName(name.as_ptr()) {
+                        objc2::ffi::class_addMethod(sub, sel, imp, c"@@:".as_ptr());
+                    }
+                }
                 objc2::ffi::objc_registerClassPair(sub);
             }
             objc2::ffi::object_setClass(view.cast(), sub);
