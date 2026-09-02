@@ -2,7 +2,9 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <!-- viewport-fit=cover:页面铺满全屏,安全区留白由 CSS 的 env(safe-area-inset-*) 掌控。
+         没有它 iOS 把页面限制在安全区内、env() 恒为 0,底部会露出一条网页外的窗口白带(2026-09-02) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="description" content="VibeDrop - 从手机发送文字到 Mac 电脑">
     <title>VibeDrop</title>
     <link rel="manifest" href="/manifest.json">
