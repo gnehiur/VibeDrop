@@ -24,6 +24,11 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import kotlin.math.roundToInt
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -438,9 +443,38 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  // 键盘避让(2026-09-02 与 iOS 同构):清单已设 adjustNothing,系统不再平移窗口;这里监听 IME 内嵌高度,
+  // 换算成 CSS px 播报给网页的 __vdKbSignal(与 iOS 原生通知走同一入口),页面用 --kb 自己缩矮。
+  // 此前默认模式在 Android 15 边到边下退化为"平移整窗",把底部标签栏顶到键盘上方,且 innerHeight 恒不变
+  // 让 JS 高度启发式永远误判(探针实锤:146 次窗口事件高度全为 931)。
+  private var kbWebView: WebView? = null
+
+  private fun findWebView(v: View): WebView? {
+    if (v is WebView) return v
+    if (v is ViewGroup) {
+      for (i in 0 until v.childCount) {
+        val found = findWebView(v.getChildAt(i))
+        if (found != null) return found
+      }
+    }
+    return null
+  }
+
+  private fun installKeyboardInsetsSignal() {
+    val root = window.decorView
+    ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+      val imePx = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+      val cssPx = (imePx / resources.displayMetrics.density).roundToInt()
+      val wv = kbWebView ?: findWebView(v).also { kbWebView = it }
+      wv?.evaluateJavascript("window.__vdKbSignal&&window.__vdKbSignal($cssPx)", null)
+      insets
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    installKeyboardInsetsSignal()
     handleIncomingShare(intent)
 
     // Android 13+ 请求通知权限

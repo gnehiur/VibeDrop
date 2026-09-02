@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'kb-v20-cssvar-noresize-20260828';
+window.__vdBuild = 'kb-v21-android-native-kb-20260902';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -126,9 +126,12 @@ probe('appjs-build', window.__vdBuild);
     // iOS 键盘避让终版(2026-08-28):原生只播报键盘高度,网页用 CSS 变量 --kb 把 #app 缩矮
     // 同样高度——页面效果与"缩 WebView 窗口"完全一致,但视口尺寸恒定,网页进程排版永不变脏,
     // 光标几何数据永远完整(改窗口曾致光标偶发画到屏幕最左,打字才归位)。
+    // 安卓(2026-09-02)同样走此入口:MainActivity 监听 IME 内嵌高度→evaluateJavascript 播报;
+    // 清单 adjustNothing 关掉系统平移。两端从此一个模型:原生只报高度,页面自己缩。
     let nativeKbCovered = null;
     window.__vdKbSignal = (covered) => {
         nativeKbCovered = covered;
+        if (typeof window.__vdKbProbe === 'function') window.__vdKbProbe('sig', covered);
         document.documentElement.style.setProperty('--kb', `${Math.max(0, Math.round(covered))}px`);
         document.body.classList.toggle('kb-open', covered > 0);
         if (covered > 0) revealFocusedCard(document.activeElement);
