@@ -1841,10 +1841,61 @@ fn apply_scroll_lock(window: &tauri::WebviewWindow) {
         ios_scroll_pin::attach(scroll_view);
         ios_keyboard_watch::attach(wk);
         ios_kill_accessory_bar::apply(scroll_view);
+        ios_scroll_to_top::apply(wk);
         // 借道此命令做缓存自愈:新旧两代 JS 启动时都会调 apply_ios_scroll_lock,
         // 旧前端会自己送上门来触发指纹核对→清缓存重载,无需它配合升级
         ios_cache_guard::check_and_heal(wk);
     });
+}
+
+#[cfg(target_os = "ios")]
+mod ios_scroll_to_top {
+    // 状态栏点击=UIKit 系统层手势,只对原生滚动视图发"回顶"指令、绝不作为触摸传给视图,
+    // 网页热区永远收不到(2026-09-02 用户实测)。外层 WKScrollView 又被钉死,系统回顶无处落。
+    // 接法:给 WKWebView 实例套运行时子类,覆盖其作为滚动代理收到的 scrollViewShouldScrollToTop:,
+    // 转成网页 scrollAppToTop() 并返回 NO(系统别动外层)。
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use std::ffi::{c_void, CStr, CString};
+
+    unsafe extern "C-unwind" fn should_scroll_to_top(this: *mut c_void, _cmd: *mut c_void, _sv: *mut c_void) -> bool {
+        let wk = this as *mut AnyObject;
+        if !wk.is_null() {
+            let c = CString::new("window.__vdKbProbe&&window.__vdKbProbe('sttop',1);window.scrollAppToTop&&window.scrollAppToTop()").unwrap();
+            let cls = objc2::runtime::AnyClass::get(c"NSString").unwrap();
+            let js: *mut AnyObject = msg_send![cls, stringWithUTF8String: c.as_ptr()];
+            let _: () = msg_send![&*wk, evaluateJavaScript: &*js, completionHandler: std::ptr::null_mut::<AnyObject>()];
+        }
+        false
+    }
+
+    pub unsafe fn apply(wk: *mut AnyObject) {
+        let cls = objc2::ffi::object_getClass(wk.cast());
+        if cls.is_null() {
+            return;
+        }
+        let name = CStr::from_ptr(objc2::ffi::class_getName(cls)).to_string_lossy();
+        if name.starts_with("VDSTT_") {
+            return;
+        }
+        let sub_name = CString::new(format!("VDSTT_{name}")).unwrap();
+        let mut sub = objc2::ffi::objc_getClass(sub_name.as_ptr()) as *mut objc2::ffi::objc_class;
+        if sub.is_null() {
+            sub = objc2::ffi::objc_allocateClassPair(cls, sub_name.as_ptr(), 0);
+            if sub.is_null() {
+                return;
+            }
+            let imp = std::mem::transmute::<
+                unsafe extern "C-unwind" fn(*mut c_void, *mut c_void, *mut c_void) -> bool,
+                unsafe extern "C-unwind" fn(),
+            >(should_scroll_to_top);
+            if let Some(sel) = objc2::ffi::sel_registerName(c"scrollViewShouldScrollToTop:".as_ptr()) {
+                objc2::ffi::class_addMethod(sub, sel, imp, c"c@:@".as_ptr());
+            }
+            objc2::ffi::objc_registerClassPair(sub);
+        }
+        objc2::ffi::object_setClass(wk.cast(), sub);
+    }
 }
 
 #[cfg(target_os = "ios")]
