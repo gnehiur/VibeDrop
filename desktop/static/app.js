@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v23-viewportcover-20260902';
+window.__vdBuild = 'ui-v24-scrolltotop-20260902';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -4545,10 +4545,24 @@ function getHistoryDeviceOptions(history = getHistory(), devices = getDevices())
 // 导航
 // ============================================
 
+function scrollAppToTop() {
+    const scroller = document.getElementById('app-scroll');
+    if (scroller) scroller.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 function initNavigation() {
+    // iOS 状态栏热区(viewport-fit=cover 后状态栏在页面内,高度=env(safe-area-inset-top),安卓为0):
+    // 点它回顶,等价于系统原生的"点状态栏回顶"
+    document.getElementById('statusbar-tap')?.addEventListener('click', scrollAppToTop);
     document.querySelectorAll('.nav-btn').forEach(btn => {
         if (btn) btn.addEventListener('click', () => {
             const viewId = btn.dataset.view;
+            // 再点一次当前已选中的标签=回到顶部(原生 iOS/安卓 Tab 惯例;外层滚动被钉死后
+            // 系统的"点状态栏回顶"落空,这里连同下方状态栏热区一起把礼遇接回来)
+            if (btn.classList.contains('active')) {
+                scrollAppToTop();
+                return;
+            }
             showView(viewId);
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             if (btn) btn.classList.add('active');
