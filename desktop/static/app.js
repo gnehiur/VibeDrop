@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'release-1.1.5-20260902';
+window.__vdBuild = 'ui-v27-fullscreen-editor-20260902';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -91,6 +91,120 @@ probe('appjs-build', window.__vdBuild);
 // 上面的自然不动、下面的自然上浮、导航自然骑到键盘上,全是浏览器份内事,无需任何特判。
 // (此前五版 JS 抬升方案已全部拆除——2026-08-25 做减法。)
 // 这里只留一件小事:窗口一变,把聚焦的输入框滚进可视区(内层 #app-scroll 承担滚动)。
+// ===== 全屏编辑器(2026-09-02 用户灵感):每个卡片输入框右下角一个 ⤢,点开成全屏编辑页 =====
+// 同一份文字双向同步;全屏页顶部工具栏带这张卡片自己的主动作(发送/回车/发送并回车),写完直接发;
+// 高度复用 --kb 键盘避让,安全区照旧;对以后动态创建的卡片靠 MutationObserver 自动挂上。
+(function fullscreenEditor() {
+    const tr = (k) => (typeof t === 'function' ? t(k) : k);
+    const isTextarea = (el) => Boolean(el && el.tagName === 'TEXTAREA');
+    let overlay = null;
+    let fseTextarea = null;
+    let fseActions = null;
+    let fseTitle = null;
+    let source = null;
+
+    const syncBack = () => {
+        if (!source || !fseTextarea) return;
+        if (source.value !== fseTextarea.value) {
+            source.value = fseTextarea.value;
+            source.dispatchEvent(new Event('input', { bubbles: true })); // 草稿持久化等监听照常
+        }
+    };
+
+    const close = ({ refocus = true } = {}) => {
+        if (!overlay || !source) return;
+        syncBack();
+        overlay.classList.add('hidden');
+        const s = source;
+        source = null;
+        if (refocus) s.focus();
+    };
+
+    const ensureOverlay = () => {
+        if (overlay) return;
+        overlay = document.createElement('div');
+        overlay.id = 'fullscreen-editor';
+        overlay.className = 'hidden';
+        overlay.innerHTML = `
+            <div class="fse-bar">
+                <button type="button" class="fse-collapse" id="fse-collapse" aria-label="${tr('收起')}">⤡</button>
+                <div class="fse-title" id="fse-title"></div>
+                <div style="width:36px"></div>
+            </div>
+            <textarea id="fse-textarea"></textarea>
+            <div class="fse-actions" id="fse-actions"></div>
+        `;
+        document.body.appendChild(overlay);
+        fseTextarea = overlay.querySelector('#fse-textarea');
+        fseActions = overlay.querySelector('#fse-actions');
+        fseTitle = overlay.querySelector('#fse-title');
+        overlay.querySelector('#fse-collapse').addEventListener('click', () => close());
+        fseTextarea.addEventListener('input', syncBack);
+    };
+
+    const open = (textarea) => {
+        ensureOverlay();
+        source = textarea;
+        const card = textarea.closest('.mac-card');
+        fseTitle.textContent = card?.querySelector('.mac-name')?.textContent || '';
+        fseActions.innerHTML = '';
+        const group = textarea.closest('.input-group');
+        const actions = group
+            ? Array.from(group.querySelectorAll('button.send-btn')).filter((b) => !b.classList.contains('image-btn'))
+            : [];
+        actions.forEach((origin) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = origin.className;
+            b.textContent = origin.textContent;
+            b.addEventListener('mousedown', (e) => e.preventDefault());
+            b.addEventListener('click', () => {
+                syncBack();
+                close({ refocus: false });
+                origin.click(); // 走卡片原有的发送逻辑,读的就是同步回去的小框内容
+            });
+            fseActions.appendChild(b);
+        });
+        fseTextarea.value = textarea.value;
+        fseTextarea.placeholder = textarea.placeholder || '';
+        overlay.classList.remove('hidden');
+        fseTextarea.focus(); // 同一手势内接过焦点,键盘不弹一下又收一下
+        const n = fseTextarea.value.length;
+        try { fseTextarea.setSelectionRange(n, n); } catch (_) { /* 忽略 */ }
+    };
+
+    const attach = (textarea) => {
+        if (!isTextarea(textarea) || textarea.dataset.fseAttached === '1') return;
+        if (!textarea.closest('.input-group')) return;
+        textarea.dataset.fseAttached = '1';
+        const wrap = document.createElement('div');
+        wrap.className = 'textarea-wrap';
+        textarea.parentNode.insertBefore(wrap, textarea);
+        wrap.appendChild(textarea);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'textarea-expand-btn';
+        btn.setAttribute('aria-label', tr('全屏编辑'));
+        btn.textContent = '⤢';
+        btn.addEventListener('mousedown', (e) => e.preventDefault()); // 不抢焦点,键盘不收
+        btn.addEventListener('click', () => open(textarea));
+        wrap.appendChild(btn);
+    };
+
+    const scan = (root) => {
+        if (!root || typeof root.querySelectorAll !== 'function') return;
+        root.querySelectorAll('.input-group textarea').forEach(attach);
+    };
+    scan(document);
+    new MutationObserver((mutations) => {
+        mutations.forEach((m) => m.addedNodes.forEach((n) => {
+            if (n.nodeType !== 1) return;
+            if (isTextarea(n)) attach(n); else scan(n);
+        }));
+    }).observe(document.body, { childList: true, subtree: true });
+    window.openFullscreenEditor = open;
+})();
+
 (function keyboardFocusReveal() {
     // 键盘避让三件事——标签栏沉没(kb-open)、卡片底边贴输入法顶边、瞬时定位——
     // 必须在"窗口尺寸变化"这一个事件里同步一次完成,一次重绘直达终局;
