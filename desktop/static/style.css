@@ -3036,3 +3036,18 @@ mark.history-hl {
     width: auto;
     margin: 0;
 }
+
+.textarea-expand-btn,
+.fse-collapse {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.textarea-expand-btn svg,
+.fse-collapse svg {
+    display: block;
+}
+.fse-collapse svg {
+    width: 18px;
+    height: 18px;
+}

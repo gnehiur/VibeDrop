@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v27-fullscreen-editor-20260902';
+window.__vdBuild = 'ui-v28-expand-icons-20260902';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -96,6 +96,11 @@ probe('appjs-build', window.__vdBuild);
 // 高度复用 --kb 键盘避让,安全区照旧;对以后动态创建的卡片靠 MutationObserver 自动挂上。
 (function fullscreenEditor() {
     const tr = (k) => (typeof t === 'function' ? t(k) : k);
+    // 图标:同一条 ↖↘ 对角线(苹果 SF Symbols 同款几何),小框上两支箭头朝外=放大,全屏页上朝内=收起。
+    // Unicode 没有干净的"朝内对角双箭头",所以画 SVG,颜色/粗细跟随文字。
+    const SVG_ATTRS = 'viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+    const ICON_EXPAND = `<svg ${SVG_ATTRS}><path d="M7 7L2 2M2 6V2h4M9 9l5 5M14 10v4h-4"/></svg>`;
+    const ICON_COLLAPSE = `<svg ${SVG_ATTRS}><path d="M2 2l5 5M3 7h4V3M14 14l-5-5M13 9H9v4"/></svg>`;
     const isTextarea = (el) => Boolean(el && el.tagName === 'TEXTAREA');
     let overlay = null;
     let fseTextarea = null;
@@ -127,7 +132,7 @@ probe('appjs-build', window.__vdBuild);
         overlay.className = 'hidden';
         overlay.innerHTML = `
             <div class="fse-bar">
-                <button type="button" class="fse-collapse" id="fse-collapse" aria-label="${tr('收起')}">⤡</button>
+                <button type="button" class="fse-collapse" id="fse-collapse" aria-label="${tr('收起')}">${ICON_COLLAPSE}</button>
                 <div class="fse-title" id="fse-title"></div>
                 <div style="width:36px"></div>
             </div>
@@ -185,7 +190,7 @@ probe('appjs-build', window.__vdBuild);
         btn.type = 'button';
         btn.className = 'textarea-expand-btn';
         btn.setAttribute('aria-label', tr('全屏编辑'));
-        btn.textContent = '⤢';
+        btn.innerHTML = ICON_EXPAND;
         btn.addEventListener('mousedown', (e) => e.preventDefault()); // 不抢焦点,键盘不收
         btn.addEventListener('click', () => open(textarea));
         wrap.appendChild(btn);
