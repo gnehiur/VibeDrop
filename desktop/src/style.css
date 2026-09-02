@@ -1621,8 +1621,13 @@ body.vd-bg * {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 14px 16px;
-    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+    /* 2026-09-02:去掉每行 30px 模糊大阴影与全员入场动画——千行同时合成是滚动卡顿与
+       重建抖动的主因(与呼吸灯发烫同族病);轻阴影静态,入场动画只给新到达条目(.is-new) */
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.log-item.is-new {
     animation: slideIn 0.24s ease;
 }
 

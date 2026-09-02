@@ -108,17 +108,8 @@ function localizeStaticAttributes() {
     document.querySelector('.heatmap-card')?.setAttribute('aria-label', t('接收热力图'));
 }
 
-window.addEventListener('focus', () => {
-    if (document.getElementById('main-view')?.style.display === 'flex') {
-        void restoreLog();
-    }
-});
-
-document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && document.getElementById('main-view')?.style.display === 'flex') {
-        void restoreLog();
-    }
-});
+// 2026-09-02 性能重构:窗口聚焦/可见性变化不再整份重载历史(曾是"每点一下窗口就卡一下"的根源)。
+// 历史是内存常驻的唯一真相,新条目由后端事件增量推入,没有任何理由从磁盘重读。
 
 async function checkPermission() {
     try {
@@ -233,7 +224,9 @@ async function showDesktopTab(tab, { resetScroll = false } = {}) {
     }
 
     if (currentDesktopTab === 'history') {
-        await restoreLog();
+        // 切标签零成本:只在从未渲染或数据有变时重渲,否则纯 hidden 切换
+        ensureLogRendered();
+        fillLogListToViewport();
     }
 }
 
@@ -333,7 +326,9 @@ async function initDesktopDropExperience() {
             connectedDropClients = normalizeConnectedClients(event.payload);
             renderConnectedDevicePanel();
             renderConnectedDropClients();
-            renderLog();
+            // 手机心跳/重连不再触发历史整页重建:只标脏(设备别名可能变),历史页可见时合并重渲
+            markLogModelDirty();
+            scheduleLogRerenderIfVisible();
         });
 
         eventApi.listen('desktop-transfer-progress', (event) => {
@@ -728,8 +723,17 @@ function formatBytes(value) {
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// ---- localStorage 持久化 ----
-const LOG_KEY = 'voicedrop_received_log';
+// ---- 历史:内存常驻的唯一真相(2026-09-02 性能重构) ----
+// 后端 history.jsonl 是存储,前端启动读一次进内存,之后只增量追加,不再镜像到 localStorage
+// (曾每次切页/聚焦都 JSON.stringify 2.6MB 同步写 localStorage,主线程卡几百毫秒到秒级)。
+const LEGACY_LOG_KEY = 'voicedrop_received_log';
+try { localStorage.removeItem(LEGACY_LOG_KEY); } catch (_) { /* 释放旧镜像占用的配额 */ }
+
+let historyLoadedOnce = false;
+let historyRenderedOnce = false;
+let logModelDirty = true;
+let logModelCache = [];
+let logRerenderTimer = null;
 
 function getLog() {
     return desktopLogCache;
@@ -737,14 +741,59 @@ function getLog() {
 
 function saveLog(log) {
     desktopLogCache = Array.isArray(log) ? log : [];
-    localStorage.setItem(LOG_KEY, JSON.stringify(desktopLogCache));
+    markLogModelDirty();
 }
 
-async function restoreLog() {
+function markLogModelDirty() {
+    logModelDirty = true;
+}
+
+function isHistoryTabVisible() {
+    return currentDesktopTab === 'history';
+}
+
+// 历史页可见时把多次脏标记合并成一次重渲(心跳/多条目连发不抖)
+function scheduleLogRerenderIfVisible() {
+    if (!isHistoryTabVisible()) return;
+    if (logRerenderTimer) return;
+    logRerenderTimer = setTimeout(() => {
+        logRerenderTimer = null;
+        renderLog();
+    }, 150);
+}
+
+function ensureLogRendered() {
+    if (!historyRenderedOnce || logModelDirty) {
+        renderLog();
+    }
+}
+
+// 展示模型:归一化+去重+按数值时间戳排序,只在数据变化时重建;筛选/滚动都复用它
+function getLogModel() {
+    if (!logModelDirty) return logModelCache;
+    const merged = getLog()
+        .concat(vaultRemoteEntries)
+        .map((entry) => {
+            const normalized = normalizeLogEntry(entry);
+            normalized._ts = Date.parse(normalized.timestamp) || 0;
+            normalized._normalized = true;
+            return normalized;
+        });
+    logModelCache = collapseMirrorDuplicates(dedupeLogEntries(merged)).sort((a, b) => b._ts - a._ts);
+    logModelDirty = false;
+    return logModelCache;
+}
+
+async function restoreLog({ force = false } = {}) {
+    if (historyLoadedOnce && !force) {
+        ensureLogRendered();
+        return;
+    }
     try {
         const log = await invoke('load_history_entries');
         if (Array.isArray(log)) {
             saveLog(log);
+            historyLoadedOnce = true;
         } else {
             throw new Error(t('桌面端返回的历史格式无效'));
         }
@@ -815,13 +864,16 @@ function normalizeLogKind(mimeType = '') {
 
 function addLogItem(entryOrText, timestamp) {
     const entry = normalizeLogEntry(entryOrText, timestamp);
+    entry._isNew = true; // 只有新到达的条目做入场动画,历史存量不做
 
-    // 保存到 localStorage
     const log = getLog();
     log.unshift(entry);
     saveLog(log);
 
-    renderLog();
+    if (isHistoryTabVisible()) {
+        renderLog();
+    }
+    // 不可见时保持脏标记,切回历史页时 ensureLogRendered 一次补齐
 }
 
 function initDesktopHistoryControls() {
@@ -990,11 +1042,8 @@ function collapseMirrorDuplicates(entries) {
 }
 
 function renderLog() {
-    const log = collapseMirrorDuplicates(dedupeLogEntries(
-        getLog()
-            .concat(vaultRemoteEntries)
-            .map((entry) => normalizeLogEntry(entry))
-    )).sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+    const log = getLogModel();
+    historyRenderedOnce = true;
 
     buildDeviceAliasMap(log);
     renderDesktopHistoryDeviceFilters(log);
@@ -1337,27 +1386,58 @@ function renderLogList(entries, totalCount = 0) {
     }
 
     list.innerHTML = '';
-    // 分片挂载 + CSS content-visibility 原生虚拟化:近万条也不卡,快滑不空窗
-    logListRenderToken += 1;
-    const token = logListRenderToken;
-    const MOUNT_CHUNK = 300;
-    let cursor = 0;
-    const mountChunk = () => {
-        if (token !== logListRenderToken) return;
-        const fragment = document.createDocumentFragment();
-        entries.slice(cursor, cursor + MOUNT_CHUNK).forEach((entry) => {
-            fragment.appendChild(createLogElement(entry));
-        });
-        list.appendChild(fragment);
-        cursor += MOUNT_CHUNK;
-        if (cursor < entries.length) {
-            setTimeout(mountChunk, 0);
-        }
-    };
-    mountChunk();
+    // 按需挂载(2026-09-02):先挂首屏,滚动时在到达前同步补足前方约两屏——
+    // 内容永远先于视线出现,物理上不会白屏;不滚到的部分永不建 DOM。
+    // (旧实现按 300 一片 setTimeout 排队全量挂载、且并无 content-visibility,快滑必空窗)
+    logListPending = entries;
+    logListMounted = 0;
+    mountLogListChunk(LOG_LIST_INITIAL);
+    ensureLogListScrollWatcher();
+    fillLogListToViewport();
 }
 
-let logListRenderToken = 0;
+const LOG_LIST_INITIAL = 80;
+const LOG_LIST_STEP = 120;
+const LOG_LIST_LOOKAHEAD_PX = 1600;
+let logListPending = [];
+let logListMounted = 0;
+let logListWatcherBound = false;
+
+function mountLogListChunk(count) {
+    const list = document.getElementById('log-list');
+    if (!list) return;
+    const end = Math.min(logListMounted + count, logListPending.length);
+    if (end <= logListMounted) return;
+    const fragment = document.createDocumentFragment();
+    for (let i = logListMounted; i < end; i += 1) {
+        fragment.appendChild(createLogElement(logListPending[i]));
+    }
+    list.appendChild(fragment);
+    logListMounted = end;
+}
+
+function fillLogListToViewport() {
+    const scroller = document.getElementById('desktop-scroll');
+    const list = document.getElementById('log-list');
+    if (!scroller || !list || !isHistoryTabVisible()) return;
+    let guard = 0;
+    while (logListMounted < logListPending.length && guard < 60) {
+        guard += 1;
+        const listBottom = list.getBoundingClientRect().bottom;
+        const viewBottom = scroller.getBoundingClientRect().bottom;
+        if (listBottom - viewBottom > LOG_LIST_LOOKAHEAD_PX) break;
+        mountLogListChunk(LOG_LIST_STEP);
+    }
+}
+
+function ensureLogListScrollWatcher() {
+    if (logListWatcherBound) return;
+    const scroller = document.getElementById('desktop-scroll');
+    if (!scroller) return;
+    scroller.addEventListener('scroll', fillLogListToViewport, { passive: true });
+    window.addEventListener('resize', fillLogListToViewport);
+    logListWatcherBound = true;
+}
 
 function filterLogEntries(entries, filters = currentLogHistoryFilters) {
     return entries.filter((entry) => {
@@ -1368,7 +1448,8 @@ function filterLogEntries(entries, filters = currentLogHistoryFilters) {
             return false;
         }
 
-        const entryDate = new Date(entry.timestamp || '');
+        // 优先用模型预计算的数值时间戳,避免每条每次都解析日期字符串
+        const entryDate = new Date(entry._ts || entry.timestamp || '');
         if (Number.isNaN(entryDate.getTime())) {
             return false;
         }
@@ -1830,6 +1911,23 @@ function renderLogHeatmap(baseEntries) {
     const resetBtn = document.getElementById('btn-log-heatmap-reset');
     if (!viewport || !track || !stats || !caption || !resetBtn) return;
 
+    // 数据集与选择状态没变就不重建(热力图是 24×N 个按钮的 innerHTML+逐格监听器,重建很贵;
+    // 此前每次 renderLog 都无条件重建,包括手机心跳触发的那些)
+    const renderKey = [
+        baseEntries.length,
+        baseEntries[0]?._ts || 0,
+        baseEntries[baseEntries.length - 1]?._ts || 0,
+        getLogHeatmapRangeToken(),
+        logHeatmapState.selectionDate,
+        logHeatmapState.selectionHour,
+        window.vibeI18n?.lang || '',
+    ].join('|');
+    if (logHeatmapState.lastRenderKey === renderKey && track.childElementCount > 0) {
+        logHeatmapState.renderedEntries = baseEntries;
+        return;
+    }
+    logHeatmapState.lastRenderKey = renderKey;
+
     const rangeToken = getLogHeatmapRangeToken();
     const bounds = getLogHeatmapBounds(baseEntries);
 
@@ -1941,7 +2039,8 @@ function initDesktopLogHeatmapInteractions() {
 }
 
 function createLogElement(entryOrText, timestamp) {
-    const entry = normalizeLogEntry(entryOrText, timestamp);
+    // 模型里的条目已归一化,不再二次拷贝
+    const entry = entryOrText && entryOrText._normalized ? entryOrText : normalizeLogEntry(entryOrText, timestamp);
     const timeLabel = formatLogTime(entry.timestamp);
     const isMedia = ['image', 'video', 'media'].includes(entry.kind);
     const isFile = entry.kind === 'file';
@@ -1961,7 +2060,8 @@ function createLogElement(entryOrText, timestamp) {
                     : t('文字');
 
     const item = document.createElement('div');
-    item.className = 'log-item';
+    item.className = entry._isNew ? 'log-item is-new' : 'log-item';
+    entry._isNew = false; // 入场动画只演一次
     item.title = getLogEntryTitle(entry);
     item.style.cursor = isMedia && mediaItems.length > 1 ? 'default' : 'pointer';
 
@@ -2092,7 +2192,10 @@ async function refreshVaultRemoteEntries() {
         const data = await response.json();
         if (!data?.ok || !Array.isArray(data.history)) return;
         vaultRemoteEntries = data.history.map(convertVaultEntry);
-        renderLog();
+        markLogModelDirty();
+        if (isHistoryTabVisible()) {
+            renderLog();
+        }
     } catch (error) {
         console.warn('拉取 Home Vault 合并历史失败(vault 可能不在线)', error);
     }
