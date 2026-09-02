@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v25-statusbar-native-20260902';
+window.__vdBuild = 'release-1.1.5-20260902';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -4551,9 +4551,8 @@ function scrollAppToTop() {
 }
 
 function initNavigation() {
-    // iOS 状态栏热区(viewport-fit=cover 后状态栏在页面内,高度=env(safe-area-inset-top),安卓为0):
-    // 点它回顶,等价于系统原生的"点状态栏回顶"
-    document.getElementById('statusbar-tap')?.addEventListener('click', scrollAppToTop);
+    // 注:iOS"点状态栏回顶"是系统层手势,既不作为触摸传给网页、外层滚动钉死后原生代理也收不到,
+    // 两种接法均实测无效(2026-09-02),已拆;回顶只靠"再点当前标签"。
     document.querySelectorAll('.nav-btn').forEach(btn => {
         if (btn) btn.addEventListener('click', () => {
             const viewId = btn.dataset.view;

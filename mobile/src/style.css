@@ -2940,13 +2940,3 @@ mark.history-hl {
 
 .about-actions { display: flex; gap: 8px; flex-wrap: wrap; flex-direction: column; align-items: flex-end; }
 #update-result { margin-top: 8px; }
-
-/* 状态栏热区:透明、固定在页面最顶部,高度=安全区顶(iOS≈47-59pt,安卓0),点击回顶 */
-#statusbar-tap {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: env(safe-area-inset-top, 0px);
-    z-index: 300;
-}
