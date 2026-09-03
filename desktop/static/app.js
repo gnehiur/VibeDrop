@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v28-expand-icons-20260902';
+window.__vdBuild = 'ui-v29-target-key-20260903';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -4646,7 +4646,7 @@ function getHistoryDeviceOptions(history = getHistory(), devices = getDevices())
 
     history.forEach((entry) => {
         const hydrated = entry;
-        const value = hydrated.target;
+        const value = normalizeHistoryTargetKey(hydrated.target);
         if (!value || options.has(value)) {
             return;
         }
@@ -8648,16 +8648,25 @@ function resolveHistoryDevice(targetId, targetAlias, targetDeviceName, targetSer
     }) || null;
 }
 
+// 安卓每台手机有两条连接(前台 App + 后台剪贴板 `xxx::clipboard`),2026-08-17 互传卡上线到
+// 名册按本体归并之间的几小时里,发往 `::clipboard` 连接的记录把这个连接号存成了目标 ID,
+// 筛选按钮按 ID 去重就多出一个同名设备。这里统一剥掉 `::` 后缀,历史数据不动。
+function normalizeHistoryTargetKey(value) {
+    if (typeof value !== 'string') return '';
+    const idx = value.indexOf('::');
+    return idx > 0 ? value.slice(0, idx) : value;
+}
+
 function hydrateHistoryEntry(entry, devices = getDevices(), historyEntries = readStoredHistoryEntries()) {
-    const storedTarget = typeof entry.target === 'string' ? entry.target : '';
+    const storedTarget = normalizeHistoryTargetKey(entry.target);
     const storedTargetName = typeof entry.targetName === 'string' ? entry.targetName : '';
     const storedTargetAlias = typeof entry.targetAlias === 'string' ? entry.targetAlias : '';
     const storedTargetHost = typeof entry.targetDeviceName === 'string'
         ? entry.targetDeviceName
         : (typeof entry.targetHost === 'string' ? entry.targetHost : '');
     const storedTargetServerId = typeof entry.targetServerId === 'string' ? entry.targetServerId : '';
-    const targetId = entry.targetId
-        || entry.deviceId
+    const targetId = normalizeHistoryTargetKey(entry.targetId)
+        || normalizeHistoryTargetKey(entry.deviceId)
         || (looksLikeInternalDeviceId(storedTarget) ? storedTarget : '');
 
     const device = resolveHistoryDevice(
