@@ -169,6 +169,8 @@ struct WindowState {
 enum InputAction {
     TypeText(String),
     TypeTextAndEnter(String),
+    // 文字 + ⌘回车（手机端大按钮滑到「排队」模式）
+    TypeTextAndCmdEnter(String),
     PressEnter,
     // 外出模式：文字只写入剪贴板（配合 UU 远程等工具的剪贴板同步转发），不模拟键盘输入
     ClipboardText(String),
@@ -1621,23 +1623,33 @@ fn is_clipboard_broadcast_suppressed(suppress: &ClipboardSuppressList, text: &st
 // 不用「按下 Meta → 点 V → 松开 Meta」三段式：分开发送时目标 App 可能在
 // 修饰键状态登记前就处理了 V 键，表现为偶发粘贴失败或输入一个裸 "v"。
 // 修饰键内嵌在按键事件里则不存在这个时序竞态。
-fn send_cmd_v_event() -> Result<(), String> {
+fn send_cmd_key_event(keycode: u16) -> Result<(), String> {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
-    const KVK_ANSI_V: u16 = 9;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| "无法创建键盘事件源".to_string())?;
-    let key_down = CGEvent::new_keyboard_event(source.clone(), KVK_ANSI_V, true)
-        .map_err(|_| "无法创建粘贴按键事件".to_string())?;
+    let key_down = CGEvent::new_keyboard_event(source.clone(), keycode, true)
+        .map_err(|_| "无法创建 Command 组合键事件".to_string())?;
     key_down.set_flags(CGEventFlags::CGEventFlagCommand);
     key_down.post(CGEventTapLocation::HID);
     std::thread::sleep(std::time::Duration::from_millis(30));
-    let key_up = CGEvent::new_keyboard_event(source, KVK_ANSI_V, false)
-        .map_err(|_| "无法创建粘贴按键抬起事件".to_string())?;
+    let key_up = CGEvent::new_keyboard_event(source, keycode, false)
+        .map_err(|_| "无法创建 Command 组合键抬起事件".to_string())?;
     key_up.set_flags(CGEventFlags::CGEventFlagCommand);
     key_up.post(CGEventTapLocation::HID);
     Ok(())
+}
+
+fn send_cmd_v_event() -> Result<(), String> {
+    const KVK_ANSI_V: u16 = 9;
+    send_cmd_key_event(KVK_ANSI_V)
+}
+
+// ⌘回车：Claude 桌面端等聊天 App 的「Queue for later」——任务运行中排队，不打断当前任务。
+fn send_cmd_return_event() -> Result<(), String> {
+    const KVK_RETURN: u16 = 36;
+    send_cmd_key_event(KVK_RETURN)
 }
 
 fn paste_inject_text(text: &str, suppress: &ClipboardSuppressList) -> Result<(), String> {
@@ -1784,6 +1796,13 @@ fn main() {
                             Ok(()) => enigo
                                 .key(Key::Return, Direction::Click)
                                 .map_err(|e| format!("文字已发送，但回车失败: {:?}", e)),
+                            Err(e) => Err(e),
+                        }
+                    }
+                    InputAction::TypeTextAndCmdEnter(text) => {
+                        match inject_text(&mut enigo, &text, &suppress) {
+                            Ok(()) => send_cmd_return_event()
+                                .map_err(|e| format!("文字已发送，但 ⌘回车失败: {}", e)),
                             Err(e) => Err(e),
                         }
                     }
@@ -2555,7 +2574,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                 }
                             }
 
-                            "type" | "type_enter" => {
+                            "type" | "type_enter" | "type_cmd_enter" => {
                                 if !authenticated {
                                     let reply = ServerMessage {
                                         status: "error".to_string(),
@@ -2568,7 +2587,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
 
                                 if let Some(text_content) = &client_msg.text {
                                     let send_with_enter = client_msg.action == "type_enter";
-                                    if send_with_enter {
+                                    let send_with_cmd_enter = client_msg.action == "type_cmd_enter";
+                                    if send_with_cmd_enter {
+                                        info!("收到文字并⌘回车: {}", text_content);
+                                    } else if send_with_enter {
                                         info!("收到文字并回车: {}", text_content);
                                     } else {
                                         info!("收到文字: {}", text_content);
@@ -2592,7 +2614,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
 
                                     let (reply_tx, reply_rx) = oneshot::channel();
                                     let req = InputRequest {
-                                        action: if send_with_enter {
+                                        action: if send_with_cmd_enter {
+                                            InputAction::TypeTextAndCmdEnter(text_content.clone())
+                                        } else if send_with_enter {
                                             InputAction::TypeTextAndEnter(text_content.clone())
                                         } else {
                                             InputAction::TypeText(text_content.clone())

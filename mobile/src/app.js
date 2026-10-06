@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v29-target-key-20260903';
+window.__vdBuild = 'ui-v30-queue-mode-20261006';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -163,6 +163,8 @@ probe('appjs-build', window.__vdBuild);
             b.className = origin.className;
             b.textContent = origin.textContent;
             b.addEventListener('mousedown', (e) => e.preventDefault());
+            // 「发送并回车」大按钮在全屏页也能横滑切排队模式(切换会刷新所有 .queueable,含这枚副本)
+            if (origin.classList.contains('queueable')) bindQueueSwipe(b);
             b.addEventListener('click', () => {
                 syncBack();
                 close({ refocus: false });
@@ -1050,14 +1052,79 @@ function applySendCardMode(card) {
     card.querySelectorAll('.send-actions').forEach(row => {
         row.style.display = outing ? 'none' : '';
     });
-    const comboBtn = card.querySelector('.combo-btn');
-    if (comboBtn && !comboBtn.classList.contains('sending')) {
-        comboBtn.textContent = outing ? t('同步剪贴板') : t('发送并回车');
-    }
+    // 只认带 queueable 的「发送并回车」大按钮;互传卡的蓝色「发送」也是 combo-btn,不能被改名
+    card.querySelectorAll('.combo-btn.queueable').forEach(applyComboButtonMode);
 }
 
 function refreshSendCardModeUI() {
     document.querySelectorAll('#send-cards .mac-card').forEach(applySendCardMode);
+}
+
+// ---- 排队模式(2026-10-06 用户要求):蓝色大按钮左右滑,「发送并回车」↔「发送并排队」----
+// 排队 = 文字落字后按 ⌘回车,即 Claude 桌面端的 Queue for later:任务还在跑时先把下一条指令存好,
+// 不打断当前任务。模式全局一份(智能卡/设备卡/全屏编辑器共用),持久化,滑回来才变;
+// 小「回车」键永远是普通回车。外出模式没有回车语义,不响应滑动。需要桌面端 1.3.0+ 认识 type_cmd_enter。
+const QUEUE_SWIPE_MIN_PX = 40;
+
+function isQueueMode() {
+    return getStoredSettingsObject().queueMode === true && !isOutingMode();
+}
+
+function comboIdleLabel() {
+    if (isOutingMode()) return t('同步剪贴板');
+    return isQueueMode() ? t('发送并排队 ⌘↩') : t('发送并回车');
+}
+
+function applyComboButtonMode(btn) {
+    if (!btn) return;
+    btn.classList.toggle('queue-mode', isQueueMode());
+    const label = comboIdleLabel();
+    // 发送中途切换也成立:收尾恢复文案读的是 idleLabel
+    btn.dataset.idleLabel = label;
+    const inFlight = btn.classList.contains('sending')
+        || btn.classList.contains('success')
+        || btn.classList.contains('fail');
+    if (!inFlight) btn.textContent = label;
+}
+
+function toggleQueueMode() {
+    if (isOutingMode()) return;
+    const next = !isQueueMode();
+    saveStoredSettingsObject({ ...getStoredSettingsObject(), queueMode: next });
+    document.querySelectorAll('.combo-btn.queueable').forEach(applyComboButtonMode);
+    showToast(next ? t('排队模式:⌘回车,不打断正在跑的任务') : t('已切回发送并回车'));
+}
+
+// 横滑判定:横向位移够长且明显大于纵向才算(纵向交给页面滚动,CSS 给了 touch-action: pan-y)。
+// 判定为滑动后吞掉随之而来的那次 click,滑一下不会顺手把文字发出去。
+// 必须在按钮自己的 click 监听之前绑定(捕获阶段 + stopImmediatePropagation)。
+function bindQueueSwipe(btn) {
+    if (!btn) return;
+    let start = null;
+    let swallowClick = false;
+    btn.addEventListener('pointerdown', (event) => {
+        start = { x: event.clientX, y: event.clientY };
+        swallowClick = false;
+        try { btn.setPointerCapture(event.pointerId); } catch (_) { /* 不支持就算了,手指别滑出按钮即可 */ }
+    });
+    btn.addEventListener('pointercancel', () => { start = null; });
+    btn.addEventListener('pointerup', (event) => {
+        if (!start) return;
+        const dx = event.clientX - start.x;
+        const dy = event.clientY - start.y;
+        start = null;
+        if (Math.abs(dx) >= QUEUE_SWIPE_MIN_PX && Math.abs(dx) > Math.abs(dy) * 1.5) {
+            swallowClick = true;
+            setTimeout(() => { swallowClick = false; }, 400);
+            toggleQueueMode();
+        }
+    });
+    btn.addEventListener('click', (event) => {
+        if (!swallowClick) return;
+        swallowClick = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }, true);
 }
 
 function isSmartCardEnabled() {
@@ -3855,7 +3922,7 @@ function createSendCard(dev) {
                     <button class="send-btn aux-btn" id="sendbtn-${dev.id}" disabled>${t('发送')}</button>
                     <button class="send-btn aux-btn enter-btn" id="enterbtn-${dev.id}" disabled>${t('回车')}</button>
                 </div>
-                <button class="send-btn combo-btn" id="sendenterbtn-${dev.id}" disabled>${t('发送并回车')}</button>
+                <button class="send-btn combo-btn queueable" id="sendenterbtn-${dev.id}" disabled>${t('发送并回车')}</button>
                 <div class="send-actions media-actions">
                     <button class="send-btn image-btn" id="imagebtn-${dev.id}" disabled>${t('传图到剪贴板')}</button>
                     <button class="send-btn image-btn" id="filebtn-${dev.id}" disabled>${t('传到收件箱')}</button>
@@ -3880,6 +3947,7 @@ function createSendCard(dev) {
 
     sendBtn.addEventListener('click', () => sendText(dev.id));
     enterBtn.addEventListener('click', () => sendEnter(dev.id));
+    bindQueueSwipe(sendEnterBtn);
     sendEnterBtn.addEventListener('click', () => sendTextAndEnter(dev.id));
     keepKeyboardOnPress(sendBtn);
     keepKeyboardOnPress(enterBtn);
@@ -4378,7 +4446,7 @@ function createSmartCard() {
                     <button class="send-btn aux-btn" id="sendbtn-smart">${t('发送')}</button>
                     <button class="send-btn aux-btn enter-btn" id="enterbtn-smart">${t('回车')}</button>
                 </div>
-                <button class="send-btn combo-btn" id="sendenterbtn-smart">${t('发送并回车')}</button>
+                <button class="send-btn combo-btn queueable" id="sendenterbtn-smart">${t('发送并回车')}</button>
                 <div class="send-actions media-actions">
                     <button class="send-btn image-btn" id="imagebtn-smart">${t('传图到剪贴板')}</button>
                     <button class="send-btn image-btn" id="filebtn-smart">${t('传到收件箱')}</button>
@@ -4395,6 +4463,8 @@ function createSmartCard() {
     card.querySelector('#smart-target-chip').addEventListener('click', cycleSmartTarget);
     card.querySelector('#sendbtn-smart').addEventListener('click', () => smartDispatch('send'));
     card.querySelector('#enterbtn-smart').addEventListener('click', () => smartDispatch('enter'));
+    applyComboButtonMode(card.querySelector('#sendenterbtn-smart'));
+    bindQueueSwipe(card.querySelector('#sendenterbtn-smart'));
     card.querySelector('#sendenterbtn-smart').addEventListener('click', () => smartDispatch('send_enter'));
     keepKeyboardOnPress(card.querySelector('#sendbtn-smart'));
     keepKeyboardOnPress(card.querySelector('#enterbtn-smart'));
@@ -7414,16 +7484,22 @@ async function sendTextAndEnter(deviceId, { uiId = deviceId, text: textOverride 
     };
     addHistory(historyEntry);
 
+    const queue = isQueueMode();
     const result = await sendDeviceAction(deviceId, {
-        action: 'type_enter',
+        action: queue ? 'type_cmd_enter' : 'type_enter',
         payload: { text, transfer_id: historyEntry.transferId },
         buttonId: `sendenterbtn-${uiId}`,
-        pendingText: t('发送并回车中...'),
+        pendingText: queue ? t('发送并排队中...') : t('发送并回车中...'),
         clearInput: true,
         historyEntry,
         failureToast: true,
         uiId,
     });
+
+    // 1.3.0 之前的桌面端不认识 type_cmd_enter,会静默丢弃、不回包,手机端只能等到超时
+    if (queue && !result.ok && result.error === t('超时')) {
+        showToast(t('电脑端版本过旧,不支持排队发送,请升级桌面端'));
+    }
 
     if (!result.ok && result.error && result.error.startsWith('文字已发送')) {
         historyEntry.status = 'success';

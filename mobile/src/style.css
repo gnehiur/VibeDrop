@@ -1134,6 +1134,20 @@ body.nearby-reorder-active {
     margin-top: 2px;
 }
 
+/* 「发送并回车」大按钮可横滑切排队模式:纵向手势留给页面滚动,横向交给 JS */
+.combo-btn.queueable {
+    touch-action: pan-y;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* 排队模式(⌘回车,不打断正在跑的任务):换靛紫色,不看字也知道这一下不会打断。
+   必须写在 .send-btn.success/.fail 之前,发送反馈的绿/红照常盖过它 */
+.combo-btn.queue-mode {
+    background: linear-gradient(180deg, #8a7bff 0%, #5b48d9 100%);
+    box-shadow: 0 14px 30px rgba(91, 72, 217, 0.24);
+}
+
 .media-actions .send-btn {
     min-height: 50px;
     font-size: 14px;
