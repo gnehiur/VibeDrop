@@ -40,7 +40,7 @@
       "minimumSystemVersion": "14.0"
     },
     "android": {
-      "versionCode": 1200,
+      "versionCode": 1300,
       "autoIncrementVersionCode": false
     },
     "icon": [
