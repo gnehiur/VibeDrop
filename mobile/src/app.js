@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v30-queue-mode-20261006';
+window.__vdBuild = 'ui-v31-queue-swipe-follow-20261006';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -1064,15 +1064,23 @@ function refreshSendCardModeUI() {
 // 排队 = 文字落字后按 ⌘回车,即 Claude 桌面端的 Queue for later:任务还在跑时先把下一条指令存好,
 // 不打断当前任务。模式全局一份(智能卡/设备卡/全屏编辑器共用),持久化,滑回来才变;
 // 小「回车」键永远是普通回车。外出模式没有回车语义,不响应滑动。需要桌面端 1.3.0+ 认识 type_cmd_enter。
-const QUEUE_SWIPE_MIN_PX = 40;
+// 跟手滑动的手感参数:前 8px 只判方向;松手时拖过按钮宽 35%,或甩速 ≥0.5px/ms(同向)就切换
+const QUEUE_SWIPE_AXIS_LOCK_PX = 8;
+const QUEUE_SWIPE_COMMIT_RATIO = 0.35;
+const QUEUE_SWIPE_FLICK_PX_PER_MS = 0.5;
+const QUEUE_SWIPE_SETTLE_MS = 200;
 
 function isQueueMode() {
     return getStoredSettingsObject().queueMode === true && !isOutingMode();
 }
 
+function comboLabelFor(queue) {
+    return queue ? t('发送并排队 ⌘↩') : t('发送并回车');
+}
+
 function comboIdleLabel() {
     if (isOutingMode()) return t('同步剪贴板');
-    return isQueueMode() ? t('发送并排队 ⌘↩') : t('发送并回车');
+    return comboLabelFor(isQueueMode());
 }
 
 function applyComboButtonMode(btn) {
@@ -1087,38 +1095,143 @@ function applyComboButtonMode(btn) {
     if (!inFlight) btn.textContent = label;
 }
 
+// 切换排队模式并刷新所有大按钮(含全屏编辑器里的副本)。滑动本身就是反馈,不再弹提示。
 function toggleQueueMode() {
     if (isOutingMode()) return;
     const next = !isQueueMode();
     saveStoredSettingsObject({ ...getStoredSettingsObject(), queueMode: next });
     document.querySelectorAll('.combo-btn.queueable').forEach(applyComboButtonMode);
-    showToast(next ? t('排队模式:⌘回车,不打断正在跑的任务') : t('已切回发送并回车'));
 }
 
-// 横滑判定:横向位移够长且明显大于纵向才算(纵向交给页面滚动,CSS 给了 touch-action: pan-y)。
-// 判定为滑动后吞掉随之而来的那次 click,滑一下不会顺手把文字发出去。
-// 必须在按钮自己的 click 监听之前绑定(捕获阶段 + stopImmediatePropagation)。
+// 跟手横滑(2026-10-06 用户要求):文字跟着手指走,另一个模式的文字按滑动方向从对侧边缘滑进来,
+// 底色按滑动进度在蓝/紫之间渐变,松手后补 200ms 动画切过去或弹回来。
+// 实现:拖动期间往按钮里临时盖一层动画层(两层文字 + 目标底色),按钮自身文字透明;
+// 落定后先切模式(会重写 textContent,顺带清掉动画层)再撤 class,同一帧完成,无闪烁。
+// 不碰按钮自身的 textContent 体系——发送中/✓/✗/恢复文案那套照旧。
+// 只动 transform/opacity(GPU 合成层,不触发重排),pointermove 用 rAF 合帧。
+// 纵向:前 8px 判为竖向就整次放手给页面滚动(CSS touch-action: pan-y 配合);
+// 没走出 8px 算轻点,照常发送;拖过就吞掉随后的 click。必须先于按钮自己的 click 监听绑定。
 function bindQueueSwipe(btn) {
     if (!btn) return;
-    let start = null;
+    let start = null;       // { x, y } 按下点
+    let axis = null;        // null 未定 / 'x' 横拖 / 'y' 放手
+    let drag = null;        // 横拖中的动画层状态
+    let samples = [];       // 最近 100ms 的 { x, t },算甩速
+    let rafId = 0;
     let swallowClick = false;
+
+    const busy = () => btn.disabled
+        || isOutingMode()
+        || btn.classList.contains('sending')
+        || btn.classList.contains('success')
+        || btn.classList.contains('fail')
+        || btn.classList.contains('qs-settling');
+
+    const render = () => {
+        rafId = 0;
+        if (!drag) return;
+        const { dx, width, cur, next, bg } = drag;
+        // 新文字从拖动方向的对侧边缘进场:往左拖从右边出来,往右拖从左边出来
+        const offset = dx < 0 ? width : -width;
+        cur.style.transform = `translate3d(${dx}px,0,0)`;
+        next.style.transform = `translate3d(${dx + offset}px,0,0)`;
+        bg.style.opacity = String(Math.min(1, Math.abs(dx) / width));
+    };
+
+    const beginDrag = () => {
+        const width = btn.getBoundingClientRect().width || 1;
+        const queue = isQueueMode();
+        const layer = document.createElement('span');
+        layer.className = 'qs-layer';
+        layer.setAttribute('aria-hidden', 'true');
+        layer.innerHTML = `<span class="qs-bg ${queue ? 'to-normal' : 'to-queue'}"></span>`
+            + '<span class="qs-label qs-cur"></span><span class="qs-label qs-next"></span>';
+        layer.querySelector('.qs-cur').textContent = comboLabelFor(queue);
+        layer.querySelector('.qs-next').textContent = comboLabelFor(!queue);
+        btn.appendChild(layer);
+        btn.classList.add('qs-dragging');
+        drag = {
+            dx: 0,
+            width,
+            layer,
+            cur: layer.querySelector('.qs-cur'),
+            next: layer.querySelector('.qs-next'),
+            bg: layer.querySelector('.qs-bg'),
+        };
+    };
+
+    const settle = (commit) => {
+        const d = drag;
+        drag = null;
+        if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+        if (!d) return;
+        btn.classList.add('qs-settling');
+        const dir = d.dx < 0 ? -1 : 1;
+        const target = commit ? dir * d.width : 0;
+        const offset = d.dx < 0 ? d.width : -d.width;
+        [d.cur, d.next, d.bg].forEach((el) => { el.style.transition = `transform ${QUEUE_SWIPE_SETTLE_MS}ms cubic-bezier(.2,.8,.2,1), opacity ${QUEUE_SWIPE_SETTLE_MS}ms ease-out`; });
+        d.cur.style.transform = `translate3d(${target}px,0,0)`;
+        d.next.style.transform = `translate3d(${target + offset}px,0,0)`;
+        d.bg.style.opacity = commit ? '1' : '0';
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            if (commit) toggleQueueMode();
+            d.layer.remove();
+            btn.classList.remove('qs-dragging', 'qs-settling');
+        };
+        d.cur.addEventListener('transitionend', finish, { once: true });
+        setTimeout(finish, QUEUE_SWIPE_SETTLE_MS + 80); // transitionend 偶发不来(0 位移/后台)兜底
+    };
+
     btn.addEventListener('pointerdown', (event) => {
-        start = { x: event.clientX, y: event.clientY };
         swallowClick = false;
+        if (busy()) { start = null; return; }
+        start = { x: event.clientX, y: event.clientY };
+        axis = null;
+        samples = [{ x: event.clientX, t: event.timeStamp }];
         try { btn.setPointerCapture(event.pointerId); } catch (_) { /* 不支持就算了,手指别滑出按钮即可 */ }
     });
-    btn.addEventListener('pointercancel', () => { start = null; });
-    btn.addEventListener('pointerup', (event) => {
+
+    btn.addEventListener('pointermove', (event) => {
         if (!start) return;
         const dx = event.clientX - start.x;
         const dy = event.clientY - start.y;
-        start = null;
-        if (Math.abs(dx) >= QUEUE_SWIPE_MIN_PX && Math.abs(dx) > Math.abs(dy) * 1.5) {
-            swallowClick = true;
-            setTimeout(() => { swallowClick = false; }, 400);
-            toggleQueueMode();
+        if (!axis) {
+            if (Math.abs(dx) < QUEUE_SWIPE_AXIS_LOCK_PX && Math.abs(dy) < QUEUE_SWIPE_AXIS_LOCK_PX) return;
+            axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+            if (axis === 'y') { start = null; return; }
+            beginDrag();
         }
+        if (!drag) return;
+        drag.dx = Math.max(-drag.width, Math.min(drag.width, dx));
+        samples.push({ x: event.clientX, t: event.timeStamp });
+        while (samples.length > 2 && event.timeStamp - samples[0].t > 100) samples.shift();
+        if (!rafId) rafId = requestAnimationFrame(render);
     });
+
+    btn.addEventListener('pointerup', (event) => {
+        if (!start) return;
+        start = null;
+        if (!drag) return; // 没走出 8px:轻点,交给 click 照常发送
+        swallowClick = true;
+        setTimeout(() => { swallowClick = false; }, 400);
+        const first = samples[0];
+        const dt = Math.max(1, event.timeStamp - first.t);
+        const velocity = (event.clientX - first.x) / dt; // px/ms,带方向
+        const progress = Math.abs(drag.dx) / drag.width;
+        const flick = Math.abs(velocity) >= QUEUE_SWIPE_FLICK_PX_PER_MS
+            && Math.sign(velocity) === Math.sign(drag.dx)
+            && Math.abs(drag.dx) >= QUEUE_SWIPE_AXIS_LOCK_PX * 2;
+        settle(progress >= QUEUE_SWIPE_COMMIT_RATIO || flick);
+    });
+
+    btn.addEventListener('pointercancel', () => {
+        start = null;
+        settle(false);
+    });
+
     btn.addEventListener('click', (event) => {
         if (!swallowClick) return;
         swallowClick = false;

@@ -1136,9 +1136,52 @@ body.nearby-reorder-active {
 
 /* 「发送并回车」大按钮可横滑切排队模式:纵向手势留给页面滚动,横向交给 JS */
 .combo-btn.queueable {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate; /* iOS WebKit:圆角 + overflow 才能裁住做 transform 的子层 */
     touch-action: pan-y;
     -webkit-user-select: none;
     user-select: none;
+}
+
+/* 跟手滑动的临时动画层:拖动期间盖在按钮里,按钮自身文字透明;落定后由 JS 撤掉 */
+.combo-btn.qs-dragging {
+    color: transparent;
+}
+
+.qs-layer {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+}
+
+.qs-bg {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: 0;
+    will-change: opacity;
+}
+
+/* 目标底色:与 .send-btn 蓝 / .queue-mode 紫同一组渐变,透明度 = 滑动进度 */
+.qs-bg.to-queue {
+    background: linear-gradient(180deg, #8a7bff 0%, #5b48d9 100%);
+}
+
+.qs-bg.to-normal {
+    background: linear-gradient(180deg, #2594ff 0%, var(--accent) 100%);
+}
+
+.qs-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    white-space: nowrap;
+    will-change: transform;
 }
 
 /* 排队模式(⌘回车,不打断正在跑的任务):换靛紫色,不看字也知道这一下不会打断。
