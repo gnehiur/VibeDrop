@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v31-queue-swipe-follow-20261006';
+window.__vdBuild = 'ui-v32-queue-swipe-ios-fix-20261006';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -1074,8 +1074,11 @@ function isQueueMode() {
     return getStoredSettingsObject().queueMode === true && !isOutingMode();
 }
 
+// ↩(U+21A9)带 emoji 变体:iOS 默认画成彩色 emoji(不跟文字色、color:transparent 也藏不住),
+// 补 U+FE0E 文本变体选择符强制按普通字形画。安卓本来就画文字字形,补了也无影响。
 function comboLabelFor(queue) {
-    return queue ? t('发送并排队 ⌘↩') : t('发送并回车');
+    const label = queue ? t('发送并排队 ⌘↩') : t('发送并回车');
+    return label.replace(/\u21A9(?!\uFE0E)/g, '\u21A9\uFE0E');
 }
 
 function comboIdleLabel() {
@@ -1211,25 +1214,51 @@ function bindQueueSwipe(btn) {
         if (!rafId) rafId = requestAnimationFrame(render);
     });
 
-    btn.addEventListener('pointerup', (event) => {
-        if (!start) return;
+    // 抬手:按进度/甩速决定切过去还是弹回。x 缺省时(兜底路径拿不到坐标)只看进度。
+    const endDrag = (x, timeStamp) => {
         start = null;
-        if (!drag) return; // 没走出 8px:轻点,交给 click 照常发送
+        if (!drag) return; // 没走出 8px:轻点,交给 click 照常发送(或已由别的路径落定)
         swallowClick = true;
         setTimeout(() => { swallowClick = false; }, 400);
-        const first = samples[0];
-        const dt = Math.max(1, event.timeStamp - first.t);
-        const velocity = (event.clientX - first.x) / dt; // px/ms,带方向
         const progress = Math.abs(drag.dx) / drag.width;
-        const flick = Math.abs(velocity) >= QUEUE_SWIPE_FLICK_PX_PER_MS
-            && Math.sign(velocity) === Math.sign(drag.dx)
-            && Math.abs(drag.dx) >= QUEUE_SWIPE_AXIS_LOCK_PX * 2;
+        let flick = false;
+        if (typeof x === 'number' && samples.length) {
+            const first = samples[0];
+            const velocity = (x - first.x) / Math.max(1, timeStamp - first.t); // px/ms,带方向
+            flick = Math.abs(velocity) >= QUEUE_SWIPE_FLICK_PX_PER_MS
+                && Math.sign(velocity) === Math.sign(drag.dx)
+                && Math.abs(drag.dx) >= QUEUE_SWIPE_AXIS_LOCK_PX * 2;
+        }
         settle(progress >= QUEUE_SWIPE_COMMIT_RATIO || flick);
-    });
+    };
+
+    btn.addEventListener('pointerup', (event) => endDrag(event.clientX, event.timeStamp));
 
     btn.addEventListener('pointercancel', () => {
         start = null;
         settle(false);
+    });
+
+    // iOS 兜底(2026-10-06 实测卡半路):原生层没关 WKWebView 的 UIScrollView(只用 KVO 钉位),
+    // 横向拖动时原生滚动手势会把触摸抢走,WebKit 随即不再派发 pointermove/pointerup,
+    // 动画层冻在半路、永远等不到抬手。touch-action: pan-y 压不住"自身仍可滚"的 scroll view。
+    // 硬信号:横向一锁定就在 touchmove 上 preventDefault(必须 passive:false),明确不交给原生滚动;
+    // 再挂 touchend/touchcancel 与 lostpointercapture 两道兜底,哪条先到哪条落定,重复到达无副作用。
+    btn.addEventListener('touchmove', (event) => {
+        if (axis === 'x' && drag && event.cancelable) event.preventDefault();
+    }, { passive: false });
+    btn.addEventListener('touchend', (event) => {
+        if (!drag) return;
+        const touch = event.changedTouches && event.changedTouches[0];
+        endDrag(touch ? touch.clientX : undefined, event.timeStamp);
+    });
+    btn.addEventListener('touchcancel', () => {
+        if (!drag) return;
+        endDrag();
+    });
+    btn.addEventListener('lostpointercapture', () => {
+        if (!drag) return;
+        endDrag();
     });
 
     btn.addEventListener('click', (event) => {
