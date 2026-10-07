@@ -3242,6 +3242,7 @@ body.voice-skip-on .voice-wave i.s { opacity: 0.45; }
     color: var(--text-secondary);
 }
 .voice-player-text {
+    position: relative; /* 跟读高亮按 offsetTop 在框内滚动 */
     font-size: 14px;
     line-height: 1.55;
     max-height: 4.7em;
@@ -3326,3 +3327,8 @@ body.voice-skip-on .voice-wave i.s { opacity: 0.45; }
 
 /* 长列表按需挂载的哨兵:滑到它附近就续挂下一段 */
 .history-mount-sentinel { height: 1px; }
+
+/* 跟读高亮:读过的字变蓝,正在读的那一句加浅蓝底 */
+.history-text { position: relative; }
+.vk-done { color: var(--accent); }
+.vk-now { background: rgba(10, 132, 255, 0.14); border-radius: 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }

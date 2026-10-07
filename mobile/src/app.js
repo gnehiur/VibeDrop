@@ -11834,6 +11834,7 @@ function renderHistoryWindow(force) {
     chunks.push(`<div class="history-virtual-spacer" style="height:${bottomSpacer}px"></div>`);
     list.innerHTML = chunks.join('');
     historyVirtual.topSpacer = topSpacer;
+    if (voicePlayer.cur) paintVoiceKaraoke();
 
     // 实测渲染出来的真实高度,越滑越准
     const nodes = list.querySelectorAll('.history-item');
@@ -12793,6 +12794,7 @@ function rebuildVoicePlaylist(entries) {
     }
     voicePlayer.playlist = playlist;
     syncVoicePlayerState();
+    if (voicePlayer.cur) requestAnimationFrame(paintVoiceKaraoke);
 }
 
 function voiceClock(seconds) {
@@ -12891,6 +12893,7 @@ function voicePlay(item, frac = 0, { reveal = 'nearest' } = {}) {
     if (!item || !audio) return;
     if (voicePlayer.cur !== item.id) {
         const wasWatching = reveal === 'follow' && isVoiceClipVisible(voicePlayer.cur);
+        restoreVoiceKaraokeCard();
         voicePlayer.cur = item.id;
         audio.src = voiceAudioUrl(item);
         audio.playbackRate = voicePlayer.prefs.rate;
@@ -13018,6 +13021,261 @@ function locateCurrentVoice() {
     centerVoiceInHistory(id, () => flashVoiceClip(id));
 }
 
+// ---- 跟读高亮(2026-10-07 用户要求):播放时已读过的字变蓝、正在读的那一句加底色;卡片里的消息原文和播放条文字同步。
+// 输入法不给逐字时间,按「人声时长 ∝ 字数」估算:停顿区间(sk)把录音切成几段人声,和按标点切开的分句数量一致时逐句对齐,
+// 对不上就按人声已播时长等比推进。一条消息由多段录音拼成时,先用局部比对把每段录音的文字在原文里找到位置
+// (容忍发送前的删改、穿插打字) ----
+const VOICE_KARAOKE_PUNCT = /[，。！？；、,.!?;:：…\n]/;
+const voiceSpanCache = new Map(); // 消息键|长度|录音 id 们 → Map(录音 id → [起, 止))
+const voiceKaraoke = { key: '', idx: -1, ctx: null, el: null, cardSig: '', playerSig: '' };
+
+function voiceCharWeights(text) {
+    const weights = new Float32Array(text.length);
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (VOICE_KARAOKE_PUNCT.test(ch) || /\s/.test(ch)) weights[i] = 0;
+        else if (/[A-Za-z]/.test(ch)) weights[i] = 0.3; // 一个英文词大约一两拍
+        else if (/[0-9]/.test(ch)) weights[i] = 0.6;
+        else weights[i] = 1;
+    }
+    return weights;
+}
+
+function voiceClauses(text, weights) {
+    const clauses = [];
+    let start = 0;
+    const push = (end) => {
+        let w = 0;
+        for (let i = start; i < end; i += 1) w += weights[i];
+        if (w > 0) clauses.push([start, end]);
+        else if (clauses.length) clauses[clauses.length - 1][1] = end; // 纯标点并进上一句
+        start = end;
+    };
+    for (let i = 0; i < text.length; i += 1) {
+        if (VOICE_KARAOKE_PUNCT.test(text[i])) push(i + 1);
+    }
+    if (start < text.length) push(text.length);
+    return clauses;
+}
+
+function voiceVoicedChunks(item, duration) {
+    const chunks = [];
+    let cursor = 0;
+    for (const [s, e] of item.sk || []) {
+        if (s > cursor + 0.05) chunks.push([cursor, Math.min(s, duration)]);
+        cursor = Math.max(cursor, e);
+    }
+    if (duration > cursor + 0.05) chunks.push([cursor, duration]);
+    return chunks;
+}
+
+// 播到 time 秒时,text 读到第几个字(done)、正在读哪一句(clause)
+function voiceReadingPosition(text, item, time, duration) {
+    const weights = voiceCharWeights(text);
+    const clauses = voiceClauses(text, weights);
+    let total = 0;
+    for (let i = 0; i < weights.length; i += 1) total += weights[i];
+    if (!total || !duration) return { done: 0, clause: null };
+    const weightBefore = (end) => {
+        let w = 0;
+        for (let i = 0; i < end; i += 1) w += weights[i];
+        return w;
+    };
+    let target;
+    const chunks = voiceVoicedChunks(item, duration);
+    if (chunks.length > 1 && chunks.length === clauses.length) {
+        let k = chunks.findIndex(([, b]) => time < b);
+        if (k < 0) k = chunks.length - 1;
+        const [a, b] = chunks[k];
+        const local = Math.min(1, Math.max(0, (time - a) / Math.max(0.05, b - a)));
+        const [cs, ce] = clauses[k];
+        target = weightBefore(cs) + local * (weightBefore(ce) - weightBefore(cs));
+    } else {
+        let silentBefore = 0;
+        let silentTotal = 0;
+        for (const [s, e] of item.sk || []) {
+            silentTotal += e - s;
+            if (time > s) silentBefore += Math.min(time, e) - s;
+        }
+        const ratio = Math.min(1, Math.max(0, (time - silentBefore) / Math.max(0.1, duration - silentTotal)));
+        target = ratio * total;
+    }
+    let acc = 0;
+    let done = 0;
+    while (done < text.length && acc + weights[done] <= target + 1e-6) {
+        acc += weights[done];
+        done += 1;
+    }
+    if (time >= duration - 0.05) done = text.length;
+    const clause = done < text.length ? (clauses.find(([, b]) => done < b) || null) : null;
+    return { done, clause };
+}
+
+// 局部比对(Smith-Waterman):在消息原文里找和这段口述最像的那一段,返回 [起, 止) 或 null
+function voiceAlignSpan(message, spoken) {
+    const a = spoken.toLowerCase();
+    const b = message.toLowerCase();
+    const m = a.length;
+    const n = b.length;
+    if (!m || !n) return null;
+    let prev = new Int32Array(n + 1);
+    let cur = new Int32Array(n + 1);
+    let prevStart = new Int32Array(n + 1);
+    let curStart = new Int32Array(n + 1);
+    let best = 0;
+    let bestStart = 0;
+    let bestEnd = 0;
+    for (let i = 1; i <= m; i += 1) {
+        const ca = a.charCodeAt(i - 1);
+        cur[0] = 0;
+        for (let j = 1; j <= n; j += 1) {
+            let score = 0;
+            let start = j - 1;
+            const diag = prev[j - 1] + (ca === b.charCodeAt(j - 1) ? 2 : -1);
+            if (diag > score) {
+                score = diag;
+                start = prev[j - 1] > 0 ? prevStart[j - 1] : j - 1;
+            }
+            const up = prev[j] - 1;
+            if (up > score) {
+                score = up;
+                start = prevStart[j];
+            }
+            const left = cur[j - 1] - 1;
+            if (left > score) {
+                score = left;
+                start = curStart[j - 1];
+            }
+            cur[j] = score;
+            curStart[j] = start;
+            if (score > best) {
+                best = score;
+                bestStart = start;
+                bestEnd = j;
+            }
+        }
+        [prev, cur] = [cur, prev];
+        [prevStart, curStart] = [curStart, prevStart];
+    }
+    let content = 0;
+    for (const ch of spoken) if (!VOICE_KARAOKE_PUNCT.test(ch) && !/\s/.test(ch)) content += 1;
+    return best >= Math.max(4, content * 0.9) ? [bestStart, bestEnd] : null;
+}
+
+function buildVoiceKaraokeContext(item) {
+    const idx = findHistoryIndexForVoice(item.id);
+    const entry = currentRenderedHistoryEntries[idx];
+    if (!entry) return null;
+    if (entry.kind === 'voice') {
+        const text = voiceText(item);
+        return { idx, key: vaultMergedEntryKey(entry), text, order: [item.id], spans: new Map([[item.id, [0, text.length]]]) };
+    }
+    const list = voiceAttachMap.get(entry) || [];
+    const text = String(entry.text || '');
+    const cacheKey = `${vaultMergedEntryKey(entry)}|${text.length}|${list.map((v) => `${v.id}:${voiceText(v).length}`).join(',')}`;
+    let spans = voiceSpanCache.get(cacheKey);
+    if (!spans) {
+        spans = new Map();
+        list.forEach((v) => {
+            const spoken = voiceText(v);
+            const span = spoken ? voiceAlignSpan(text, spoken) : null;
+            if (span) spans.set(v.id, span);
+        });
+        voiceSpanCache.set(cacheKey, spans);
+    }
+    return { idx, key: vaultMergedEntryKey(entry), text, order: list.map((v) => v.id), spans };
+}
+
+function voiceKaraokeHTML(text, doneRanges, now) {
+    const n = text.length;
+    const marks = new Uint8Array(n);
+    doneRanges.forEach(([a, b]) => { for (let i = Math.max(0, a); i < Math.min(n, b); i += 1) marks[i] |= 1; });
+    if (now) for (let i = Math.max(0, now[0]); i < Math.min(n, now[1]); i += 1) marks[i] |= 2;
+    let html = '';
+    let i = 0;
+    while (i < n) {
+        const mark = marks[i];
+        let j = i + 1;
+        while (j < n && marks[j] === mark) j += 1;
+        const piece = escapeHtml(text.slice(i, j));
+        html += mark ? `<span class="${[mark & 1 ? 'vk-done' : '', mark & 2 ? 'vk-now' : ''].join(' ').trim()}">${piece}</span>` : piece;
+        i = j;
+    }
+    return html;
+}
+
+// 让框里正在读的那句露出来(只滚这个文字框,不动外面的页面)
+function keepVoiceNowVisible(box) {
+    const now = box?.querySelector('.vk-now');
+    if (!now) return;
+    const top = now.offsetTop;
+    if (top < box.scrollTop || top + now.offsetHeight > box.scrollTop + box.clientHeight) {
+        box.scrollTop = Math.max(0, top - 4);
+    }
+}
+
+function restoreVoiceKaraokeCard() {
+    const { el, ctx } = voiceKaraoke;
+    if (el && el.isConnected && ctx) el.innerHTML = highlightHistoryText(ctx.text);
+    voiceKaraoke.el = null;
+    voiceKaraoke.ctx = null;
+    voiceKaraoke.key = '';
+    voiceKaraoke.cardSig = '';
+    voiceKaraoke.playerSig = '';
+}
+
+function paintVoiceKaraoke() {
+    const item = voiceCurItem();
+    const audio = $('voice-audio');
+    if (!item || !audio) return;
+    const duration = voiceDuration();
+    const time = voicePlayer.drag != null ? voicePlayer.drag * duration : (audio.currentTime || 0);
+
+    const own = voiceText(item);
+    const box = $('voice-player-text');
+    if (own && box) {
+        const pos = voiceReadingPosition(own, item, time, duration);
+        const sig = `${item.id}|${pos.done}|${pos.clause}`;
+        if (sig !== voiceKaraoke.playerSig) {
+            box.innerHTML = voiceKaraokeHTML(own, [[0, pos.done]], pos.clause);
+            voiceKaraoke.playerSig = sig;
+            keepVoiceNowVisible(box);
+        }
+    }
+
+    // 卡片原文:列表重画后条目对象会换,按消息键找回
+    let ctx = voiceKaraoke.ctx;
+    if (!ctx || voiceKaraoke.key !== item.id || currentRenderedHistoryEntries[ctx.idx] === undefined
+        || vaultMergedEntryKey(currentRenderedHistoryEntries[ctx.idx]) !== ctx.key) {
+        ctx = buildVoiceKaraokeContext(item);
+        voiceKaraoke.ctx = ctx;
+        voiceKaraoke.key = item.id;
+    }
+    if (!ctx) return;
+    const el = document.querySelector(`#history-list .history-item[data-idx="${ctx.idx}"] .history-text`);
+    if (!el) return;
+    const position = ctx.order.indexOf(item.id);
+    const doneRanges = [];
+    let now = null;
+    ctx.order.forEach((id, k) => {
+        const span = ctx.spans.get(id);
+        if (span && k < position) doneRanges.push(span);
+    });
+    const span = ctx.spans.get(item.id);
+    if (span) {
+        const pos = voiceReadingPosition(ctx.text.slice(span[0], span[1]), item, time, duration);
+        doneRanges.push([span[0], span[0] + pos.done]);
+        if (pos.clause) now = [span[0] + pos.clause[0], span[0] + pos.clause[1]];
+    }
+    const sig = `${doneRanges.map((r) => r.join('-')).join(',')}|${now}`;
+    if (el !== voiceKaraoke.el || sig !== voiceKaraoke.cardSig) {
+        el.innerHTML = voiceKaraokeHTML(ctx.text, doneRanges, now);
+        voiceKaraoke.el = el;
+        voiceKaraoke.cardSig = sig;
+        keepVoiceNowVisible(el);
+    }
+}
+
 function closeVoicePlayer() {
     const audio = $('voice-audio');
     if (audio) {
@@ -13025,6 +13283,7 @@ function closeVoicePlayer() {
         audio.removeAttribute('src');
         audio.load();
     }
+    restoreVoiceKaraokeCard();
     voicePlayer.cur = null;
     document.querySelectorAll('.voice-clip.cur').forEach((clip) => clip.classList.remove('cur'));
     syncVoicePlayerVisibility();
@@ -13118,6 +13377,7 @@ function paintVoiceProgress() {
     const cur = $('voice-player-cur');
     if (cur) cur.textContent = voiceClock(frac * duration);
     paintVoiceBars(document.querySelector(`.voice-clip[data-voice-id="${CSS.escape(voicePlayer.cur)}"] .voice-wave`), frac);
+    paintVoiceKaraoke();
     if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && duration && audio) {
         try {
             navigator.mediaSession.setPositionState({ duration, playbackRate: audio.playbackRate, position: Math.min(audio.currentTime, duration) });
