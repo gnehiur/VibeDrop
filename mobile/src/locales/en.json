@@ -696,5 +696,6 @@
   "跳过停顿省 {time}": "Skipping pauses saves {time}",
   "播放失败，稍后再试": "Playback failed, try again later",
   "微信": "WeChat",
-  "抖音": "Douyin"
+  "抖音": "Douyin",
+  "读取所选图片失败": "Couldn't read the selected photo"
 }

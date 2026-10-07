@@ -2043,6 +2043,51 @@ function isIOSNativeApp() {
     return getNativeMobilePlatform() === 'ios';
 }
 
+// iOS 的 <input type=file accept=image/*> 必弹「照片图库/拍照/选取文件」三选一,网页层没法跳过;
+// 原生直接弹系统相册,选好的图挂到原 input 上再触发 change,后续发送流程不变(2026-10-07 用户要求与安卓一致)。
+// 原生不可用或出错时退回系统菜单,保证按钮不会失灵。
+async function openImagePicker(input, { multiple = false } = {}) {
+    if (!input) return;
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!isIOSNativeApp() || typeof invoke !== 'function') {
+        input.click();
+        return;
+    }
+    let picked;
+    try {
+        picked = await invoke('pick_photos', { multiple });
+    } catch (error) {
+        const message = String(error?.message || error);
+        debugLog('ios-photo-picker-failed', { message });
+        if (message === 'read-failed') showToast(t('读取所选图片失败'));
+        else if (message !== 'cancelled') input.click();
+        return;
+    }
+    if (!Array.isArray(picked) || !picked.length) return; // 用户点了取消
+    try {
+        const files = [];
+        for (const photo of picked) {
+            const bytes = await invoke('read_picked_photo', { path: photo.path });
+            files.push(new File([bytes], photo.name, { type: photo.mime }));
+        }
+        input._vdPickedFiles = files;
+        input.dispatchEvent(new Event('change'));
+    } catch (error) {
+        debugLog('ios-photo-read-failed', { message: String(error?.message || error) });
+        showToast(t('读取所选图片失败'));
+    }
+}
+
+// 原生选图挂在 input 上的文件优先(取一次即清),否则读普通文件框的 input.files
+function takeInputFiles(input) {
+    const picked = input?._vdPickedFiles;
+    if (picked) {
+        input._vdPickedFiles = null;
+        return picked;
+    }
+    return Array.from(input?.files || []);
+}
+
 function getNativeMobileDefaultLabel() {
     const platform = getNativeMobilePlatform();
     if (platform === 'android') {
@@ -4109,7 +4154,7 @@ function createSendCard(dev) {
             sendPendingSharedImage(dev.id);
             return;
         }
-        imageInput.click();
+        openImagePicker(imageInput);
     });
     fileBtn.addEventListener('click', () => {
         if (pendingSharedContents.length) {
@@ -4123,7 +4168,7 @@ function createSendCard(dev) {
         fileInput.click();
     });
     imageInput.addEventListener('change', async (event) => {
-        const [file] = event.target.files || [];
+        const [file] = takeInputFiles(event.target);
         event.target.value = '';
         if (file) {
             await sendSelectedImage(dev.id, file);
@@ -4504,10 +4549,10 @@ function createP2pCard() {
     keepKeyboardOnPress(card.querySelector('#sendbtn-p2p'));
     const imageInput = card.querySelector('#p2pimageinput');
     const fileInput = card.querySelector('#p2pfileinput');
-    card.querySelector('#imagebtn-p2p').addEventListener('click', () => imageInput.click());
+    card.querySelector('#imagebtn-p2p').addEventListener('click', () => openImagePicker(imageInput, { multiple: true }));
     card.querySelector('#filebtn-p2p').addEventListener('click', () => fileInput.click());
     imageInput.addEventListener('change', async (e) => {
-        const files = Array.from(e.target.files || []);
+        const files = takeInputFiles(e.target);
         e.target.value = '';
         if (files.length) await p2pSendFiles(files, 'imagebtn-p2p');
     });
@@ -4647,7 +4692,7 @@ function createSmartCard() {
             return;
         }
         smartPendingMediaTarget = targetId; // 锁定按下瞬间的光标目标,选图回来直接用
-        smartImageInput.click();
+        openImagePicker(smartImageInput);
     });
     smartFileBtn.addEventListener('click', () => {
         const targetId = resolveSmartMediaTarget();
@@ -4664,7 +4709,7 @@ function createSmartCard() {
         smartFileInput.click();
     });
     smartImageInput.addEventListener('change', async (event) => {
-        const [file] = event.target.files || [];
+        const [file] = takeInputFiles(event.target);
         event.target.value = '';
         const targetId = smartPendingMediaTarget || (file ? resolveSmartMediaTarget() : null);
         smartPendingMediaTarget = null;
@@ -10068,7 +10113,7 @@ function initHistoryActions() {
 
             const voiceClip = event.target.closest('[data-voice-id]');
             if (voiceClip || entry.kind === 'voice') {
-                handleVoiceClipClick(voiceClip ? voiceClip.dataset.voiceId : entry.voice.id, event);
+                handleVoiceClipClick(voiceClip ? voiceClip.dataset.voiceId : entry.voice.id);
                 return;
             }
 
@@ -12542,15 +12587,10 @@ function renderVoiceEntryMarkup(entry, index) {
     `;
 }
 
-function handleVoiceClipClick(voiceId, event) {
+// 列表里点语音条哪儿都一样:换一条就从头播,点正在放的那条则暂停/继续;按位置跳转只在底部播放条上拖(2026-10-07 用户要求)
+function handleVoiceClipClick(voiceId) {
     const item = voiceState.byId.get(voiceId);
     if (!item) return;
-    const wave = event.target.closest('.voice-wave');
-    if (wave) {
-        const rect = wave.getBoundingClientRect();
-        voicePlay(item, rect.width ? (event.clientX - rect.left) / rect.width : 0);
-        return;
-    }
     if (item.id === voicePlayer.cur) {
         voiceTogglePlay();
         return;

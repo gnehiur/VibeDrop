@@ -667,5 +667,6 @@
   "跳过停顿省 {time}": "Saltar pausas ahorra {time}",
   "播放失败，稍后再试": "Error de reproducción, inténtalo más tarde",
   "微信": "WeChat",
-  "抖音": "Douyin"
+  "抖音": "Douyin",
+  "读取所选图片失败": "No se pudo leer la foto seleccionada"
 }

@@ -2131,6 +2131,304 @@ fn apply_ios_scroll_lock(window: tauri::WebviewWindow) {
 }
 
 
+
+/// 选图结果:原生复制到缓存目录后的路径 + 给对方看的文件名 + MIME
+#[derive(Clone, Serialize)]
+struct PickedPhoto {
+    path: String,
+    name: String,
+    mime: String,
+}
+
+fn picked_photos_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map(|dir| dir.join("picked-photos"))
+        .map_err(|e| e.to_string())
+}
+
+/// 「传图」按钮在 iOS 上直达系统相册(PHPicker),跳过 WKWebView 文件框的三选一菜单。
+/// 取消返回空数组;原生不可用返回 Err("unsupported"),前端据此退回系统菜单。
+#[tauri::command]
+async fn pick_photos(window: tauri::WebviewWindow, multiple: bool) -> Result<Vec<PickedPhoto>, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let dir = picked_photos_dir(window.app_handle())?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        window
+            .with_webview(move |webview| unsafe {
+                ios_photo_picker::present(webview.view_controller().cast(), multiple, dir, tx);
+            })
+            .map_err(|e| e.to_string())?;
+        tauri::async_runtime::spawn_blocking(move || {
+            rx.recv().unwrap_or_else(|_| Err("cancelled".to_string()))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (window, multiple);
+        Err("unsupported".to_string())
+    }
+}
+
+/// 把选好的图以二进制交给前端(不走 base64,也不依赖资源协议的路径白名单);只许读选图临时目录
+#[tauri::command]
+async fn read_picked_photo(app: tauri::AppHandle, path: String) -> Result<tauri::ipc::Response, String> {
+    let root = picked_photos_dir(&app)?.canonicalize().map_err(|e| e.to_string())?;
+    let file = PathBuf::from(&path).canonicalize().map_err(|e| e.to_string())?;
+    if !file.starts_with(&root) {
+        return Err("forbidden".to_string());
+    }
+    let bytes = std::fs::read(&file).map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[cfg(target_os = "ios")]
+mod ios_photo_picker {
+    // 「传图」直达系统相册(2026-10-07 用户要求与安卓一致):WKWebView 的 <input type=file accept=image/*>
+    // 在 iOS 必弹「照片图库/拍照/选取文件」三选一,网页层没有属性能跳过 → 原生直接弹 PHPicker。
+    // PhotosUI 不在工程链接的框架里,运行时 dlopen 后按类名取类,免改 Xcode 工程。
+    use super::PickedPhoto;
+    use block2::RcBlock;
+    use objc2::rc::{Allocated, Retained};
+    use objc2::runtime::{AnyClass, AnyObject, NSObject};
+    use objc2::{define_class, msg_send, AllocAnyThread};
+    use std::ffi::{c_char, c_int, c_void, CStr, CString};
+    use std::path::PathBuf;
+    use std::sync::mpsc::Sender;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    type PickResult = Result<Vec<PickedPhoto>, String>;
+
+    struct Pending {
+        tx: Sender<PickResult>,
+        dir: PathBuf,
+    }
+
+    struct Collect {
+        slots: Vec<Option<PickedPhoto>>,
+        remaining: usize,
+        tx: Option<Sender<PickResult>>,
+    }
+
+    // 同一时刻只有一个选图会话;新请求顶掉旧的(旧发送端被丢弃,等待方收到断开)
+    static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
+    static DELEGATE: OnceLock<usize> = OnceLock::new();
+
+    extern "C" {
+        fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
+    }
+
+    define_class!(
+        // PHPickerViewController 的 delegate 是弱引用:用进程级单例(泄漏一个小对象,与 App 同寿命)
+        #[unsafe(super(NSObject))]
+        #[name = "VDPhotoPickerDelegate"]
+        struct VDPhotoPickerDelegate;
+
+        impl VDPhotoPickerDelegate {
+            #[unsafe(method(picker:didFinishPicking:))]
+            fn did_finish_picking(&self, picker: *mut AnyObject, results: *mut AnyObject) {
+                unsafe { finish(picker, results) }
+            }
+        }
+    );
+
+    unsafe fn ns_string(text: &str) -> Retained<AnyObject> {
+        let cls = AnyClass::get(c"NSString").unwrap();
+        let c_text = CString::new(text).unwrap_or_default();
+        msg_send![cls, stringWithUTF8String: c_text.as_ptr()]
+    }
+
+    unsafe fn rust_string(ns: *mut AnyObject) -> Option<String> {
+        if ns.is_null() {
+            return None;
+        }
+        let utf8: *const c_char = msg_send![&*ns, UTF8String];
+        if utf8.is_null() {
+            return None;
+        }
+        Some(CStr::from_ptr(utf8).to_string_lossy().into_owned())
+    }
+
+    pub unsafe fn present(view_controller: *mut AnyObject, multiple: bool, dir: PathBuf, tx: Sender<PickResult>) {
+        let _ = dlopen(c"/System/Library/Frameworks/PhotosUI.framework/PhotosUI".as_ptr(), 2); // RTLD_NOW
+        let (Some(config_cls), Some(picker_cls), Some(filter_cls)) = (
+            AnyClass::get(c"PHPickerConfiguration"),
+            AnyClass::get(c"PHPickerViewController"),
+            AnyClass::get(c"PHPickerFilter"),
+        ) else {
+            let _ = tx.send(Err("unsupported".to_string()));
+            return;
+        };
+        if view_controller.is_null() {
+            let _ = tx.send(Err("unsupported".to_string()));
+            return;
+        }
+        *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(Pending { tx, dir });
+
+        let config: Retained<AnyObject> = msg_send![config_cls, new];
+        let _: () = msg_send![&*config, setSelectionLimit: if multiple { 0isize } else { 1isize }];
+        let filter: *mut AnyObject = msg_send![filter_cls, imagesFilter];
+        let _: () = msg_send![&*config, setFilter: filter];
+        // Compatible(=2):HEIC 等转成 JPEG,与原来 WKWebView 文件框的行为一致,Mac/安卓收图都认
+        let _: () = msg_send![&*config, setPreferredAssetRepresentationMode: 2isize];
+
+        let allocated: Allocated<AnyObject> = msg_send![picker_cls, alloc];
+        let picker: Retained<AnyObject> = msg_send![allocated, initWithConfiguration: &*config];
+        let delegate = *DELEGATE.get_or_init(|| {
+            let created: Retained<VDPhotoPickerDelegate> = msg_send![VDPhotoPickerDelegate::alloc(), init];
+            Retained::into_raw(created) as usize
+        });
+        let _: () = msg_send![&*picker, setDelegate: delegate as *mut AnyObject];
+
+        // 已有弹出层(分享面板等)时要从最上层弹,否则静默失败
+        let mut top = view_controller;
+        loop {
+            let next: *mut AnyObject = msg_send![&*top, presentedViewController];
+            if next.is_null() {
+                break;
+            }
+            top = next;
+        }
+        let _: () = msg_send![
+            &*top,
+            presentViewController: &*picker,
+            animated: true,
+            completion: None::<&block2::Block<dyn Fn()>>
+        ];
+    }
+
+    unsafe fn finish(picker: *mut AnyObject, results: *mut AnyObject) {
+        if !picker.is_null() {
+            let _: () = msg_send![
+                &*picker,
+                dismissViewControllerAnimated: true,
+                completion: None::<&block2::Block<dyn Fn()>>
+            ];
+        }
+        let Some(Pending { tx, dir }) = PENDING.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+            return;
+        };
+        let count: usize = if results.is_null() { 0 } else { msg_send![&*results, count] };
+        if count == 0 {
+            let _ = tx.send(Ok(Vec::new())); // 用户点了取消
+            return;
+        }
+        // 上一轮的临时图早已发完,清掉再放这一轮的
+        let _ = std::fs::remove_dir_all(&dir);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            let _ = tx.send(Err(e.to_string()));
+            return;
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let state = Arc::new(Mutex::new(Collect { slots: vec![None; count], remaining: count, tx: Some(tx) }));
+        for index in 0..count {
+            let result: *mut AnyObject = msg_send![&*results, objectAtIndex: index];
+            let provider: *mut AnyObject = if result.is_null() {
+                std::ptr::null_mut()
+            } else {
+                msg_send![&*result, itemProvider]
+            };
+            if provider.is_null() {
+                settle(&state, index, None);
+                continue;
+            }
+            let (type_id, ext) = preferred_type(provider);
+            let suggested: *mut AnyObject = msg_send![&*provider, suggestedName];
+            let base = rust_string(suggested)
+                .map(|name| clean_base_name(&name))
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| format!("IMG_{stamp}_{}", index + 1));
+            let shared = Arc::clone(&state);
+            let dest_dir = dir.clone();
+            let block = RcBlock::new(move |url: *mut AnyObject, _error: *mut AnyObject| {
+                // 系统给的临时文件只在回调期间有效,必须在这里同步复制走
+                let picked = unsafe { copy_out(url, &dest_dir, index, &base, ext) };
+                settle(&shared, index, picked);
+            });
+            let type_ns = ns_string(type_id);
+            let _: *mut AnyObject = msg_send![
+                &*provider,
+                loadFileRepresentationForTypeIdentifier: &*type_ns,
+                completionHandler: &*block
+            ];
+        }
+    }
+
+    // 动图保持 GIF、截图保持 PNG(不转 JPEG,免得文字发糊),其余(含 HEIC)取 JPEG
+    unsafe fn preferred_type(provider: *mut AnyObject) -> (&'static str, &'static str) {
+        for (type_id, ext) in [("com.compuserve.gif", "gif"), ("public.png", "png"), ("public.jpeg", "jpg")] {
+            let type_ns = ns_string(type_id);
+            let conforms: bool = msg_send![&*provider, hasItemConformingToTypeIdentifier: &*type_ns];
+            if conforms {
+                return (type_id, ext);
+            }
+        }
+        ("public.image", "")
+    }
+
+    unsafe fn copy_out(url: *mut AnyObject, dir: &PathBuf, index: usize, base: &str, ext: &str) -> Option<PickedPhoto> {
+        if url.is_null() {
+            return None;
+        }
+        let path: *mut AnyObject = msg_send![&*url, path];
+        let source = PathBuf::from(rust_string(path)?);
+        let ext = if ext.is_empty() {
+            source
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase())
+                .unwrap_or_else(|| "jpg".to_string())
+        } else {
+            ext.to_string()
+        };
+        let name = format!("{base}.{ext}");
+        let dest = dir.join(format!("{:02}-{name}", index + 1));
+        std::fs::copy(&source, &dest).ok()?;
+        Some(PickedPhoto { path: dest.to_string_lossy().into_owned(), name, mime: mime_for(&ext).to_string() })
+    }
+
+    fn settle(state: &Arc<Mutex<Collect>>, index: usize, picked: Option<PickedPhoto>) {
+        let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        guard.slots[index] = picked;
+        guard.remaining -= 1;
+        if guard.remaining == 0 {
+            if let Some(tx) = guard.tx.take() {
+                let photos: Vec<PickedPhoto> = guard.slots.iter().flatten().cloned().collect();
+                let _ = tx.send(if photos.is_empty() { Err("read-failed".to_string()) } else { Ok(photos) });
+            }
+        }
+    }
+
+    fn clean_base_name(name: &str) -> String {
+        let mut base: String = name.chars().filter(|c| !matches!(c, '/' | '\\' | ':' | '\0')).collect();
+        // suggestedName 偶尔自带扩展名;只去掉已知图片后缀(文件名里本身可能有点号,如截图的时间)
+        let lower = base.to_ascii_lowercase();
+        for suffix in [".jpg", ".jpeg", ".png", ".heic", ".heif", ".gif", ".webp"] {
+            if lower.ends_with(suffix) {
+                base.truncate(base.len() - suffix.len());
+                break;
+            }
+        }
+        base.trim().to_string()
+    }
+
+    fn mime_for(ext: &str) -> &'static str {
+        match ext {
+            "png" => "image/png",
+            "gif" => "image/gif",
+            "heic" | "heif" => "image/heic",
+            "webp" => "image/webp",
+            _ => "image/jpeg",
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2164,6 +2462,8 @@ pub fn run() {
             resolve_media_path,
             get_device_model,
             apply_ios_scroll_lock,
+            pick_photos,
+            read_picked_photo,
             check_paths_exist,
             vault_upload_media,
             get_discovery_diagnostics,
