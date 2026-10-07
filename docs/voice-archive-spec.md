@@ -15,7 +15,8 @@ python3 scripts/home-vault-receiver.py --voice-dir /path/to/voice-archive
 
 ```
 voice-archive/
-├── index.json          # 索引(采集程序负责写;请写临时文件再原子改名)
+├── index.json          # 录音索引(采集程序负责写;请写临时文件再原子改名)
+├── lexicon.json        # 可选:输入法用户词库
 └── <audioRoot>/        # 音频文件,默认目录名 audio
     └── 2026/10/xxx.flac
 ```
@@ -53,12 +54,33 @@ voice-archive/
 
 FLAC 请写成完整文件(不要从管道直接输出),否则缺总采样数和 seektable,浏览器里时长显示为无穷、进度条拖不动。
 
+## lexicon.json(可选:输入法用户词库)
+
+放在同一目录下,自我研究报告的「输入法」部分会读它。由采集程序定期刷新。
+
+```json
+{
+  "updated": "2026-10-07T20:43:56",
+  "baseline": "2026-09-09",
+  "words": [{"w": "营业额", "k": "yye", "f": 3, "t": "2026-10-05 14:02", "first": "2026-09-21"}]
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `w` / `k` | 词 / 输入编码 |
+| `f` | 累计使用次数 |
+| `t` | 最后一次使用(本地钟点,`YYYY-MM-DD HH:MM`) |
+| `first` | 采集程序第一次见到这个词的日期;`baseline` 那天已存在的词不带此字段 |
+| `baseline` | 开始追踪「新增」的日期 |
+
 ## Vault 接口
 
 | 接口 | 说明 |
 |---|---|
 | `GET /api/voice/index[?v=<版本>][&limit=N]` | 返回 `{enabled, version, count, items}`,每条多一个 `ts`(毫秒时间戳);`v` 与当前版本相同时只回 `{unchanged:true}` |
 | `GET /api/voice/audio/<f>` | 音频流,支持 Range(iOS 播放必需) |
+| `GET /api/voice/lexicon` | 返回 `{enabled, updated, baseline, count, words}`;没有 lexicon.json 时 `enabled:false` |
 | SSE `/api/events` | 索引变化时广播 `{"type":"voice-updated","version":…}` |
 
 未配置 `--voice-dir` 时,`/api/voice/index` 返回 `{"enabled": false}`,客户端据此隐藏全部语音界面。

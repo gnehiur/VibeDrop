@@ -576,6 +576,16 @@ def load_voice_index(voice_dir: pathlib.Path) -> tuple[str, dict[str, Any]]:
     return version, doc
 
 
+def load_voice_lexicon(voice_dir: pathlib.Path) -> dict[str, Any]:
+    """可选的用户词库 lexicon.json(报告用);不存在返回空。"""
+    path = voice_dir / "lexicon.json"
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    words = [w for w in raw.get("words") or [] if isinstance(w, dict) and w.get("w")]
+    return {"updated": raw.get("updated") or "", "baseline": raw.get("baseline") or "", "words": words}
+
+
 def resolve_voice_audio(voice_dir: pathlib.Path, audio_root: str, rel: str) -> pathlib.Path | None:
     root = (voice_dir / audio_root).resolve()
     candidate = (root / rel).resolve()
@@ -879,6 +889,17 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                     limit = clamp_limit((query.get("limit") or ["0"])[0], 0, 100000)
                     items = doc["items"][:limit] if limit else doc["items"]
                     self.send_json(200, {"ok": True, "enabled": True, "version": version, "count": len(doc["items"]), "items": items})
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
+                return
+
+            if path == "/api/voice/lexicon":
+                if token and self.headers.get("X-VibeDrop-Token") != token:
+                    self.send_json(401, {"ok": False, "error": "unauthorized"})
+                    return
+                try:
+                    doc = load_voice_lexicon(voice_dir) if voice_dir is not None else {}
+                    self.send_json(200, {"ok": True, "enabled": bool(doc), **doc, "count": len(doc.get("words") or [])})
                 except Exception as exc:
                     self.send_json(500, {"ok": False, "error": str(exc)})
                 return

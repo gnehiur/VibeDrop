@@ -228,6 +228,131 @@ TREND_JS = """
 """
 
 
+# ---- 输入法:语音存档 + 用户词库(金库配了 --voice-dir 才有,见 docs/voice-archive-spec.md)----
+VOICE_APP_LABELS = {"com.vibedrop.mobile": "VibeDrop", "com.tencent.mm": "微信", "com.ss.android.ugc.aweme": "抖音",
+                    "com.android.chrome": "Chrome", "org.telegram.messenger": "Telegram", "com.twitter.android": "X"}
+
+
+def fetch_optional(path):
+    try:
+        d = json.load(urllib.request.urlopen(f"{VAULT}{path}", timeout=15))
+    except Exception:
+        return None
+    return d if d.get("ok") and d.get("enabled") else None
+
+
+def fmt_dur(seconds):
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s} 秒"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m} 分" + (f" {s} 秒" if s else "")
+    h, m = divmod(m, 60)
+    return f"{h} 小时" + (f" {m} 分" if m else "")
+
+
+def short_day(iso):
+    return iso[2:10] if len(iso) >= 10 else iso   # 显示层两位年
+
+
+def bars_html(values, labels, unit, height=72):
+    top = max(values) if values and max(values) > 0 else 1
+    return "".join(
+        f'<div class="hb" title="{html.escape(full)} · {v:g}{unit}"><div class="hbar" style="height:{height * v / top:.0f}px"></div><span>{html.escape(lab)}</span></div>'
+        for v, (lab, full) in zip(values, labels))
+
+
+def input_method_section():
+    voice = fetch_optional("/api/voice/index")
+    lex = fetch_optional("/api/voice/lexicon")
+    items = (voice or {}).get("items") or []
+    words = (lex or {}).get("words") or []
+    if not items and not words:
+        return ""
+    esc = html.escape
+    out = ["<h1 style='margin-top:56px'>输入法</h1>",
+           "<p>上面分析的是发出去的定稿;这里是输入法这一侧:你口述的原始录音,和输入法替你攒的个人词库。</p>"]
+
+    if items:
+        total = sum(i.get("dur") or 0 for i in items)
+        silent = sum(sum(e - s for s, e in (i.get("sk") or [])) for i in items)
+        voiced = max(total - silent, 0)
+        texted = [i for i in items if i.get("tx")]
+        chars = sum(len(i["tx"]) for i in texted)
+        texted_voiced = sum((i.get("dur") or 0) - sum(e - s for s, e in (i.get("sk") or [])) for i in texted)
+        speed = chars / (texted_voiced / 60) if texted_voiced > 0 else 0
+        days = sorted({i["t"][:10] for i in items})
+        out.append(f"<h2>语音 · 从 {short_day(days[0])} 起</h2>")
+        out.append('<div class="stats">'
+                   f'<div class="stat"><b>{len(items)}</b>录音条数</div>'
+                   f'<div class="stat"><b>{fmt_dur(total)}</b>总时长</div>'
+                   f'<div class="stat"><b>{fmt_dur(voiced)}</b>人声(停顿占 {silent / total * 100 if total else 0:.0f}%)</div>'
+                   f'<div class="stat"><b>{fmt_dur(total / len(items))}</b>平均每条</div>'
+                   f'<div class="stat"><b>{chars:,}</b>口述字数</div>'
+                   f'<div class="stat"><b>{speed:.0f}</b>字/分钟(按人声算的语速)</div>'
+                   '</div>')
+        # 近 30 天每天说了多久(分钟)
+        last = datetime.date.fromisoformat(days[-1])
+        span = [last - datetime.timedelta(days=n) for n in range(29, -1, -1)]
+        per_day = collections.Counter()
+        for i in items:
+            per_day[i["t"][:10]] += (i.get("dur") or 0) / 60
+        vals = [round(per_day.get(d.isoformat(), 0), 1) for d in span]
+        labs = [(d.strftime("%m-%d") if n % 5 == 0 else "", d.isoformat()[2:]) for n, d in enumerate(span)]
+        out.append(f"<h2>近 30 天每天说了多久(分钟)</h2><div class='hours'>{bars_html(vals, labs, ' 分钟')}</div>")
+        per_hour = collections.Counter(int(i["t"][11:13]) for i in items)
+        out.append("<h2>一天中什么时候在说</h2><div class='hours'>"
+                   + bars_html([per_hour.get(h, 0) for h in range(24)], [(str(h), f"{h} 点") for h in range(24)], " 条") + "</div>")
+        apps = collections.defaultdict(lambda: [0, 0.0])
+        for i in items:
+            pkg = i.get("app") or ""
+            label = VOICE_APP_LABELS.get(pkg) or (pkg.split(".")[-1] if pkg else "未知")
+            apps[label][0] += 1
+            apps[label][1] += i.get("dur") or 0
+        app_rows = "".join(f"<tr><td>{esc(a)}</td><td>{n}</td><td>{fmt_dur(d)}</td></tr>"
+                           for a, (n, d) in sorted(apps.items(), key=lambda kv: -kv[1][1]))
+        spoken = collections.Counter()
+        for i in texted:
+            for tok in tokens_of(i["tx"]):
+                if len(tok) >= 2 and tok not in STOPWORDS and not re.fullmatch(r"[\d\W_]+", tok):
+                    spoken[tok.lower() if tok.isascii() else tok] += 1
+        spoken_rows = "".join(f"<tr><td>{n + 1}</td><td>{esc(w)}</td><td>{c}</td></tr>" for n, (w, c) in enumerate(spoken.most_common(30)))
+        out.append('<div class="grid">'
+                   f"<div><h2>在哪些 App 里说</h2><table><tr><th>App</th><th>条数</th><th>时长</th></tr>{app_rows}</table></div>"
+                   f"<div><h2>口述高频词 Top 30</h2><table><tr><th>#</th><th>词</th><th>次数</th></tr>{spoken_rows}</table></div>"
+                   "</div>")
+
+    if words:
+        baseline = (lex or {}).get("baseline") or ""
+        updated = (lex or {}).get("updated") or ""
+        uses = sum(w.get("f") or 0 for w in words)
+        recent_cut = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        used_recent = sum(1 for w in words if (w.get("t") or "") >= recent_cut)
+        fresh = sorted((w for w in words if w.get("first")), key=lambda w: (w["first"], w.get("t") or ""), reverse=True)
+        fresh_30 = sum(1 for w in fresh if w["first"] >= recent_cut)
+        out.append(f"<h2>个人词库 · 更新于 {short_day(updated)}</h2>")
+        out.append('<div class="stats">'
+                   f'<div class="stat"><b>{len(words):,}</b>词条</div>'
+                   f'<div class="stat"><b>{uses:,}</b>累计使用次数</div>'
+                   f'<div class="stat"><b>{used_recent:,}</b>近 30 天用过</div>'
+                   f'<div class="stat"><b>{len(fresh):,}</b>{short_day(baseline)} 以来新增</div>'
+                   + (f'<div class="stat"><b>{fresh_30:,}</b>近 30 天新增</div>' if baseline and baseline < recent_cut else '')
+                   + '</div>')
+        top_rows = "".join(f"<tr><td>{n + 1}</td><td>{esc(w['w'])}</td><td>{esc(w.get('k') or '')}</td><td>{w.get('f') or 0}</td></tr>"
+                           for n, w in enumerate(sorted(words, key=lambda w: -(w.get("f") or 0))[:50]))
+        fresh_rows = "".join(f"<tr><td>{esc(w['w'])}</td><td>{esc(w.get('k') or '')}</td><td>{short_day(w['first'])}</td></tr>"
+                             for w in fresh[:50])
+        out.append('<div class="grid">'
+                   f"<div><h2>词库里用得最多的 50 个词</h2><table><tr><th>#</th><th>词</th><th>编码</th><th>次数</th></tr>{top_rows}</table></div>"
+                   f"<div><h2>最近新造的 50 个词</h2><table><tr><th>词</th><th>编码</th><th>首次出现</th></tr>{fresh_rows}</table></div>"
+                   "</div>")
+        last_hour = collections.Counter(int(w["t"][11:13]) for w in words if len(w.get("t") or "") >= 13)
+        out.append("<h2>词库词最后一次被用是在几点</h2><div class='hours'>"
+                   + bars_html([last_hour.get(h, 0) for h in range(24)], [(str(h), f"{h} 点") for h in range(24)], " 个词") + "</div>")
+    return "".join(out)
+
+
 def main():
     entries = fetch()
     word_freq = collections.Counter()
@@ -372,6 +497,7 @@ def main():
         + TREND_JS
     )
     target_rows = "".join(f"<tr><td>{esc(t)}</td><td>{c}</td></tr>" for t, c in targets.most_common(8))
+    input_method = input_method_section()
 
     out_arg = os.environ.get("SELF_STUDY_OUTPUT", "")
     out = pathlib.Path(out_arg) if out_arg else (pathlib.Path.home() / "Downloads" / f"VibeDrop消息自我研究报告_{datetime.datetime.now():%y%m%d}.html")
@@ -402,6 +528,7 @@ td,th{{padding:7px 12px;border-bottom:1px solid #eef1f6;text-align:left;font-siz
 <h2>月度话题演变(每月特征词,TF-IDF)</h2><table><tr><th>月份</th><th>消息量</th><th>该月特征词</th></tr>{month_rows}</table>
 <h2>消息发往哪里</h2><table><tr><th>目标</th><th>条数</th></tr>{target_rows}</table>
 <h2>最长的十条(各取节选)</h2>{longest_blocks}
+{input_method}
 <script>
 document.querySelectorAll('h2').forEach(h => {{
   const table = h.nextElementSibling && h.nextElementSibling.tagName === 'TABLE' ? h.nextElementSibling
