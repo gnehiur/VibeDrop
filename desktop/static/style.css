@@ -3323,3 +3323,6 @@ body.voice-skip-on .voice-wave i.s { opacity: 0.45; }
     color: #fff;
 }
 .voice-player-rates .voice-chip:first-child { margin-left: 6px; }
+
+/* 长列表按需挂载的哨兵:滑到它附近就续挂下一段 */
+.history-mount-sentinel { height: 1px; }

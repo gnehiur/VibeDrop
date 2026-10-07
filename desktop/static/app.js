@@ -4014,7 +4014,49 @@ function scheduleDeferredSendCardsRender() {
     );
 }
 
+// ---- 口述片段(2026-10-07):输入法把一段文字落进输入框的时刻,发送时随历史条目带走(dictation 字段)。
+// 手机录音的结束时间和它几乎同时(同一台手机、同一个钟),历史页据此把录音秒级挂到这条消息上,
+// 不必等输入法自己写盘的识别记录 ----
+const dictationBuffers = new Map(); // 输入框 uiId → [{ t: 毫秒时间戳, text }]
+
+function recordDictationCommit(uiId, text) {
+    const clean = String(text || '').trim();
+    if (!clean) return;
+    const list = dictationBuffers.get(uiId) || [];
+    const now = Date.now();
+    const last = list[list.length - 1];
+    if (last && now - last.t < 400) { // 同一次上屏被拆成几个事件的,并成一段
+        last.text += clean;
+        last.t = now;
+    } else {
+        list.push({ t: now, text: clean });
+    }
+    if (list.length > 80) list.splice(0, list.length - 80);
+    dictationBuffers.set(uiId, list);
+}
+
+function bindDictationCapture(input, uiId) {
+    input.addEventListener('compositionend', (event) => recordDictationCommit(uiId, event.data));
+    input.addEventListener('input', (event) => {
+        if (!input.value) { // 输入框被清空:之前的片段作废
+            dictationBuffers.delete(uiId);
+            return;
+        }
+        // 有的输入法不走组字、整段直接上屏;单个字符的敲击不算
+        if (event.inputType === 'insertText' && !event.isComposing && (event.data || '').length > 1) {
+            recordDictationCommit(uiId, event.data);
+        }
+    });
+}
+
+function takeDictation(uiId) {
+    const list = dictationBuffers.get(uiId);
+    dictationBuffers.delete(uiId);
+    return list && list.length ? list : undefined;
+}
+
 function bindSendComposerEvents(input, deviceId) {
+    bindDictationCapture(input, deviceId);
     input.addEventListener('focus', () => {
         sendComposerState.focusedDeviceId = deviceId;
     });
@@ -4645,6 +4687,7 @@ function createSmartCard() {
         `;
     const input = card.querySelector('#input-smart');
     input.value = localStorage.getItem(SMART_DRAFT_KEY) || '';
+    bindDictationCapture(input, 'smart');
     input.addEventListener('input', () => {
         localStorage.setItem(SMART_DRAFT_KEY, input.value);
     });
@@ -6215,6 +6258,15 @@ function renderHistoryHeatmap(baseEntries) {
     const initialWindow = getHistoryHeatmapVisibleWindow(bounds, initialStartIndex);
     const initialMaxCount = getHistoryHeatmapWindowMaxCount(counts, initialWindow.visibleStart, initialWindow.visibleEnd);
     const todayKey = formatDateKey(new Date());
+    // 数据、范围、选中格都没变就保留现有格子(几千个按钮每次重建 100ms+,也顺带保住横向滚动位置)
+    const signature = [rangeToken, bounds.minDate, bounds.maxDate, historyHeatmapState.viewportEndDate,
+        historyHeatmapState.selectionDate, historyHeatmapState.selectionHour, todayKey, window.vibeI18n?.lang || '',
+        Array.from(counts).join(';')].join('|');
+    if (signature === historyHeatmapState.renderedSignature && track.childElementCount) {
+        historyHeatmapState.renderedEntries = baseEntries;
+        return;
+    }
+    historyHeatmapState.renderedSignature = signature;
     const days = getHistoryHeatmapDayKeys(bounds.minDate, bounds.maxDate);
 
     track.innerHTML = days.map((dayKey) => {
@@ -7612,6 +7664,7 @@ async function sendText(deviceId, { uiId = deviceId, buttonId = null, text: text
         text: text,
         status: 'pending',
         transferId: newTransferId(),
+        dictation: takeDictation(uiId),
         ...buildHistoryTargetMeta(deviceId),
     };
     addHistory(historyEntry);
@@ -7672,6 +7725,7 @@ async function sendTextAndEnter(deviceId, { uiId = deviceId, text: textOverride 
         text,
         status: 'pending',
         transferId: newTransferId(),
+        dictation: takeDictation(uiId),
         ...buildHistoryTargetMeta(deviceId),
     };
     addHistory(historyEntry);
@@ -9445,13 +9499,11 @@ function collapseDuplicateEntries(entries) {
 
 function getHistoryForDisplay() {
     if (!vaultMergedEntries.length) return collapseDuplicateEntries(getHistory());
-    const combined = getHistory().concat(vaultMergedEntries);
-    combined.sort((a, b) => {
-        const ta = new Date(a?.timestamp || a?.timestamp_iso || 0).getTime() || 0;
-        const tb = new Date(b?.timestamp || b?.timestamp_iso || 0).getTime() || 0;
-        return tb - ta;
-    });
-    return collapseDuplicateEntries(combined);
+    // 先把时间算好再排(比较函数里反复解析日期,上万条要 70ms+)
+    const timed = getHistory().concat(vaultMergedEntries)
+        .map((entry) => [new Date(entry?.timestamp || entry?.timestamp_iso || 0).getTime() || 0, entry]);
+    timed.sort((a, b) => b[0] - a[0]);
+    return collapseDuplicateEntries(timed.map((pair) => pair[1]));
 }
 
 // 双档拉取:平时刷新只拉最近 2000 条(轻快);每次会话另做一次全量深拉,
@@ -11394,8 +11446,7 @@ function renderHistory() {
         pendingHistoryScrollRestore = captureHistoryAnchor();
     }
     lastHistoryRenderSignature = renderSignature;
-    list.style.minHeight = '';
-    const holdHeight = pendingHistoryScrollRestore ? list.offsetHeight : 0;
+    historyMount.active = false; // 只有长列表分支会重新打开;空列表、短列表、iOS 虚拟列表都不续挂
     const history = mergeVoiceIntoHistory(getHistoryForDisplay());
     const baseEntries = filterHistoryEntries(history);
     const renderToken = ++historyRenderToken;
@@ -11480,33 +11531,74 @@ function renderHistory() {
         return;
     }
 
-    // 长列表:浏览器原生虚拟化(CSS content-visibility)。所有条目都进 DOM,
-    // 屏幕外的由渲染引擎跳过排版与绘制,滚动时引擎同步按需绘制——
-    // 再快的拖动也不会出现空窗(旧 JS 虚拟滚动是异步补渲染,追不上就黑屏)。
-    // 首次挂载分片进行,避免一次构建近万节点卡住主线程。
+    // 长列表(安卓/桌面):浏览器原生虚拟化(CSS content-visibility),屏幕外的条目跳过排版与绘制,
+    // 快速拖动不会空窗(旧 JS 虚拟滚动是异步补渲染,追不上就黑屏)。
+    // 但原来把全部条目一次挂进页面:竞速版 8000+ 条,每次数据刷新重画约 2 秒、连续长任务把界面卡死
+    // (2026-10-07 实测)。现在只挂最近一段,滑近底部再续挂;恢复位置/定位时先挂到目标那条。
     historyVirtual.active = false;
-    // 要恢复位置时先撑住旧高度,免得分片挂载期间滚动区变矮、被夹回顶部
-    if (holdHeight) list.style.minHeight = `${holdHeight}px`;
+    historyMount.active = true;
+    historyMount.entries = filtered;
+    historyMount.renderMarkup = renderItemMarkup;
+    historyMount.count = 0;
     list.innerHTML = '';
-    const MOUNT_CHUNK = 400;
-    let mountCursor = 0;
-    const mountChunk = () => {
-        if (renderToken !== historyRenderToken) return; // 已有新一轮渲染,放弃本轮
-        const html = filtered
-            .slice(mountCursor, mountCursor + MOUNT_CHUNK)
-            .map((entry, offset) => renderItemMarkup(entry, mountCursor + offset))
-            .join('');
-        list.insertAdjacentHTML('beforeend', html);
-        mountCursor += MOUNT_CHUNK;
-        applyHistoryScrollRestore(filtered, Math.min(mountCursor, filtered.length));
-        if (mountCursor < filtered.length) {
-            setTimeout(mountChunk, 0);
-        } else {
-            list.style.minHeight = '';
-        }
-    };
-    mountChunk();
-    probe('render-history-mounted', `entries=${filtered.length}`);
+    mountHistoryUpTo(HISTORY_MOUNT_STEP);
+    applyHistoryScrollRestore(filtered);
+    ensureHistoryMountSentinel();
+    probe('render-history-mounted', `entries=${filtered.length} mounted=${historyMount.count}`);
+}
+
+const HISTORY_MOUNT_STEP = 300;
+const historyMount = { active: false, entries: [], renderMarkup: null, count: 0, sentinel: null, observer: null };
+
+function mountHistoryUpTo(target) {
+    const list = $('history-list');
+    if (!list || !historyMount.active || !historyMount.renderMarkup) return;
+    const end = Math.min(target, historyMount.entries.length);
+    const start = historyMount.count;
+    if (end <= start) return;
+    const html = historyMount.entries.slice(start, end)
+        .map((entry, offset) => historyMount.renderMarkup(entry, start + offset))
+        .join('');
+    const sentinel = historyMount.sentinel;
+    if (sentinel && sentinel.parentNode === list) sentinel.insertAdjacentHTML('beforebegin', html);
+    else list.insertAdjacentHTML('beforeend', html);
+    historyMount.count = end;
+}
+
+// 列表末尾放一个哨兵:离屏幕底部 2000px 以内就续挂下一段
+function ensureHistoryMountSentinel() {
+    const list = $('history-list');
+    if (!list) return;
+    if (!historyMount.sentinel) {
+        historyMount.sentinel = document.createElement('div');
+        historyMount.sentinel.className = 'history-mount-sentinel';
+    }
+    if (!historyMount.active || historyMount.count >= historyMount.entries.length) {
+        historyMount.sentinel.remove();
+        return;
+    }
+    if (historyMount.sentinel.parentNode !== list || list.lastElementChild !== historyMount.sentinel) {
+        list.appendChild(historyMount.sentinel);
+    }
+    if (!historyMount.observer && typeof IntersectionObserver !== 'undefined') {
+        historyMount.observer = new IntersectionObserver((records) => {
+            if (records.some((record) => record.isIntersecting)) mountMoreHistory();
+        }, { root: getAppScroller(), rootMargin: '0px 0px 2000px 0px' });
+    }
+    historyMount.observer?.observe(historyMount.sentinel);
+}
+
+function mountMoreHistory() {
+    if (!historyMount.active || historyMount.count >= historyMount.entries.length) return;
+    mountHistoryUpTo(historyMount.count + HISTORY_MOUNT_STEP);
+    ensureHistoryMountSentinel();
+    // 续挂后哨兵若仍在预加载范围内(快速甩动),观察器不会再报,下一帧自己再看一眼
+    requestAnimationFrame(() => {
+        const sentinel = historyMount.sentinel;
+        const scroller = getAppScroller();
+        if (!sentinel?.isConnected || !scroller) return;
+        if (sentinel.getBoundingClientRect().top < scroller.getBoundingClientRect().bottom + 2000) mountMoreHistory();
+    });
 }
 
 // ---- 滚动位置记忆(2026-10-07 用户要求):三个页签共用 #app-scroll,切走再回来、或列表重画都会丢位置。
@@ -11565,7 +11657,7 @@ function applyHistoryScrollRestore(entries, mountedCount = entries.length) {
         scroller.scrollTop = memory.top;
         return;
     }
-    if (memory.index >= mountedCount) return; // 安卓分片挂载:那条还没进页面,等下一片
+    if (memory.index >= mountedCount) return;
     pendingHistoryScrollRestore = null;
     scrollHistoryEntryTo(memory.index, memory.anchorOffset);
 }
@@ -11582,6 +11674,10 @@ function scrollHistoryEntryTo(index, offset = 0) {
         if (Math.abs(delta) > 1) scroller.scrollTop += delta;
         return true;
     };
+    if (historyMount.active && index >= historyMount.count) {
+        mountHistoryUpTo(index + HISTORY_MOUNT_STEP);
+        ensureHistoryMountSentinel();
+    }
     if (historyVirtual.active) {
         let estimate = 0;
         for (let i = 0; i < index; i += 1) estimate += historyItemHeight(i);
@@ -12533,6 +12629,7 @@ const VOICE_APP_LABELS = {
 const voiceState = { enabled: false, version: '', items: [], byId: new Map(), fetching: false };
 const voicePlayer = { cur: null, playlist: [], drag: null, pendingFrac: 0, raf: false, prefs: { rate: 1, auto: true, skip: true } };
 let voiceAttachMap = new Map();          // 发送记录 → 挂在它下面的录音(时间正序),每次渲染重建
+const voiceDictationText = new Map();    // 录音 id → 对上的口述片段文字,每次渲染重建
 const voiceBigramCache = new Map();      // 录音 id / 消息键 → 双字组集合
 try {
     voicePlayer.prefs = { ...voicePlayer.prefs, ...JSON.parse(localStorage.getItem(VOICE_PREFS_KEY) || '{}') };
@@ -12602,16 +12699,56 @@ function makeVoiceHistoryEntry(item) {
 // 把录音并进历史:能对上的挂到消息下,其余单独成条;返回按时间倒序的新列表
 function mergeVoiceIntoHistory(history) {
     voiceAttachMap = new Map();
+    voiceDictationText.clear();
     if (!voiceState.enabled || !voiceState.items.length) return history;
+    const timeOf = (entry) => new Date(entry?.timestamp || entry?.timestamp_iso || 0).getTime() || 0;
     const candidates = history
         .filter((entry) => (entry.kind || 'text') === 'text' && entry.direction !== 'desktop_to_mobile' && entry.text)
-        .map((entry) => ({ entry, ts: new Date(entry.timestamp || entry.timestamp_iso || 0).getTime() }))
+        .map((entry) => ({ entry, ts: timeOf(entry) }))
         .filter((candidate) => candidate.ts > 0)
         .sort((a, b) => a.ts - b.ts);
+    // 所有消息带的口述片段,按上屏时间排好
+    const segments = [];
+    candidates.forEach((candidate) => {
+        if (!Array.isArray(candidate.entry.dictation)) return;
+        candidate.entry.dictation.forEach((seg) => {
+            const t = Number(seg?.t);
+            if (Number.isFinite(t)) segments.push({ t, text: String(seg?.text || ''), candidate });
+        });
+    });
+    segments.sort((a, b) => a.t - b.t);
+    const firstAtOrAfter = (list, value) => {
+        let lo = 0;
+        let hi = list.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (list[mid].t < value) lo = mid + 1; else hi = mid;
+        }
+        return lo;
+    };
     const standalone = [];
     voiceState.items.forEach((item) => {
         let matched = null;
-        if (item.tx) {
+        // 1) 时间对齐(秒级,不依赖识别文字):录音期间到结束后 6 秒内有片段上屏、且在录音结束后才发出的那条消息。
+        //    item.ts 是录音文件落地时刻≈说完话的时刻(精确到秒);连着几条消息时取最早发出的那条
+        if (segments.length) {
+            const from = item.ts - (item.dur || 0) * 1000 - 1000;
+            const to = item.ts + 6000;
+            const hits = [];
+            for (let i = firstAtOrAfter(segments, from); i < segments.length && segments[i].t <= to; i += 1) {
+                const seg = segments[i];
+                if (seg.candidate.ts < item.ts - 1000) continue; // 消息比录音还早发出,不是它
+                hits.push(seg);
+                if (!matched || seg.candidate.ts < matched.ts) matched = seg.candidate;
+            }
+            if (matched) {
+                const text = hits.filter((seg) => seg.candidate === matched).map((seg) => seg.text).join('');
+                if (text) voiceDictationText.set(item.id, text);
+                matched = matched.entry;
+            }
+        }
+        // 2) 没有片段(旧版本发的消息)就用识别文字和消息比对
+        if (!matched && item.tx) {
             let lo = 0;
             let hi = candidates.length;
             while (lo < hi) {
@@ -12635,8 +12772,14 @@ function mergeVoiceIntoHistory(history) {
     });
     voiceAttachMap.forEach((list) => list.sort((a, b) => a.ts - b.ts));
     if (!standalone.length) return history;
-    const timeOf = (entry) => new Date(entry?.timestamp || entry?.timestamp_iso || 0).getTime() || 0;
-    return history.concat(standalone).sort((a, b) => timeOf(b) - timeOf(a));
+    const timed = history.concat(standalone).map((entry) => [timeOf(entry), entry]);
+    timed.sort((a, b) => b[0] - a[0]);
+    return timed.map((pair) => pair[1]);
+}
+
+// 录音要显示的文字:输入法的识别记录优先,还没写盘时先用对上的口述片段
+function voiceText(item) {
+    return item?.tx || voiceDictationText.get(item?.id) || '';
 }
 
 // 播放顺序 = 屏幕上从上到下:卡片按时间倒序,卡片内的多段录音按时间正序
@@ -12754,11 +12897,11 @@ function voicePlay(item, frac = 0, { reveal = 'nearest' } = {}) {
         $('voice-player-wave').innerHTML = voiceWaveHTML(item);
         $('voice-player-time').textContent = formatTime(new Date(item.ts).toISOString());
         $('voice-player-total').textContent = voiceClock(Math.round(item.dur || 0));
-        $('voice-player-text').textContent = item.tx || '';
+        $('voice-player-text').textContent = voiceText(item);
         document.querySelectorAll('.voice-clip').forEach((clip) => clip.classList.toggle('cur', clip.dataset.voiceId === item.id));
         if ('mediaSession' in navigator && typeof MediaMetadata !== 'undefined') {
             navigator.mediaSession.metadata = new MediaMetadata({
-                title: item.tx ? item.tx.slice(0, 40) : t('语音'),
+                title: voiceText(item) ? voiceText(item).slice(0, 40) : t('语音'),
                 artist: 'VibeDrop',
                 album: formatTime(new Date(item.ts).toISOString()),
             });

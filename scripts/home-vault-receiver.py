@@ -509,6 +509,7 @@ def compact_history_entry(entry: Any) -> dict[str, Any]:
         "itemCount",
         "transferId",
         "transfer_id",
+        "dictation",  # 口述片段 [{t, text}]:历史页据此把录音按时间秒级挂到消息上
     )
     result = {key: entry[key] for key in allowed_keys if entry.get(key) not in (None, "")}
     items = entry.get("items")
@@ -594,7 +595,7 @@ def resolve_voice_audio(voice_dir: pathlib.Path, audio_root: str, rel: str) -> p
     return candidate if candidate.is_file() else None
 
 
-def watch_voice_index(voice_dir: pathlib.Path, interval: float = 5.0) -> None:
+def watch_voice_index(voice_dir: pathlib.Path, interval: float = 1.0) -> None:
     """索引一变就广播 voice-updated,客户端据此刷新语音条目。只 stat,不读文件。"""
     last = voice_index_version(voice_dir)
     while True:
