@@ -668,5 +668,7 @@
   "播放失败，稍后再试": "Échec de la lecture, réessayez plus tard",
   "微信": "WeChat",
   "抖音": "Douyin",
-  "读取所选图片失败": "Impossible de lire la photo sélectionnée"
+  "读取所选图片失败": "Impossible de lire la photo sélectionnée",
+  "定位到这条": "Aller à cet enregistrement",
+  "当前筛选条件下看不到这条录音": "Cet enregistrement est masqué par les filtres actuels"
 }

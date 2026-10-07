@@ -3190,6 +3190,7 @@ body.voice-skip-on .voice-wave i.s { opacity: 0.45; }
     gap: 2px;
 }
 .voice-player-ctl button,
+.voice-player-locate,
 .voice-player-close {
     width: 36px;
     height: 36px;
@@ -3218,6 +3219,14 @@ body.voice-skip-on .voice-wave i.s { opacity: 0.45; }
 .voice-player-title {
     flex: 1;
     min-width: 0;
+    cursor: pointer;
+}
+.voice-player-locate { color: var(--accent); }
+.voice-player-text { cursor: pointer; }
+.voice-clip.voice-locate-flash { animation: voice-locate-flash 1.4s ease-out; }
+@keyframes voice-locate-flash {
+    0%, 35% { box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.55); }
+    100% { box-shadow: 0 0 0 3px rgba(10, 132, 255, 0); }
 }
 .voice-player-time {
     font-size: 14px;

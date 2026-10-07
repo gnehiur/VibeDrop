@@ -668,5 +668,7 @@
   "播放失败，稍后再试": "Imeshindwa kucheza, jaribu tena baadaye",
   "微信": "WeChat",
   "抖音": "Douyin",
-  "读取所选图片失败": "Imeshindwa kusoma picha uliyochagua"
+  "读取所选图片失败": "Imeshindwa kusoma picha uliyochagua",
+  "定位到这条": "Nenda kwenye rekodi hii",
+  "当前筛选条件下看不到这条录音": "Rekodi hii imefichwa na vichujio vya sasa"
 }

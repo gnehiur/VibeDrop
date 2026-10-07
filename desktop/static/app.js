@@ -5256,8 +5256,11 @@ function testConnection() {
 }
 
 function showView(viewId) {
+    const leaving = document.querySelector('.view:not(.hidden)');
+    if (leaving && leaving.id !== viewId) rememberViewScroll(leaving.id);
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     $(viewId).classList.remove('hidden');
+    if (!leaving || leaving.id !== viewId) restoreViewScroll(viewId);
     if (viewId === 'history-view') {
         scheduleHistoryRender();
     }
@@ -11383,6 +11386,16 @@ function renderHistory() {
     probe('render-history-start');
     const list = $('history-list');
     if (!list) return;
+    // 数据刷新(新消息、新录音)重画时保住当前看到的那条;筛选条件变了的重画照旧从头看
+    const renderSignature = getHistoryRenderSignature();
+    const scroller = getAppScroller();
+    if (!pendingHistoryScrollRestore && renderSignature === lastHistoryRenderSignature
+        && scroller && scroller.scrollTop > 0 && !$('history-view')?.classList.contains('hidden')) {
+        pendingHistoryScrollRestore = captureHistoryAnchor();
+    }
+    lastHistoryRenderSignature = renderSignature;
+    list.style.minHeight = '';
+    const holdHeight = pendingHistoryScrollRestore ? list.offsetHeight : 0;
     const history = mergeVoiceIntoHistory(getHistoryForDisplay());
     const baseEntries = filterHistoryEntries(history);
     const renderToken = ++historyRenderToken;
@@ -11393,6 +11406,7 @@ function renderHistory() {
         renderHistoryHeatmap([]);
         renderHistoryFilterSummary([]);
         list.innerHTML = `<p class="empty-hint">${t('暂无发送记录')}</p>`;
+        pendingHistoryScrollRestore = null;
         return;
     }
 
@@ -11411,6 +11425,7 @@ function renderHistory() {
                 ? t('没有匹配的历史记录')
                 : t('没有符合筛选条件的记录');
         list.innerHTML = `<p class="empty-hint">${emptyText}</p>`;
+        pendingHistoryScrollRestore = null;
         return;
     }
 
@@ -11446,6 +11461,7 @@ function renderHistory() {
     if (filtered.length <= HISTORY_VIRTUAL_THRESHOLD) {
         historyVirtual.active = false;
         list.innerHTML = filtered.map((entry, index) => renderItemMarkup(entry, index)).join('');
+        applyHistoryScrollRestore(filtered);
         return;
     }
 
@@ -11460,6 +11476,7 @@ function renderHistory() {
         historyVirtual.window = { start: -1, end: -1 };
         ensureHistoryScrollListener();
         renderHistoryWindow(true);
+        applyHistoryScrollRestore(filtered);
         return;
     }
 
@@ -11468,6 +11485,8 @@ function renderHistory() {
     // 再快的拖动也不会出现空窗(旧 JS 虚拟滚动是异步补渲染,追不上就黑屏)。
     // 首次挂载分片进行,避免一次构建近万节点卡住主线程。
     historyVirtual.active = false;
+    // 要恢复位置时先撑住旧高度,免得分片挂载期间滚动区变矮、被夹回顶部
+    if (holdHeight) list.style.minHeight = `${holdHeight}px`;
     list.innerHTML = '';
     const MOUNT_CHUNK = 400;
     let mountCursor = 0;
@@ -11479,12 +11498,119 @@ function renderHistory() {
             .join('');
         list.insertAdjacentHTML('beforeend', html);
         mountCursor += MOUNT_CHUNK;
+        applyHistoryScrollRestore(filtered, Math.min(mountCursor, filtered.length));
         if (mountCursor < filtered.length) {
             setTimeout(mountChunk, 0);
+        } else {
+            list.style.minHeight = '';
         }
     };
     mountChunk();
     probe('render-history-mounted', `entries=${filtered.length}`);
+}
+
+// ---- 滚动位置记忆(2026-10-07 用户要求):三个页签共用 #app-scroll,切走再回来、或列表重画都会丢位置。
+// 按「屏幕最上方是哪条消息 + 偏移多少」记,而不是按像素:历史每次回来都会重画,iOS 还是边滚边画的虚拟列表,
+// 按像素恢复会错开几条甚至几十条 ----
+const viewScrollMemory = new Map();      // 页签 id → { top, anchorKey, anchorOffset }
+let pendingHistoryScrollRestore = null;  // 下一次历史重画完要恢复到的位置
+let lastHistoryRenderSignature = '';
+
+function getAppScroller() {
+    return document.getElementById('app-scroll');
+}
+
+function getHistoryRenderSignature() {
+    return JSON.stringify([currentHistoryFilters, historyHeatmapState.selectionDate || '', historyHeatmapState.selectionHour ?? '']);
+}
+
+function captureHistoryAnchor() {
+    const scroller = getAppScroller();
+    const memory = { top: scroller ? scroller.scrollTop : 0, anchorKey: '', anchorOffset: 0 };
+    if (!scroller) return memory;
+    const scrollerTop = scroller.getBoundingClientRect().top;
+    const nodes = document.querySelectorAll('#history-list .history-item');
+    // 二分找第一条底边露在滚动区顶部以下的(条目按顺序排,上万条也只量十几次)
+    let lo = 0;
+    let hi = nodes.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (nodes[mid].getBoundingClientRect().bottom > scrollerTop + 1) hi = mid; else lo = mid + 1;
+    }
+    const node = nodes[lo];
+    const entry = node ? currentRenderedHistoryEntries[Number(node.dataset.idx || '-1')] : null;
+    if (entry) {
+        memory.anchorKey = vaultMergedEntryKey(entry);
+        memory.anchorOffset = node.getBoundingClientRect().top - scrollerTop;
+    }
+    return memory;
+}
+
+function applyHistoryScrollRestore(entries, mountedCount = entries.length) {
+    const memory = pendingHistoryScrollRestore;
+    if (!memory) return;
+    // 滚动区是三个页签共用的:历史页没露出来时绝不动它,留着等下次可见的重画
+    if ($('history-view')?.classList.contains('hidden')) return;
+    const scroller = getAppScroller();
+    if (!scroller) {
+        pendingHistoryScrollRestore = null;
+        return;
+    }
+    if (memory.indexFor !== entries) {
+        memory.index = memory.anchorKey ? entries.findIndex((entry) => vaultMergedEntryKey(entry) === memory.anchorKey) : -1;
+        memory.indexFor = entries;
+    }
+    if (memory.index < 0) { // 那条已不在列表里:退回原来的像素位置
+        pendingHistoryScrollRestore = null;
+        scroller.scrollTop = memory.top;
+        return;
+    }
+    if (memory.index >= mountedCount) return; // 安卓分片挂载:那条还没进页面,等下一片
+    pendingHistoryScrollRestore = null;
+    scrollHistoryEntryTo(memory.index, memory.anchorOffset);
+}
+
+// 把第 index 条滚到「距滚动区顶部 offset 像素」处;iOS 虚拟列表先按估算高度跳,画出来后按实际位置再校正
+function scrollHistoryEntryTo(index, offset = 0) {
+    const scroller = getAppScroller();
+    const list = $('history-list');
+    if (!scroller || !list) return;
+    const align = () => {
+        const node = list.querySelector(`.history-item[data-idx="${index}"]`);
+        if (!node) return false;
+        const delta = node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
+        if (Math.abs(delta) > 1) scroller.scrollTop += delta;
+        return true;
+    };
+    if (historyVirtual.active) {
+        let estimate = 0;
+        for (let i = 0; i < index; i += 1) estimate += historyItemHeight(i);
+        const listTop = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+        scroller.scrollTop = Math.max(0, listTop + estimate - offset);
+        renderHistoryWindow(true);
+        if (align()) renderHistoryWindow(false);
+        return;
+    }
+    align();
+}
+
+function rememberViewScroll(viewId) {
+    const scroller = getAppScroller();
+    if (!scroller || !viewId) return;
+    viewScrollMemory.set(viewId, viewId === 'history-view' ? captureHistoryAnchor() : { top: scroller.scrollTop });
+}
+
+function restoreViewScroll(viewId) {
+    const scroller = getAppScroller();
+    if (!scroller) return;
+    const memory = viewScrollMemory.get(viewId);
+    if (viewId === 'history-view') {
+        // 旧列表还在页面里,先按像素粗定位免得闪到顶部;重画完再按锚点精确恢复
+        if (memory) scroller.scrollTop = memory.top;
+        pendingHistoryScrollRestore = memory ? { ...memory } : null;
+        return;
+    }
+    scroller.scrollTop = memory ? memory.top : 0;
 }
 
 // ---- 历史列表虚拟滚动 ----
@@ -12393,6 +12519,7 @@ const VOICE_ICONS = {
     pause: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect fill="currentColor" x="6.5" y="5" width="4" height="14" rx="1.2"/><rect fill="currentColor" x="13.5" y="5" width="4" height="14" rx="1.2"/></svg>',
     prev: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M7 5h2v14H7zM19 6.2v11.6a.8.8 0 0 1-1.22.68L10 13.2a1.4 1.4 0 0 1 0-2.4l7.78-5.28A.8.8 0 0 1 19 6.2z"/></svg>',
     next: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M15 5h2v14h-2zM5 6.2v11.6a.8.8 0 0 0 1.22.68L14 13.2a1.4 1.4 0 0 0 0-2.4L6.22 5.52A.8.8 0 0 0 5 6.2z"/></svg>',
+    locate: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
 };
 const VOICE_APP_LABELS = {
     'com.vibedrop.mobile': () => 'VibeDrop',
@@ -12672,6 +12799,29 @@ function voiceSeekFrac(frac) {
     paintVoiceProgress();
 }
 
+// 定位到正在播的那条:滚到屏幕上方三分之一处并闪一下(播放键不带跳转,免得边听边翻时被拽走)
+function locateCurrentVoice() {
+    const id = voicePlayer.cur;
+    if (!id) return;
+    const index = currentRenderedHistoryEntries.findIndex((entry) => (entry.kind === 'voice'
+        ? entry.voice?.id === id
+        : (voiceAttachMap.get(entry) || []).some((item) => item.id === id)));
+    if (index < 0) {
+        showToast(t('当前筛选条件下看不到这条录音'));
+        return;
+    }
+    const scroller = getAppScroller();
+    scrollHistoryEntryTo(index, Math.round((scroller?.clientHeight || 600) * 0.3));
+    requestAnimationFrame(() => {
+        const clip = document.querySelector(`.voice-clip[data-voice-id="${CSS.escape(id)}"]`);
+        if (!clip) return;
+        clip.classList.remove('voice-locate-flash');
+        void clip.offsetWidth; // 连点时重新触发动画
+        clip.classList.add('voice-locate-flash');
+        setTimeout(() => clip.classList.remove('voice-locate-flash'), 1500);
+    });
+}
+
 function closeVoicePlayer() {
     const audio = $('voice-audio');
     if (audio) {
@@ -12800,6 +12950,12 @@ function initVoicePlayer() {
     $('voice-prev-btn').setAttribute('aria-label', t('上一条'));
     $('voice-next-btn').setAttribute('aria-label', t('下一条'));
     $('voice-close-btn').setAttribute('aria-label', t('关闭'));
+    $('voice-locate-btn').innerHTML = VOICE_ICONS.locate;
+    $('voice-locate-btn').setAttribute('aria-label', t('定位到这条'));
+    $('voice-locate-btn').addEventListener('click', locateCurrentVoice);
+    // 时间/来源那块和识别文字也能点:手指最常落的地方
+    document.querySelector('#voice-player .voice-player-title')?.addEventListener('click', locateCurrentVoice);
+    $('voice-player-text').addEventListener('click', locateCurrentVoice);
     $('voice-play-btn').addEventListener('click', voiceTogglePlay);
     $('voice-prev-btn').addEventListener('click', () => voiceStep(-1)); // 往上 = 更新的
     $('voice-next-btn').addEventListener('click', () => voiceStep(1));  // 往下 = 更早的,与连播方向一致

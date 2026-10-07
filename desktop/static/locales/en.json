@@ -697,5 +697,7 @@
   "播放失败，稍后再试": "Playback failed, try again later",
   "微信": "WeChat",
   "抖音": "Douyin",
-  "读取所选图片失败": "Couldn't read the selected photo"
+  "读取所选图片失败": "Couldn't read the selected photo",
+  "定位到这条": "Show in list",
+  "当前筛选条件下看不到这条录音": "This recording is hidden by the current filters"
 }
