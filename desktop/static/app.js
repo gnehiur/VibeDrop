@@ -12741,10 +12741,13 @@ function voiceAudioUrl(item) {
     return endpoint ? `${endpoint}/api/voice/audio/${path}` : '';
 }
 
-function voicePlay(item, frac = 0) {
+// reveal:列表怎么跟过去。nearest=最少移动(点列表里那行时用,它就在手指底下);
+// center=居中(上一条/下一条、定位);follow=原来那条在屏幕上才居中(连播自动切,用户翻到别处时不拽回来)
+function voicePlay(item, frac = 0, { reveal = 'nearest' } = {}) {
     const audio = $('voice-audio');
     if (!item || !audio) return;
     if (voicePlayer.cur !== item.id) {
+        const wasWatching = reveal === 'follow' && isVoiceClipVisible(voicePlayer.cur);
         voicePlayer.cur = item.id;
         audio.src = voiceAudioUrl(item);
         audio.playbackRate = voicePlayer.prefs.rate;
@@ -12753,7 +12756,6 @@ function voicePlay(item, frac = 0) {
         $('voice-player-total').textContent = voiceClock(Math.round(item.dur || 0));
         $('voice-player-text').textContent = item.tx || '';
         document.querySelectorAll('.voice-clip').forEach((clip) => clip.classList.toggle('cur', clip.dataset.voiceId === item.id));
-        document.querySelector(`.voice-clip[data-voice-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         if ('mediaSession' in navigator && typeof MediaMetadata !== 'undefined') {
             navigator.mediaSession.metadata = new MediaMetadata({
                 title: item.tx ? item.tx.slice(0, 40) : t('语音'),
@@ -12764,6 +12766,12 @@ function voicePlay(item, frac = 0) {
         voicePlayer.pendingFrac = frac;
         syncVoiceChips();
         syncVoicePlayerVisibility();
+        // 播放条的文字/显隐会改变可视区高度:等它更新完再算滚动位置
+        if (reveal === 'center' || (reveal === 'follow' && wasWatching)) {
+            centerVoiceInHistory(item.id);
+        } else if (reveal === 'nearest') {
+            document.querySelector(`.voice-clip[data-voice-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
     } else if (frac) {
         voiceSeekFrac(frac);
     }
@@ -12774,7 +12782,7 @@ function voiceTogglePlay() {
     const audio = $('voice-audio');
     if (!audio) return;
     if (!voicePlayer.cur) {
-        voicePlay(voiceState.byId.get(voicePlayer.playlist[0]));
+        voicePlay(voiceState.byId.get(voicePlayer.playlist[0]), 0, { reveal: 'center' });
         return;
     }
     if (audio.paused) audio.play().catch(() => {}); else audio.pause();
@@ -12786,9 +12794,10 @@ function voiceStep(direction) {
     if (index < 0 || !audio) return;
     if (direction < 0 && audio.currentTime > 3) { // 已播超过 3 秒,「上一条」先回到开头
         audio.currentTime = 0;
+        centerVoiceInHistory(voicePlayer.cur);
         return;
     }
-    voicePlay(voiceState.byId.get(voicePlayer.playlist[index + (direction > 0 ? 1 : -1)]));
+    voicePlay(voiceState.byId.get(voicePlayer.playlist[index + (direction > 0 ? 1 : -1)]), 0, { reveal: 'center' });
 }
 
 function voiceSeekFrac(frac) {
@@ -12799,27 +12808,71 @@ function voiceSeekFrac(frac) {
     paintVoiceProgress();
 }
 
-// 定位到正在播的那条:滚到屏幕上方三分之一处并闪一下(播放键不带跳转,免得边听边翻时被拽走)
+function findHistoryIndexForVoice(voiceId) {
+    return currentRenderedHistoryEntries.findIndex((entry) => (entry.kind === 'voice'
+        ? entry.voice?.id === voiceId
+        : (voiceAttachMap.get(entry) || []).some((item) => item.id === voiceId)));
+}
+
+function isVoiceClipVisible(voiceId) {
+    if (!voiceId || $('history-view')?.classList.contains('hidden')) return false;
+    const clip = document.querySelector(`.voice-clip[data-voice-id="${CSS.escape(voiceId)}"]`);
+    const scroller = getAppScroller();
+    if (!clip || !scroller) return false;
+    const rect = clip.getBoundingClientRect();
+    const view = scroller.getBoundingClientRect();
+    return rect.bottom > view.top && rect.top < view.bottom;
+}
+
+// 把某段录音所在的条目放到滚动区正中:整张卡片放得下就居中卡片,放不下(长文字消息)就居中录音那一行。
+// 先滚进可视区(iOS 虚拟列表要先画出来才量得到尺寸),再按实测居中;之后连着两帧再校正,
+// 因为刚滚进来的条目(安卓 content-visibility、iOS 虚拟列表)第一次绘制后高度可能变。返回是否找到
+function centerVoiceInHistory(voiceId, onDone) {
+    if (!voiceId || $('history-view')?.classList.contains('hidden')) return false;
+    const index = findHistoryIndexForVoice(voiceId);
+    const scroller = getAppScroller();
+    const list = $('history-list');
+    if (index < 0 || !scroller || !list) return false;
+    pendingHistoryScrollRestore = null; // 主动跳转优先:别让稍后的重画把位置恢复回去
+    scrollHistoryEntryTo(index, Math.round(scroller.clientHeight * 0.3));
+    const settle = (pass) => {
+        const card = list.querySelector(`.history-item[data-idx="${index}"]`);
+        if (card) {
+            const view = scroller.getBoundingClientRect();
+            const cardRect = card.getBoundingClientRect();
+            const clip = card.querySelector(`.voice-clip[data-voice-id="${CSS.escape(voiceId)}"]`);
+            const target = !clip || cardRect.height <= view.height - 24 ? cardRect : clip.getBoundingClientRect();
+            const delta = target.top + target.height / 2 - (view.top + view.height / 2);
+            if (Math.abs(delta) > 1) {
+                scroller.scrollTop += delta;
+                if (historyVirtual.active) renderHistoryWindow(false);
+            }
+        }
+        if (pass < 2) requestAnimationFrame(() => settle(pass + 1));
+        else if (onDone) onDone();
+    };
+    settle(0);
+    return true;
+}
+
+function flashVoiceClip(voiceId) {
+    const clip = document.querySelector(`.voice-clip[data-voice-id="${CSS.escape(voiceId)}"]`);
+    if (!clip) return;
+    clip.classList.remove('voice-locate-flash');
+    void clip.offsetWidth; // 连点时重新触发动画
+    clip.classList.add('voice-locate-flash');
+    setTimeout(() => clip.classList.remove('voice-locate-flash'), 1500);
+}
+
+// 定位到正在播的那条:居中并闪一下(播放键不带跳转,免得边听边翻时被拽走)
 function locateCurrentVoice() {
     const id = voicePlayer.cur;
     if (!id) return;
-    const index = currentRenderedHistoryEntries.findIndex((entry) => (entry.kind === 'voice'
-        ? entry.voice?.id === id
-        : (voiceAttachMap.get(entry) || []).some((item) => item.id === id)));
-    if (index < 0) {
+    if (findHistoryIndexForVoice(id) < 0) {
         showToast(t('当前筛选条件下看不到这条录音'));
         return;
     }
-    const scroller = getAppScroller();
-    scrollHistoryEntryTo(index, Math.round((scroller?.clientHeight || 600) * 0.3));
-    requestAnimationFrame(() => {
-        const clip = document.querySelector(`.voice-clip[data-voice-id="${CSS.escape(id)}"]`);
-        if (!clip) return;
-        clip.classList.remove('voice-locate-flash');
-        void clip.offsetWidth; // 连点时重新触发动画
-        clip.classList.add('voice-locate-flash');
-        setTimeout(() => clip.classList.remove('voice-locate-flash'), 1500);
-    });
+    centerVoiceInHistory(id, () => flashVoiceClip(id));
 }
 
 function closeVoicePlayer() {
@@ -12995,7 +13048,7 @@ function initVoicePlayer() {
     audio.addEventListener('ended', () => {
         if (!voicePlayer.prefs.auto) return;
         const index = voicePlayer.playlist.indexOf(voicePlayer.cur);
-        if (index >= 0 && index < voicePlayer.playlist.length - 1) voicePlay(voiceState.byId.get(voicePlayer.playlist[index + 1]));
+        if (index >= 0 && index < voicePlayer.playlist.length - 1) voicePlay(voiceState.byId.get(voicePlayer.playlist[index + 1]), 0, { reveal: 'follow' });
     });
     audio.addEventListener('timeupdate', voiceSkipCheck);
     audio.addEventListener('play', voiceSkipCheck);
