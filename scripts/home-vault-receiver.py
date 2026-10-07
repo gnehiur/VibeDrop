@@ -529,6 +529,72 @@ def compact_history_entry(entry: Any) -> dict[str, Any]:
     return result
 
 
+# ---- 语音存档(可选):外部采集程序产出的录音索引 + 音频,格式见 docs/voice-archive-spec.md ----
+VOICE_AUDIO_MIME = {
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+}
+VOICE_ITEM_FIELDS = ("id", "t", "dur", "f", "wv", "sk", "tx", "app")
+_voice_cache_lock = threading.Lock()
+_voice_cache: dict[str, Any] = {"key": None, "doc": None}
+
+
+def voice_index_version(voice_dir: pathlib.Path) -> str:
+    try:
+        st = (voice_dir / "index.json").stat()
+    except OSError:
+        return ""
+    return f"{st.st_mtime_ns}-{st.st_size}"
+
+
+def load_voice_index(voice_dir: pathlib.Path) -> tuple[str, dict[str, Any]]:
+    """读索引并按 (mtime,size) 缓存;返回 (版本号, 精简后的文档)。"""
+    version = voice_index_version(voice_dir)
+    with _voice_cache_lock:
+        if version and _voice_cache["key"] == version:
+            return version, _voice_cache["doc"]
+    raw = json.loads((voice_dir / "index.json").read_text(encoding="utf-8")) if version else {}
+    items = []
+    for item in raw.get("items") or []:
+        if not isinstance(item, dict) or not item.get("id") or not item.get("f"):
+            continue
+        slim = {key: item[key] for key in VOICE_ITEM_FIELDS if item.get(key) not in (None, "")}
+        try:
+            # t 是录音设备的本地钟点(无时区);按金库所在机器的时区换算成毫秒时间戳,方便和历史对齐
+            slim["ts"] = int(dt.datetime.fromisoformat(str(item["t"])).timestamp() * 1000)
+        except (KeyError, ValueError):
+            continue
+        items.append(slim)
+    items.sort(key=lambda it: it["ts"], reverse=True)
+    doc = {"audioRoot": str(raw.get("audioRoot") or "audio"), "items": items}
+    with _voice_cache_lock:
+        _voice_cache["key"], _voice_cache["doc"] = version, doc
+    return version, doc
+
+
+def resolve_voice_audio(voice_dir: pathlib.Path, audio_root: str, rel: str) -> pathlib.Path | None:
+    root = (voice_dir / audio_root).resolve()
+    candidate = (root / rel).resolve()
+    if root not in candidate.parents or candidate.suffix.lower() not in VOICE_AUDIO_MIME:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def watch_voice_index(voice_dir: pathlib.Path, interval: float = 5.0) -> None:
+    """索引一变就广播 voice-updated,客户端据此刷新语音条目。只 stat,不读文件。"""
+    last = voice_index_version(voice_dir)
+    while True:
+        time.sleep(interval)
+        current = voice_index_version(voice_dir)
+        if current and current != last:
+            last = current
+            broadcast_event({"type": "voice-updated", "version": current, "at": iso_now()})
+
+
 def clamp_limit(value: str, default: int, maximum: int) -> int:
     try:
         parsed = int(value)
@@ -553,6 +619,7 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
     max_bytes = config.max_bytes
     token = config.token
     sync_timeout = config.sync_timeout
+    voice_dir = pathlib.Path(config.voice_dir).expanduser().resolve() if config.voice_dir else None
 
     class HomeVaultHandler(BaseHTTPRequestHandler):
         server_version = "VibeDropHomeVault/1.0"
@@ -570,6 +637,54 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
             self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VibeDrop-Token")
             self.end_headers()
             self.wfile.write(body)
+
+        def send_file_range(self, file_path: pathlib.Path, mime: str, cache_control: str) -> None:
+            """支持 Range 的文件流式发送(iOS 播放音视频必须有 206)。"""
+            total = file_path.stat().st_size
+            start, end = 0, total - 1
+            range_header = self.headers.get("Range", "")
+            is_partial = False
+            if range_header.startswith("bytes="):
+                spec = range_header[6:].split(",")[0].strip()
+                try:
+                    if spec.startswith("-"):
+                        suffix = int(spec[1:])
+                        start = max(0, total - suffix)
+                    else:
+                        parts = spec.split("-")
+                        start = int(parts[0])
+                        if len(parts) > 1 and parts[1]:
+                            end = min(int(parts[1]), total - 1)
+                    if start > end or start >= total:
+                        self.send_response(416)
+                        self.send_header("Content-Range", f"bytes */{total}")
+                        self.end_headers()
+                        return
+                    is_partial = True
+                except ValueError:
+                    start, end, is_partial = 0, total - 1, False
+            length = end - start + 1
+            self.send_response(206 if is_partial else 200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(length))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", cache_control)
+            if is_partial:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+            self.end_headers()
+            try:
+                with file_path.open("rb") as handle:
+                    handle.seek(start)
+                    remaining = length
+                    while remaining > 0:
+                        chunk = handle.read(min(MEDIA_CHUNK, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
 
         def do_OPTIONS(self) -> None:
             self.send_json(204, {})
@@ -745,51 +860,43 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                     return
                 meta = load_media_index(vault_root).get(digest) or {}
                 mime = str(meta.get("mimeType") or "application/octet-stream")
-                total = blob.stat().st_size
-                start, end = 0, total - 1
-                range_header = self.headers.get("Range", "")
-                is_partial = False
-                if range_header.startswith("bytes="):
-                    spec = range_header[6:].split(",")[0].strip()
-                    try:
-                        if spec.startswith("-"):
-                            suffix = int(spec[1:])
-                            start = max(0, total - suffix)
-                        else:
-                            parts = spec.split("-")
-                            start = int(parts[0])
-                            if len(parts) > 1 and parts[1]:
-                                end = min(int(parts[1]), total - 1)
-                        if start > end or start >= total:
-                            self.send_response(416)
-                            self.send_header("Content-Range", f"bytes */{total}")
-                            self.end_headers()
-                            return
-                        is_partial = True
-                    except ValueError:
-                        start, end, is_partial = 0, total - 1, False
-                length = end - start + 1
-                self.send_response(206 if is_partial else 200)
-                self.send_header("Content-Type", mime)
-                self.send_header("Content-Length", str(length))
-                self.send_header("Accept-Ranges", "bytes")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Cache-Control", "public, max-age=86400")
-                if is_partial:
-                    self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
-                self.end_headers()
+                self.send_file_range(blob, mime, "public, max-age=86400")
+                return
+
+            if path == "/api/voice/index":
+                if token and self.headers.get("X-VibeDrop-Token") != token:
+                    self.send_json(401, {"ok": False, "error": "unauthorized"})
+                    return
+                if voice_dir is None:
+                    self.send_json(200, {"ok": True, "enabled": False, "items": []})
+                    return
                 try:
-                    with blob.open("rb") as handle:
-                        handle.seek(start)
-                        remaining = length
-                        while remaining > 0:
-                            chunk = handle.read(min(MEDIA_CHUNK, remaining))
-                            if not chunk:
-                                break
-                            self.wfile.write(chunk)
-                            remaining -= len(chunk)
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    pass
+                    query = urllib.parse.parse_qs(parsed_path.query)
+                    version, doc = load_voice_index(voice_dir)
+                    if version and (query.get("v") or [""])[0] == version:
+                        self.send_json(200, {"ok": True, "enabled": True, "version": version, "unchanged": True})
+                        return
+                    limit = clamp_limit((query.get("limit") or ["0"])[0], 0, 100000)
+                    items = doc["items"][:limit] if limit else doc["items"]
+                    self.send_json(200, {"ok": True, "enabled": True, "version": version, "count": len(doc["items"]), "items": items})
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
+                return
+
+            if path.startswith("/api/voice/audio/"):
+                if voice_dir is None:
+                    self.send_json(404, {"ok": False, "error": "voice archive disabled"})
+                    return
+                rel = urllib.parse.unquote(path[len("/api/voice/audio/"):])
+                try:
+                    _, doc = load_voice_index(voice_dir)
+                    audio = resolve_voice_audio(voice_dir, doc["audioRoot"], rel)
+                except Exception:
+                    audio = None
+                if audio is None:
+                    self.send_json(404, {"ok": False, "error": "audio not found"})
+                    return
+                self.send_file_range(audio, VOICE_AUDIO_MIME[audio.suffix.lower()], "public, max-age=86400")
                 return
 
             self.send_json(404, {"ok": False, "error": "not_found"})
@@ -1004,11 +1111,15 @@ def main() -> int:
     parser.add_argument("--max-bytes", type=int, default=MAX_REQUEST_BYTES)
     parser.add_argument("--sync-timeout", type=int, default=180)
     parser.add_argument("--token", default=os.environ.get("VIBEDROP_VAULT_TOKEN", ""))
+    parser.add_argument("--voice-dir", default=os.environ.get("VIBEDROP_VOICE_DIR", ""), help="可选:语音存档目录(含 index.json)")
     args = parser.parse_args()
 
     pathlib.Path(args.vault_root).expanduser().resolve().mkdir(parents=True, exist_ok=True)
     handler = make_handler(args)
     server = ThreadingHTTPServer((args.host, args.port), handler)
+    if args.voice_dir:
+        threading.Thread(target=watch_voice_index, args=(pathlib.Path(args.voice_dir).expanduser().resolve(),), daemon=True).start()
+        print(f"Voice archive: {pathlib.Path(args.voice_dir).expanduser().resolve()}", flush=True)
     print(f"VibeDrop Home Vault receiver listening on {args.host}:{args.port}", flush=True)
     print(f"Vault root: {pathlib.Path(args.vault_root).expanduser().resolve()}", flush=True)
     server.serve_forever()
