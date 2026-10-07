@@ -684,5 +684,17 @@
   "默认应用": "Default application",
   "默认打开应用": "Open app by default",
   "，失败 {count}": ", failed {count}",
-  "，缓存跳过 {count}": ", cache skip {count}"
+  "，缓存跳过 {count}": ", cache skip {count}",
+  "语音": "Voice",
+  "跳过静音": "Skip silence",
+  "连播": "Autoplay",
+  "暂无识别文字": "No transcript yet",
+  "点击播放": "Tap to play",
+  "暂停": "Pause",
+  "上一条": "Previous",
+  "下一条": "Next",
+  "跳过停顿省 {time}": "Skipping pauses saves {time}",
+  "播放失败，稍后再试": "Playback failed, try again later",
+  "微信": "WeChat",
+  "抖音": "Douyin"
 }

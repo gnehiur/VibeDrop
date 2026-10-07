@@ -361,7 +361,7 @@
   "搜索": "Suchen",
   "搜索内容、设备或文件名": "Suchen Sie nach Inhalt, Gerät oder Dateinamen",
   "搜索：{query}": "Suche: {query}",
-  "播放": "spielen",
+  "播放": "Abspielen",
   "播放/暂停": "abspielen/pausieren",
   "播放失败：{error}": "Wiedergabe fehlgeschlagen: {error}",
   "操作失败": "Der Vorgang ist fehlgeschlagen",
@@ -655,5 +655,17 @@
   "默认应用": "Standardanwendung",
   "默认打开应用": "App standardmäßig öffnen",
   "，失败 {count}": ", fehlgeschlagen {count}",
-  "，缓存跳过 {count}": ", Cache überspringen {count}"
+  "，缓存跳过 {count}": ", Cache überspringen {count}",
+  "语音": "Sprache",
+  "跳过静音": "Stille überspringen",
+  "连播": "Fortlaufend",
+  "暂无识别文字": "Noch kein Transkript",
+  "点击播放": "Zum Abspielen tippen",
+  "暂停": "Pause",
+  "上一条": "Vorherige",
+  "下一条": "Nächste",
+  "跳过停顿省 {time}": "Pausen überspringen spart {time}",
+  "播放失败，稍后再试": "Wiedergabe fehlgeschlagen, später erneut versuchen",
+  "微信": "WeChat",
+  "抖音": "Douyin"
 }

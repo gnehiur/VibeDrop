@@ -655,5 +655,17 @@
   "默认应用": "Application par défaut",
   "默认打开应用": "Ouvrir l'application par défaut",
   "，失败 {count}": ", échec {count}",
-  "，缓存跳过 {count}": ", ignorer le cache {count}"
+  "，缓存跳过 {count}": ", ignorer le cache {count}",
+  "语音": "Voix",
+  "跳过静音": "Sauter les silences",
+  "连播": "Lecture continue",
+  "暂无识别文字": "Pas encore de transcription",
+  "点击播放": "Touchez pour lire",
+  "暂停": "Pause",
+  "上一条": "Précédent",
+  "下一条": "Suivant",
+  "跳过停顿省 {time}": "Sauter les pauses fait gagner {time}",
+  "播放失败，稍后再试": "Échec de la lecture, réessayez plus tard",
+  "微信": "WeChat",
+  "抖音": "Douyin"
 }

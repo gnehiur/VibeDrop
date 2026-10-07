@@ -655,5 +655,17 @@
   "默认应用": "Ñawpaq App",
   "默认打开应用": "Ñawpaq kichana App",
   "，失败 {count}": ", {count} mana atisqa",
-  "，缓存跳过 {count}": ", cache-manta {count} saqisqa"
+  "，缓存跳过 {count}": ", cache-manta {count} saqisqa",
+  "语音": "Kunka",
+  "跳过静音": "Upallay pasachiy",
+  "连播": "Qatiqninta uyariy",
+  "暂无识别文字": "Manaraq qillqa kanchu",
+  "点击播放": "Uyarinapaq ñit'iy",
+  "暂停": "Samachiy",
+  "上一条": "Ñawpaqnin",
+  "下一条": "Qatiqnin",
+  "跳过停顿省 {time}": "Samaykunata pasachispa {time} waqaychakun",
+  "播放失败，稍后再试": "Mana uyariy atikunchu, qhipata huk kutita ruway",
+  "微信": "WeChat",
+  "抖音": "Douyin"
 }

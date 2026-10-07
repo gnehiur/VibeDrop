@@ -655,5 +655,17 @@
   "默认应用": "Programu chaguo-msingi",
   "默认打开应用": "Programu chaguo-msingi ya kufungua",
   "，失败 {count}": ", zimeshindwa {count}",
-  "，缓存跳过 {count}": ", zimerukwa kutoka akiba {count}"
+  "，缓存跳过 {count}": ", zimerukwa kutoka akiba {count}",
+  "语音": "Sauti",
+  "跳过静音": "Ruka ukimya",
+  "连播": "Cheza mfululizo",
+  "暂无识别文字": "Bado hakuna maandishi",
+  "点击播放": "Gusa ili kucheza",
+  "暂停": "Sitisha",
+  "上一条": "Iliyotangulia",
+  "下一条": "Inayofuata",
+  "跳过停顿省 {time}": "Kuruka vituo kunaokoa {time}",
+  "播放失败，稍后再试": "Imeshindwa kucheza, jaribu tena baadaye",
+  "微信": "WeChat",
+  "抖音": "Douyin"
 }

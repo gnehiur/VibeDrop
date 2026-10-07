@@ -265,6 +265,7 @@
                     <button class="filter-btn" data-kind-filter="image" data-i18n>图片</button>
                     <button class="filter-btn" data-kind-filter="video" data-i18n>视频</button>
                     <button class="filter-btn" data-kind-filter="file" data-i18n>文件</button>
+                    <button class="filter-btn hidden" id="history-kind-voice-btn" data-kind-filter="voice" data-i18n>语音</button>
                 </div>
                 <div class="history-filter history-labeled-filter" id="history-availability-filter-btns" data-row-label="原件">
                     <button class="filter-btn active" data-availability-filter="available" data-i18n>有原件</button>
@@ -518,6 +519,37 @@
         </div>
 
       </div>
+        <!-- 语音播放条:只在历史页、选中一段录音后出现,夹在内容区与标签栏之间 -->
+        <div id="voice-player" class="voice-player hidden">
+            <div class="voice-player-top">
+                <div class="voice-player-ctl">
+                    <button id="voice-prev-btn" type="button"></button>
+                    <button id="voice-play-btn" type="button" class="voice-player-main"></button>
+                    <button id="voice-next-btn" type="button"></button>
+                </div>
+                <div class="voice-player-title">
+                    <div id="voice-player-time" class="voice-player-time"></div>
+                    <div id="voice-player-meta" class="voice-player-meta"></div>
+                </div>
+                <button id="voice-close-btn" type="button" class="voice-player-close">&times;</button>
+            </div>
+            <div id="voice-player-text" class="voice-player-text"></div>
+            <div id="voice-player-bar" class="voice-player-bar">
+                <div id="voice-player-wave" class="voice-wave"></div>
+                <div id="voice-player-head" class="voice-player-head"></div>
+            </div>
+            <div class="voice-player-foot">
+                <span id="voice-player-cur">0:00</span>
+                <span class="voice-player-chips">
+                    <button type="button" class="voice-chip" id="voice-skip-chip" data-i18n>跳过静音</button>
+                    <button type="button" class="voice-chip" id="voice-auto-chip" data-i18n>连播</button>
+                    <span id="voice-rate-chips" class="voice-player-rates"></span>
+                </span>
+                <span id="voice-player-total">0:00</span>
+            </div>
+            <audio id="voice-audio" preload="none"></audio>
+        </div>
+
         <!-- 底部导航栏 -->
         <nav id="bottom-nav">
             <button class="nav-btn active" data-view="send-view" id="nav-send-btn">

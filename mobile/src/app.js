@@ -615,6 +615,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initConnectionDiagnostics();
     initConnectionRecoveryLifecycle();
     initHistoryActions();
+    initVoicePlayer();
     initHomeVaultSync();
     initHistoryFilterControls();
     initHistoryHeatmapInteractions();
@@ -5215,6 +5216,7 @@ function showView(viewId) {
     if (viewId === 'history-view') {
         scheduleHistoryRender();
     }
+    onVoiceViewChange(viewId);
     renderConnectionDiagnostics();
     syncConnectionDiagnosticsPolling();
 }
@@ -9430,6 +9432,7 @@ function upsertVaultMergedEntries(entries) {
 }
 
 async function refreshVaultMergedHistory({ deep = false } = {}) {
+    refreshVoiceIndex();
     if (vaultMergedFetchInFlight) return;
     vaultMergedFetchInFlight = true;
     try {
@@ -9478,10 +9481,17 @@ function connectVaultEventStream() {
         vaultEventSource = source;
         source.onmessage = (event) => {
             let senderId = '';
+            let eventType = '';
             try {
-                senderId = String(JSON.parse(event.data || '{}').deviceId || '');
+                const payload = JSON.parse(event.data || '{}');
+                senderId = String(payload.deviceId || '');
+                eventType = String(payload.type || '');
             } catch (_) {
                 senderId = '';
+            }
+            if (eventType === 'voice-updated') {
+                refreshVoiceIndex();
+                return;
             }
             // 自己推上去的不用回头再拉
             if (senderId && senderId === getLocalSourceId()) return;
@@ -10053,6 +10063,12 @@ function initHistoryActions() {
             const idx = Number(itemElement.dataset.idx || '-1');
             const entry = currentRenderedHistoryEntries[idx];
             if (!entry) {
+                return;
+            }
+
+            const voiceClip = event.target.closest('[data-voice-id]');
+            if (voiceClip || entry.kind === 'voice') {
+                handleVoiceClipClick(voiceClip ? voiceClip.dataset.voiceId : entry.voice.id, event);
                 return;
             }
 
@@ -11322,25 +11338,28 @@ function renderHistory() {
     probe('render-history-start');
     const list = $('history-list');
     if (!list) return;
-    const history = getHistoryForDisplay();
+    const history = mergeVoiceIntoHistory(getHistoryForDisplay());
     const baseEntries = filterHistoryEntries(history);
     const renderToken = ++historyRenderToken;
 
     if (history.length === 0) {
         currentRenderedHistoryEntries = [];
+        rebuildVoicePlaylist([]);
         renderHistoryHeatmap([]);
         renderHistoryFilterSummary([]);
         list.innerHTML = `<p class="empty-hint">${t('暂无发送记录')}</p>`;
         return;
     }
 
-    renderHistoryHeatmap(baseEntries);
+    // 热力图只统计传输记录,单独成条的录音不计入
+    renderHistoryHeatmap(voiceState.enabled ? baseEntries.filter((entry) => entry.kind !== 'voice') : baseEntries);
     renderHistoryFilterSummary(baseEntries);
     const filtered = applyHistoryHeatmapSelection(baseEntries);
     const hasSearchQuery = Boolean(normalizeSearchText(currentHistoryFilters.query));
 
     if (filtered.length === 0) {
         currentRenderedHistoryEntries = [];
+        rebuildVoicePlaylist([]);
         const emptyText = historyHeatmapState.selectionDate && historyHeatmapState.selectionHour != null
             ? t('这个时段没有符合条件的记录')
             : hasSearchQuery
@@ -11351,14 +11370,16 @@ function renderHistory() {
     }
 
     currentRenderedHistoryEntries = filtered;
+    rebuildVoicePlaylist(filtered);
 
     const renderItemMarkup = (entry, index) => {
+        if (entry.kind === 'voice') return renderVoiceEntryMarkup(entry, index);
         const time = formatTime(entry.timestamp);
         const statusIcon = getHistoryStatusLabel(entry);
         const primaryTarget = getHistoryPrimaryTargetLabel(entry);
         const secondaryTarget = getHistorySecondaryTargetLabel(entry);
         const title = getHistoryEntryTitle(entry);
-        const content = renderHistoryEntryContent(entry);
+        const content = renderHistoryEntryContent(entry) + renderVoiceAttachments(entry);
         const clickable = isHistoryMediaEntry(entry) ? '' : ' style="cursor:pointer"';
         return `
             <div class="history-item" data-idx="${index}"${clickable} title="${title}">
@@ -11792,6 +11813,7 @@ function getHistoryKindLabel(kind = 'text') {
         video: t('视频'),
         media: t('媒体'),
         file: t('文件'),
+        voice: t('语音'),
     };
     return labels[kind] || kind || t('文字');
 }
@@ -12062,6 +12084,9 @@ function matchesKind(entry, filters = currentHistoryFilters) {
     if (target === 'all') {
         return true;
     }
+    if (target === 'voice') {
+        return entry.kind === 'voice' || Boolean(voiceAttachMap.get(entry)?.length);
+    }
 
     const entryKind = entry.kind || 'text';
     if (entryKind === target) {
@@ -12309,6 +12334,519 @@ function showToast(message) {
         toast.style.opacity = '1';
         toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2000);
     }, 150);
+}
+
+// ---- 语音存档(可选功能,见 docs/voice-archive-spec.md)----
+// 金库配了 --voice-dir 才出现:录音按「时间窗 + 文字重合度」挂到对应的发送记录下面,
+// 对不上的(在别的 App 里说的、文字还没出来的)单独成一条「语音」进时间线。
+const VOICE_PREFS_KEY = 'vibedrop_voice_prefs';
+const VOICE_RATES = [1, 1.5, 2];
+const VOICE_ATTACH_WINDOW_MS = 60 * 60 * 1000; // 录音开始后一小时内发出的消息才算候选
+const VOICE_ATTACH_MIN_SCORE = 0.6;            // 识别文字的双字组至少六成出现在消息里
+const VOICE_ICONS = {
+    play: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect fill="currentColor" x="6.5" y="5" width="4" height="14" rx="1.2"/><rect fill="currentColor" x="13.5" y="5" width="4" height="14" rx="1.2"/></svg>',
+    prev: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M7 5h2v14H7zM19 6.2v11.6a.8.8 0 0 1-1.22.68L10 13.2a1.4 1.4 0 0 1 0-2.4l7.78-5.28A.8.8 0 0 1 19 6.2z"/></svg>',
+    next: '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M15 5h2v14h-2zM5 6.2v11.6a.8.8 0 0 0 1.22.68L14 13.2a1.4 1.4 0 0 0 0-2.4L6.22 5.52A.8.8 0 0 0 5 6.2z"/></svg>',
+};
+const VOICE_APP_LABELS = {
+    'com.vibedrop.mobile': () => 'VibeDrop',
+    'com.tencent.mm': () => t('微信'),
+    'com.ss.android.ugc.aweme': () => t('抖音'),
+    'com.android.chrome': () => 'Chrome',
+    'org.telegram.messenger': () => 'Telegram',
+    'com.twitter.android': () => 'X',
+};
+
+const voiceState = { enabled: false, version: '', items: [], byId: new Map(), fetching: false };
+const voicePlayer = { cur: null, playlist: [], drag: null, pendingFrac: 0, raf: false, prefs: { rate: 1, auto: true, skip: true } };
+let voiceAttachMap = new Map();          // 发送记录 → 挂在它下面的录音(时间正序),每次渲染重建
+const voiceBigramCache = new Map();      // 录音 id / 消息键 → 双字组集合
+try {
+    voicePlayer.prefs = { ...voicePlayer.prefs, ...JSON.parse(localStorage.getItem(VOICE_PREFS_KEY) || '{}') };
+} catch (_) { /* 偏好损坏就用默认 */ }
+
+async function refreshVoiceIndex() {
+    if (voiceState.fetching) return;
+    const endpoint = getHomeVaultSettings().url;
+    if (!endpoint) return;
+    voiceState.fetching = true;
+    try {
+        const url = new URL(`${endpoint}/api/voice/index`);
+        if (voiceState.version) url.searchParams.set('v', voiceState.version);
+        const response = await fetch(url.toString());
+        if (!response.ok) return; // 旧版金库没有这个接口,保持关闭
+        const data = await response.json();
+        if (!data?.ok) return;
+        if (data.enabled && data.unchanged && voiceState.enabled) return;
+        voiceState.enabled = Boolean(data.enabled);
+        voiceState.version = voiceState.enabled ? String(data.version || '') : '';
+        if (!data.unchanged) {
+            voiceState.items = voiceState.enabled
+                ? (data.items || []).filter((item) => item && item.id && item.f && Number.isFinite(item.ts))
+                : [];
+        }
+        voiceState.byId = new Map(voiceState.items.map((item) => [item.id, item]));
+        voiceBigramCache.clear();
+        $('history-kind-voice-btn')?.classList.toggle('hidden', !voiceState.enabled);
+        scheduleHistoryRender();
+    } catch (error) {
+        debugLog('voice-index-fetch-failed', { message: String(error?.message || error) });
+    } finally {
+        voiceState.fetching = false;
+    }
+}
+
+function voiceBigrams(cacheKey, text) {
+    let set = voiceBigramCache.get(cacheKey);
+    if (set) return set;
+    const normalized = String(text || '').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+    set = new Set();
+    for (let i = 0; i < normalized.length - 1; i += 1) set.add(normalized.slice(i, i + 2));
+    voiceBigramCache.set(cacheKey, set);
+    return set;
+}
+
+function voiceMatchScore(item, entry) {
+    const spoken = voiceBigrams(`v:${item.id}:${item.tx.length}`, item.tx);
+    if (!spoken.size) return 0;
+    const sent = voiceBigrams(`e:${entry.sourceDeviceId || ''}:${entry.id || entry.timestamp}:${entry.text.length}`, entry.text);
+    let hit = 0;
+    spoken.forEach((gram) => { if (sent.has(gram)) hit += 1; });
+    return hit / spoken.size;
+}
+
+function makeVoiceHistoryEntry(item) {
+    return {
+        kind: 'voice',
+        id: `voice:${item.id}`,
+        timestamp: new Date(item.ts).toISOString(),
+        text: item.tx || '',
+        status: 'success',
+        voice: item,
+    };
+}
+
+// 把录音并进历史:能对上的挂到消息下,其余单独成条;返回按时间倒序的新列表
+function mergeVoiceIntoHistory(history) {
+    voiceAttachMap = new Map();
+    if (!voiceState.enabled || !voiceState.items.length) return history;
+    const candidates = history
+        .filter((entry) => (entry.kind || 'text') === 'text' && entry.direction !== 'desktop_to_mobile' && entry.text)
+        .map((entry) => ({ entry, ts: new Date(entry.timestamp || entry.timestamp_iso || 0).getTime() }))
+        .filter((candidate) => candidate.ts > 0)
+        .sort((a, b) => a.ts - b.ts);
+    const standalone = [];
+    voiceState.items.forEach((item) => {
+        let matched = null;
+        if (item.tx) {
+            let lo = 0;
+            let hi = candidates.length;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (candidates[mid].ts < item.ts) lo = mid + 1; else hi = mid;
+            }
+            const deadline = item.ts + VOICE_ATTACH_WINDOW_MS;
+            for (let i = lo; i < candidates.length && candidates[i].ts <= deadline; i += 1) {
+                if (voiceMatchScore(item, candidates[i].entry) >= VOICE_ATTACH_MIN_SCORE) {
+                    matched = candidates[i].entry;
+                    break;
+                }
+            }
+        }
+        if (matched) {
+            if (!voiceAttachMap.has(matched)) voiceAttachMap.set(matched, []);
+            voiceAttachMap.get(matched).push(item);
+        } else {
+            standalone.push(makeVoiceHistoryEntry(item));
+        }
+    });
+    voiceAttachMap.forEach((list) => list.sort((a, b) => a.ts - b.ts));
+    if (!standalone.length) return history;
+    const timeOf = (entry) => new Date(entry?.timestamp || entry?.timestamp_iso || 0).getTime() || 0;
+    return history.concat(standalone).sort((a, b) => timeOf(b) - timeOf(a));
+}
+
+// 播放顺序 = 屏幕上从上到下:卡片按时间倒序,卡片内的多段录音按时间正序
+function rebuildVoicePlaylist(entries) {
+    const playlist = [];
+    if (voiceState.enabled) {
+        entries.forEach((entry) => {
+            if (entry.kind === 'voice') playlist.push(entry.voice.id);
+            else (voiceAttachMap.get(entry) || []).forEach((item) => playlist.push(item.id));
+        });
+    }
+    voicePlayer.playlist = playlist;
+    syncVoicePlayerState();
+}
+
+function voiceClock(seconds) {
+    const s = Math.max(0, Math.floor(seconds || 0));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function voiceAppLabel(pkg) {
+    if (!pkg) return '';
+    const known = VOICE_APP_LABELS[pkg];
+    return known ? known() : pkg.split('.').pop();
+}
+
+function voiceWaveHTML(item) {
+    const levels = item.wv ? [...item.wv].map((c) => parseInt(c, 36) || 0) : new Array(48).fill(3);
+    const duration = item.dur || 0;
+    const silences = Array.isArray(item.sk) ? item.sk : [];
+    return levels.map((level, i) => {
+        const at = ((i + 0.5) / levels.length) * duration;
+        const silent = duration && silences.some(([s, e]) => at >= s && at < e);
+        return `<i${silent ? ' class="s"' : ''} style="height:${Math.max(7, Math.round((level / 35) * 100))}%"></i>`;
+    }).join('');
+}
+
+function renderVoiceClip(item) {
+    const isCur = item.id === voicePlayer.cur;
+    const playing = isCur && !$('voice-audio')?.paused;
+    return `
+        <div class="voice-clip${isCur ? ' cur' : ''}" data-voice-id="${escapeHtml(item.id)}">
+            <span class="voice-clip-btn">${playing ? VOICE_ICONS.pause : VOICE_ICONS.play}</span>
+            <span class="voice-wave">${voiceWaveHTML(item)}</span>
+            <span class="voice-clip-dur">${voiceClock(Math.round(item.dur || 0))}</span>
+        </div>
+    `;
+}
+
+function renderVoiceAttachments(entry) {
+    const list = voiceAttachMap.get(entry);
+    if (!list || !list.length) return '';
+    return `<div class="voice-clips">${list.map(renderVoiceClip).join('')}</div>`;
+}
+
+function renderVoiceEntryMarkup(entry, index) {
+    const item = entry.voice;
+    const app = voiceAppLabel(item.app);
+    const text = item.tx
+        ? `<div class="history-text">${highlightHistoryText(item.tx)}</div>`
+        : `<div class="voice-tx-none">${t('暂无识别文字')}</div>`;
+    return `
+        <div class="history-item history-voice-item" data-idx="${index}" title="${t('点击播放')}">
+            <div class="history-item-header">
+                <span class="history-time">${formatTime(entry.timestamp)}</span>
+                <div class="history-target-group">
+                    <span class="history-target">${t('语音')}</span>
+                    ${app ? `<span class="history-target-detail">${escapeHtml(app)}</span>` : ''}
+                </div>
+                <span class="history-status">${voiceClock(Math.round(item.dur || 0))}</span>
+            </div>
+            ${renderVoiceClip(item)}
+            ${text}
+        </div>
+    `;
+}
+
+function handleVoiceClipClick(voiceId, event) {
+    const item = voiceState.byId.get(voiceId);
+    if (!item) return;
+    const wave = event.target.closest('.voice-wave');
+    if (wave) {
+        const rect = wave.getBoundingClientRect();
+        voicePlay(item, rect.width ? (event.clientX - rect.left) / rect.width : 0);
+        return;
+    }
+    if (item.id === voicePlayer.cur) {
+        voiceTogglePlay();
+        return;
+    }
+    voicePlay(item);
+}
+
+function voiceCurItem() {
+    return voicePlayer.cur ? voiceState.byId.get(voicePlayer.cur) : null;
+}
+
+function voiceDuration() {
+    const audio = $('voice-audio');
+    const item = voiceCurItem();
+    return audio && Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : (item?.dur || 0);
+}
+
+function voiceAudioUrl(item) {
+    const endpoint = getHomeVaultSettings().url || '';
+    const path = String(item.f).split('/').map(encodeURIComponent).join('/');
+    return endpoint ? `${endpoint}/api/voice/audio/${path}` : '';
+}
+
+function voicePlay(item, frac = 0) {
+    const audio = $('voice-audio');
+    if (!item || !audio) return;
+    if (voicePlayer.cur !== item.id) {
+        voicePlayer.cur = item.id;
+        audio.src = voiceAudioUrl(item);
+        audio.playbackRate = voicePlayer.prefs.rate;
+        $('voice-player-wave').innerHTML = voiceWaveHTML(item);
+        $('voice-player-time').textContent = formatTime(new Date(item.ts).toISOString());
+        $('voice-player-total').textContent = voiceClock(Math.round(item.dur || 0));
+        $('voice-player-text').textContent = item.tx || '';
+        document.querySelectorAll('.voice-clip').forEach((clip) => clip.classList.toggle('cur', clip.dataset.voiceId === item.id));
+        document.querySelector(`.voice-clip[data-voice-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        if ('mediaSession' in navigator && typeof MediaMetadata !== 'undefined') {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: item.tx ? item.tx.slice(0, 40) : t('语音'),
+                artist: 'VibeDrop',
+                album: formatTime(new Date(item.ts).toISOString()),
+            });
+        }
+        voicePlayer.pendingFrac = frac;
+        syncVoiceChips();
+        syncVoicePlayerVisibility();
+    } else if (frac) {
+        voiceSeekFrac(frac);
+    }
+    audio.play().catch(() => {});
+}
+
+function voiceTogglePlay() {
+    const audio = $('voice-audio');
+    if (!audio) return;
+    if (!voicePlayer.cur) {
+        voicePlay(voiceState.byId.get(voicePlayer.playlist[0]));
+        return;
+    }
+    if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+}
+
+function voiceStep(direction) {
+    const audio = $('voice-audio');
+    const index = voicePlayer.playlist.indexOf(voicePlayer.cur);
+    if (index < 0 || !audio) return;
+    if (direction < 0 && audio.currentTime > 3) { // 已播超过 3 秒,「上一条」先回到开头
+        audio.currentTime = 0;
+        return;
+    }
+    voicePlay(voiceState.byId.get(voicePlayer.playlist[index + (direction > 0 ? 1 : -1)]));
+}
+
+function voiceSeekFrac(frac) {
+    const audio = $('voice-audio');
+    const clamped = Math.min(1, Math.max(0, frac));
+    const duration = voiceDuration();
+    if (audio && duration) audio.currentTime = clamped * duration;
+    paintVoiceProgress();
+}
+
+function closeVoicePlayer() {
+    const audio = $('voice-audio');
+    if (audio) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+    }
+    voicePlayer.cur = null;
+    document.querySelectorAll('.voice-clip.cur').forEach((clip) => clip.classList.remove('cur'));
+    syncVoicePlayerVisibility();
+    syncVoicePlayerState();
+}
+
+function syncVoicePlayerVisibility() {
+    const inHistory = !$('history-view')?.classList.contains('hidden');
+    $('voice-player')?.classList.toggle('hidden', !(inHistory && voicePlayer.cur));
+}
+
+// 离开历史页就暂停:播放条只在历史页出现,别让声音在看不到控制的页面里继续
+function onVoiceViewChange(viewId) {
+    if (viewId !== 'history-view') $('voice-audio')?.pause();
+    syncVoicePlayerVisibility();
+}
+
+function saveVoicePrefs() {
+    try { localStorage.setItem(VOICE_PREFS_KEY, JSON.stringify(voicePlayer.prefs)); } catch (_) { /* 存不下就算了 */ }
+}
+
+function syncVoiceChips() {
+    const { prefs } = voicePlayer;
+    $('voice-auto-chip')?.classList.toggle('active', prefs.auto);
+    $('voice-skip-chip')?.classList.toggle('active', prefs.skip);
+    document.body.classList.toggle('voice-skip-on', prefs.skip);
+    const rates = $('voice-rate-chips');
+    if (rates) {
+        rates.innerHTML = VOICE_RATES.map((rate) => `<button type="button" class="voice-chip${rate === prefs.rate ? ' active' : ''}" data-rate="${rate}">${rate}×</button>`).join('');
+    }
+    const item = voiceCurItem();
+    const meta = $('voice-player-meta');
+    if (item && meta) {
+        const saved = (item.sk || []).reduce((sum, [s, e]) => sum + (e - s), 0);
+        const parts = [voiceAppLabel(item.app)].filter(Boolean);
+        if (prefs.skip && saved >= 1) parts.push(t('跳过停顿省 {time}', { time: voiceClock(Math.round(saved)) }));
+        meta.textContent = parts.join(' · ');
+    }
+}
+
+function syncVoicePlayerState() {
+    const audio = $('voice-audio');
+    if (!audio) return;
+    const playing = Boolean(voicePlayer.cur) && !audio.paused;
+    const playBtn = $('voice-play-btn');
+    if (playBtn) {
+        playBtn.innerHTML = playing ? VOICE_ICONS.pause : VOICE_ICONS.play;
+        playBtn.setAttribute('aria-label', playing ? t('暂停') : t('播放'));
+    }
+    document.querySelectorAll('.voice-clip').forEach((clip) => {
+        const btn = clip.querySelector('.voice-clip-btn');
+        if (btn) btn.innerHTML = clip.dataset.voiceId === voicePlayer.cur && playing ? VOICE_ICONS.pause : VOICE_ICONS.play;
+    });
+    const index = voicePlayer.playlist.indexOf(voicePlayer.cur);
+    if ($('voice-prev-btn')) $('voice-prev-btn').disabled = index < 0;
+    if ($('voice-next-btn')) $('voice-next-btn').disabled = index < 0 || index >= voicePlayer.playlist.length - 1;
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+    if (playing) startVoiceProgressLoop();
+}
+
+// 跳过静音:落进停顿区间就跳到区间末尾。亮屏靠 rAF 逐帧检查,锁屏 rAF 停了靠 timeupdate 兜底;拖动中不跳
+function voiceSkipCheck() {
+    const audio = $('voice-audio');
+    if (!voicePlayer.prefs.skip || voicePlayer.drag != null || !voicePlayer.cur || !audio || audio.seeking) return;
+    const item = voiceCurItem();
+    if (!item?.sk) return;
+    const now = audio.currentTime;
+    for (const [s, e] of item.sk) {
+        if (now >= s && now < e - 0.05) {
+            audio.currentTime = Math.min(e, voiceDuration());
+            return;
+        }
+    }
+}
+
+function paintVoiceBars(container, frac) {
+    if (!container) return;
+    const bars = container.children;
+    const played = Math.round(frac * bars.length);
+    for (let i = 0; i < bars.length; i += 1) bars[i].classList.toggle('p', i < played);
+}
+
+function paintVoiceProgress() {
+    if (!voicePlayer.cur) return;
+    const audio = $('voice-audio');
+    const duration = voiceDuration();
+    const frac = voicePlayer.drag != null ? voicePlayer.drag : (duration && audio ? audio.currentTime / duration : 0);
+    paintVoiceBars($('voice-player-wave'), frac);
+    const head = $('voice-player-head');
+    if (head) head.style.left = `${frac * 100}%`;
+    const cur = $('voice-player-cur');
+    if (cur) cur.textContent = voiceClock(frac * duration);
+    paintVoiceBars(document.querySelector(`.voice-clip[data-voice-id="${CSS.escape(voicePlayer.cur)}"] .voice-wave`), frac);
+    if ('mediaSession' in navigator && navigator.mediaSession.setPositionState && duration && audio) {
+        try {
+            navigator.mediaSession.setPositionState({ duration, playbackRate: audio.playbackRate, position: Math.min(audio.currentTime, duration) });
+        } catch (_) { /* 部分内核不支持 */ }
+    }
+}
+
+function startVoiceProgressLoop() {
+    if (voicePlayer.raf) return;
+    voicePlayer.raf = true;
+    const tick = () => {
+        const audio = $('voice-audio');
+        voiceSkipCheck();
+        paintVoiceProgress();
+        if (audio && (!audio.paused || voicePlayer.drag != null)) requestAnimationFrame(tick);
+        else voicePlayer.raf = false;
+    };
+    requestAnimationFrame(tick);
+}
+
+function initVoicePlayer() {
+    const audio = $('voice-audio');
+    if (!audio) return;
+    $('voice-prev-btn').innerHTML = VOICE_ICONS.prev;
+    $('voice-next-btn').innerHTML = VOICE_ICONS.next;
+    $('voice-prev-btn').setAttribute('aria-label', t('上一条'));
+    $('voice-next-btn').setAttribute('aria-label', t('下一条'));
+    $('voice-close-btn').setAttribute('aria-label', t('关闭'));
+    $('voice-play-btn').addEventListener('click', voiceTogglePlay);
+    $('voice-prev-btn').addEventListener('click', () => voiceStep(-1)); // 往上 = 更新的
+    $('voice-next-btn').addEventListener('click', () => voiceStep(1));  // 往下 = 更早的,与连播方向一致
+    $('voice-close-btn').addEventListener('click', closeVoicePlayer);
+    $('voice-auto-chip').addEventListener('click', () => {
+        voicePlayer.prefs.auto = !voicePlayer.prefs.auto;
+        saveVoicePrefs();
+        syncVoiceChips();
+    });
+    $('voice-skip-chip').addEventListener('click', () => {
+        voicePlayer.prefs.skip = !voicePlayer.prefs.skip;
+        saveVoicePrefs();
+        syncVoiceChips();
+        voiceSkipCheck();
+    });
+    $('voice-rate-chips').addEventListener('click', (event) => {
+        const chip = event.target.closest('[data-rate]');
+        if (!chip) return;
+        voicePlayer.prefs.rate = Number(chip.dataset.rate) || 1;
+        audio.playbackRate = voicePlayer.prefs.rate;
+        saveVoicePrefs();
+        syncVoiceChips();
+    });
+
+    audio.addEventListener('loadedmetadata', () => {
+        if (voicePlayer.pendingFrac) {
+            voiceSeekFrac(voicePlayer.pendingFrac);
+            voicePlayer.pendingFrac = 0;
+        }
+    });
+    ['play', 'pause', 'ended', 'emptied'].forEach((type) => audio.addEventListener(type, syncVoicePlayerState));
+    audio.addEventListener('waiting', () => $('voice-play-btn')?.classList.add('wait'));
+    ['playing', 'pause', 'error'].forEach((type) => audio.addEventListener(type, () => $('voice-play-btn')?.classList.remove('wait')));
+    audio.addEventListener('error', () => {
+        if (voicePlayer.cur && audio.getAttribute('src')) $('voice-player-meta').textContent = t('播放失败，稍后再试');
+    });
+    audio.addEventListener('ended', () => {
+        if (!voicePlayer.prefs.auto) return;
+        const index = voicePlayer.playlist.indexOf(voicePlayer.cur);
+        if (index >= 0 && index < voicePlayer.playlist.length - 1) voicePlay(voiceState.byId.get(voicePlayer.playlist[index + 1]));
+    });
+    audio.addEventListener('timeupdate', voiceSkipCheck);
+    audio.addEventListener('play', voiceSkipCheck);
+    audio.addEventListener('seeked', () => { voiceSkipCheck(); paintVoiceProgress(); });
+
+    // 拖动进度条:按下即预览位置,松手才真正跳转
+    const bar = $('voice-player-bar');
+    const barFrac = (event) => {
+        const rect = bar.getBoundingClientRect();
+        return Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    };
+    bar.addEventListener('pointerdown', (event) => {
+        if (!voicePlayer.cur) return;
+        voicePlayer.drag = barFrac(event);
+        try { bar.setPointerCapture(event.pointerId); } catch (_) { /* 忽略 */ }
+        paintVoiceProgress();
+        startVoiceProgressLoop();
+    });
+    bar.addEventListener('pointermove', (event) => {
+        if (voicePlayer.drag == null) return;
+        voicePlayer.drag = barFrac(event);
+        paintVoiceProgress();
+    });
+    bar.addEventListener('pointerup', () => {
+        if (voicePlayer.drag == null) return;
+        const frac = voicePlayer.drag;
+        voicePlayer.drag = null;
+        voiceSeekFrac(frac);
+    });
+    bar.addEventListener('pointercancel', () => {
+        voicePlayer.drag = null;
+        paintVoiceProgress();
+    });
+
+    // 锁屏 / 控制中心 / 耳机线控
+    if ('mediaSession' in navigator) {
+        const session = navigator.mediaSession;
+        const handle = (action, fn) => { try { session.setActionHandler(action, fn); } catch (_) { /* 不支持的动作 */ } };
+        handle('play', () => audio.play().catch(() => {}));
+        handle('pause', () => audio.pause());
+        handle('previoustrack', () => voiceStep(-1));
+        handle('nexttrack', () => voiceStep(1));
+        handle('seekbackward', (d) => { audio.currentTime = Math.max(0, audio.currentTime - (d.seekOffset || 5)); });
+        handle('seekforward', (d) => { audio.currentTime = Math.min(voiceDuration(), audio.currentTime + (d.seekOffset || 5)); });
+        handle('seekto', (d) => { audio.currentTime = d.seekTime; });
+    }
+    syncVoiceChips();
 }
 
 // ---- Service Worker 注册 ----
