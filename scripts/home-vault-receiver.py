@@ -9,6 +9,7 @@ import os
 import pathlib
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -592,6 +593,37 @@ def load_voice_lexicon(voice_dir: pathlib.Path) -> dict[str, Any]:
     return {"updated": raw.get("updated") or "", "baseline": raw.get("baseline") or "", "words": words}
 
 
+_voice_wav_lock = threading.Lock()
+
+
+def voice_audio_as_wav(voice_dir: pathlib.Path, audio: pathlib.Path) -> pathlib.Path | None:
+    """压缩音频按需转成 WAV 缓存(?fmt=wav)。WebKit(macOS/iOS)播 FLAC 这类变码率流时,跳转按平均码率估字节位置,
+    不认 FLAC 寻址表;静音压得极小、说话占字节多,「跳过静音」就会落晚约 1 秒把开头的字吃掉(2026-10-08 实测)。
+    WAV 是定码率,时间和字节严格成正比,跳到哪就是哪。原件不动,缓存放在语音目录的 wav-cache 下。"""
+    if audio.suffix.lower() == ".wav":
+        return audio
+    ffmpeg = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+    root = voice_dir.resolve()
+    try:
+        cache = (root / "wav-cache" / audio.resolve().relative_to(root)).with_suffix(".wav")
+    except ValueError:
+        return None
+    with _voice_wav_lock:
+        if cache.is_file() and cache.stat().st_mtime >= audio.stat().st_mtime:
+            return cache
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_name(cache.stem + ".tmp.wav")
+        try:
+            subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(audio), "-map_metadata", "-1",
+                            "-fflags", "+bitexact", "-flags:a", "+bitexact", "-c:a", "pcm_s16le", str(tmp)],
+                           check=True, timeout=120, capture_output=True)
+            tmp.replace(cache)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            return None
+    return cache
+
+
 def resolve_voice_audio(voice_dir: pathlib.Path, audio_root: str, rel: str) -> pathlib.Path | None:
     root = (voice_dir / audio_root).resolve()
     candidate = (root / rel).resolve()
@@ -948,6 +980,8 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                 if audio is None:
                     self.send_json(404, {"ok": False, "error": "audio not found"})
                     return
+                if (urllib.parse.parse_qs(parsed_path.query).get("fmt") or [""])[0] == "wav":
+                    audio = voice_audio_as_wav(voice_dir, audio) or audio
                 self.send_file_range(audio, VOICE_AUDIO_MIME[audio.suffix.lower()], "public, max-age=86400")
                 return
 

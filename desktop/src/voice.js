@@ -467,7 +467,8 @@ function dvPlay(item, { reveal = 'nearest' } = {}) {
         dvEnsureWords(item);
         const path = String(item.f).split('/').map(encodeURIComponent).join('/');
         // ?v= 音频文件版本:文件换过(如补寻址表)时绕开 WebView 里一天的旧缓存
-        audio.src = `${VAULT_ENDPOINT}/api/voice/audio/${path}${item.fv ? `?v=${item.fv}` : ''}`;
+        // fmt=wav:WebKit 播 FLAC 跳转按平均码率估位置会跳过头,WAV 定码率跳得准
+        audio.src = `${VAULT_ENDPOINT}/api/voice/audio/${path}?fmt=wav${item.fv ? `&v=${item.fv}` : ''}`;
         audio.playbackRate = dvPlayer.prefs.rate;
         const playerWave = $dv('dv-wave');
         const playerBars = dvBarsFor(playerWave, DV_PLAYER_PITCH);
