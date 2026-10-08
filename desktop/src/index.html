@@ -360,8 +360,41 @@
         </div>
     </div>
 
+    <!-- 语音播放条:历史页、选中一段录音后出现在窗口底部 -->
+    <div id="dv-player" class="voice-player dv-player hidden">
+        <div class="voice-player-top">
+            <div class="voice-player-ctl">
+                <button id="dv-prev" type="button"></button>
+                <button id="dv-play" type="button" class="voice-player-main"></button>
+                <button id="dv-next" type="button"></button>
+            </div>
+            <div class="voice-player-title">
+                <div id="dv-time" class="voice-player-time"></div>
+                <div id="dv-meta" class="voice-player-meta"></div>
+            </div>
+            <button id="dv-locate" type="button" class="voice-player-locate"></button>
+            <button id="dv-close" type="button" class="voice-player-close">&times;</button>
+        </div>
+        <div id="dv-text" class="voice-player-text"></div>
+        <div id="dv-bar" class="voice-player-bar">
+            <div id="dv-wave" class="voice-wave"></div>
+            <div id="dv-head" class="voice-player-head"></div>
+        </div>
+        <div class="voice-player-foot">
+            <span id="dv-cur">0:00</span>
+            <span class="voice-player-chips">
+                <button type="button" class="voice-chip" id="dv-skip" data-i18n>跳过静音</button>
+                <button type="button" class="voice-chip" id="dv-auto" data-i18n>连播</button>
+                <span id="dv-rates" class="voice-player-rates"></span>
+            </span>
+            <span id="dv-total">0:00</span>
+        </div>
+        <audio id="dv-audio" preload="none"></audio>
+    </div>
+
     <script src="i18n.js"></script>
     <script src="main.js"></script>
+    <script src="voice.js"></script>
 </body>
 
 </html>

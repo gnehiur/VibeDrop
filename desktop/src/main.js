@@ -228,6 +228,7 @@ async function showDesktopTab(tab, { resetScroll = false } = {}) {
         ensureLogRendered();
         fillLogListToViewport();
     }
+    if (typeof onDesktopVoiceTabChange === 'function') onDesktopVoiceTabChange();
 }
 
 function initDesktopSettingsPage() {
@@ -780,6 +781,7 @@ function getLogModel() {
             return normalized;
         });
     logModelCache = collapseMirrorDuplicates(dedupeLogEntries(merged)).sort((a, b) => b._ts - a._ts);
+    if (typeof mergeDesktopVoice === 'function') logModelCache = mergeDesktopVoice(logModelCache);
     logModelDirty = false;
     return logModelCache;
 }
@@ -988,11 +990,15 @@ function dedupeLogEntries(entries) {
     // 升级:优先按 transferId 单号精确归并(发送方生成,双方记账共用);
     // 没有单号的存量旧记录才退回"同设备+同内容+10秒窗"启发式
     const localTransferIds = new Set();
+    const localByTransferId = new Map();
     const localTimes = new Map();
     const keyOf = (entry) => `${getLogEntryDeviceId(entry)}|${entry.kind || 'text'}|${(entry.text || '').slice(0, 80)}`;
     entries.forEach((entry) => {
         if (entry.vault_remote) return;
-        if (entry.transfer_id) localTransferIds.add(entry.transfer_id);
+        if (entry.transfer_id) {
+            localTransferIds.add(entry.transfer_id);
+            localByTransferId.set(entry.transfer_id, entry);
+        }
         const key = keyOf(entry);
         if (!localTimes.has(key)) localTimes.set(key, []);
         localTimes.get(key).push(new Date(entry.timestamp || 0).getTime());
@@ -1000,6 +1006,9 @@ function dedupeLogEntries(entries) {
     return entries.filter((entry) => {
         if (!entry.vault_remote) return true;
         if (entry.transfer_id) {
+            const local = localByTransferId.get(entry.transfer_id);
+            // 手机那份带口述片段(Mac 本地收到的只有文字):并给本地条,录音才能按时间挂上来
+            if (local && entry.dictation && !local.dictation) local.dictation = entry.dictation;
             return !localTransferIds.has(entry.transfer_id);
         }
         const times = localTimes.get(keyOf(entry));
@@ -1052,9 +1061,11 @@ function renderLog() {
     renderDesktopHistoryAdvancedPanelState();
 
     const baseEntries = filterLogEntries(log);
-    renderLogHeatmap(baseEntries);
+    renderLogHeatmap(baseEntries.filter((entry) => entry.kind !== 'voice'));
     renderHistoryFilterBanner(baseEntries, log.length);
-    renderLogList(applyLogHeatmapSelection(baseEntries), log.length);
+    const shownEntries = applyLogHeatmapSelection(baseEntries);
+    if (typeof setDesktopVoicePlaylist === 'function') setDesktopVoicePlaylist(shownEntries);
+    renderLogList(shownEntries, log.length);
 }
 
 function renderDesktopHistoryDeviceFilters(entries) {
@@ -2041,6 +2052,7 @@ function initDesktopLogHeatmapInteractions() {
 function createLogElement(entryOrText, timestamp) {
     // 模型里的条目已归一化,不再二次拷贝
     const entry = entryOrText && entryOrText._normalized ? entryOrText : normalizeLogEntry(entryOrText, timestamp);
+    if (entry.kind === 'voice' && typeof createVoiceLogElement === 'function') return createVoiceLogElement(entry);
     const timeLabel = formatLogTime(entry.timestamp);
     const isMedia = ['image', 'video', 'media'].includes(entry.kind);
     const isFile = entry.kind === 'file';
@@ -2146,6 +2158,7 @@ function createLogElement(entryOrText, timestamp) {
         ${headerHtml}
         <div class="log-text">${highlightLogText(entry.text)}</div>
     `;
+    if (typeof appendVoiceClips === 'function') appendVoiceClips(item, entry);
     item.addEventListener('click', () => {
         navigator.clipboard.writeText(entry.text || '');
         showToast(t('已复制'));
@@ -2183,6 +2196,9 @@ function convertVaultEntry(entry) {
         client_id: `vault-${entry.sourceDeviceId || 'unknown'}`,
         items,
         vault_remote: true,
+        vault_key: `${entry.sourceDeviceId || ''}:${entry.id || entry.timestamp || ''}`, // 实时推送按它覆盖旧版本
+        transfer_id: entry.transferId || entry.transfer_id || '',
+        dictation: Array.isArray(entry.dictation) ? entry.dictation : undefined, // 口述片段:录音按时间挂到消息上
     };
 }
 

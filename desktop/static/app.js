@@ -9582,8 +9582,9 @@ function connectVaultEventStream() {
         source.onmessage = (event) => {
             let senderId = '';
             let eventType = '';
+            let payload = {};
             try {
-                const payload = JSON.parse(event.data || '{}');
+                payload = JSON.parse(event.data || '{}') || {};
                 senderId = String(payload.deviceId || '');
                 eventType = String(payload.type || '');
             } catch (_) {
@@ -9595,6 +9596,17 @@ function connectVaultEventStream() {
             }
             // 自己推上去的不用回头再拉
             if (senderId && senderId === getLocalSourceId()) return;
+            // 新版金库在通知里直接带上新条目:并入即可,省掉一次整批拉取(约 2000 条 / 1.8MB)
+            if (Array.isArray(payload.entries) && payload.entries.length) {
+                const localId = getLocalSourceId();
+                harvestVaultMediaStamps(payload.entries);
+                upsertVaultMergedEntries(payload.entries.filter((entry) => {
+                    const src = String(entry?.sourceDeviceId || '');
+                    return src && src !== localId;
+                }));
+                scheduleHistoryRender();
+                return;
+            }
             refreshVaultMergedHistory();
         };
         source.onerror = () => {
@@ -9652,7 +9664,7 @@ function scheduleHomeVaultAutoPush() {
         } catch (error) {
             debugLog('vault-auto-push-failed', { message: String(error?.message || error) });
         }
-    }, 800);
+    }, 150); // 原 800ms:新记录尽快推给 Vault,其他设备秒级可见
 }
 
 function renderHistorySourceFilters() {
@@ -10139,7 +10151,18 @@ function updateHistory(entry) {
         setStoredHistoryRaw(JSON.stringify(history), { persistNative: false });
         persistNativeHistoryEntry(entry);
         persistHistory();
+        pushHomeVaultEntryUpdate(entry);
     }
+}
+
+// 状态定稿(已送达/失败/部分成功)后把这一条再推一次:其他设备立刻看到最终状态(Vault 端后推的版本优先)
+function pushHomeVaultEntryUpdate(entry) {
+    if (!entry || !entry.status || entry.status === 'pending') return;
+    const endpoint = getHomeVaultSettings().url;
+    if (!endpoint) return;
+    pushHomeVaultDelta(endpoint, [entry]).catch((error) => {
+        debugLog('vault-status-push-failed', { message: String(error?.message || error) });
+    });
 }
 
 function clearHistory() {

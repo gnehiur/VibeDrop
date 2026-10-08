@@ -285,7 +285,8 @@ def load_device_payload(vault_root: pathlib.Path, device_dir: pathlib.Path) -> d
 
     seen_ids: set[str] = set()
     combined: list[Any] = []
-    for entry in delta_entries + list(payload.get("history") or []):
+    # 同一条可能推过多次(先「发送中」后「已送达」):增量倒序,后推的版本优先
+    for entry in list(reversed(delta_entries)) + list(payload.get("history") or []):
         key = str(entry.get("id") or "") if isinstance(entry, dict) else ""
         if key:
             if key in seen_ids:
@@ -596,15 +597,26 @@ def resolve_voice_audio(voice_dir: pathlib.Path, audio_root: str, rel: str) -> p
     return candidate if candidate.is_file() else None
 
 
+_voice_last_version = {"value": ""}
+_voice_version_lock = threading.Lock()
+
+
+def announce_voice_if_changed(voice_dir: pathlib.Path) -> bool:
+    current = voice_index_version(voice_dir)
+    with _voice_version_lock:
+        if not current or current == _voice_last_version["value"]:
+            return False
+        _voice_last_version["value"] = current
+    broadcast_event({"type": "voice-updated", "version": current, "at": iso_now()})
+    return True
+
+
 def watch_voice_index(voice_dir: pathlib.Path, interval: float = 1.0) -> None:
-    """索引一变就广播 voice-updated,客户端据此刷新语音条目。只 stat,不读文件。"""
-    last = voice_index_version(voice_dir)
+    """索引一变就广播 voice-updated(兜底轮询;采集程序也会主动 POST /api/voice/notify)。只 stat,不读文件。"""
+    _voice_last_version["value"] = voice_index_version(voice_dir)
     while True:
         time.sleep(interval)
-        current = voice_index_version(voice_dir)
-        if current and current != last:
-            last = current
-            broadcast_event({"type": "voice-updated", "version": current, "at": iso_now()})
+        announce_voice_if_changed(voice_dir)
 
 
 def clamp_limit(value: str, default: int, maximum: int) -> int:
@@ -958,12 +970,19 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                         raise ValueError("entries 必须是数组")
                     device_name = str(body.get("deviceName") or device_id)
                     appended = append_delta_entries(vault_root, device_id, device_name, entries)
+                    pushed = []
+                    for raw in entries[:50]:
+                        tagged = compact_history_entry(raw)
+                        tagged["sourceDeviceId"] = device_id
+                        tagged["sourceDeviceName"] = device_name
+                        pushed.append(tagged)
                     broadcast_event({
                         "type": "history-updated",
                         "deviceId": device_id,
                         "deviceName": device_name,
                         "historyCount": appended,
                         "mode": "append",
+                        "entries": pushed,  # 接收端直接并入,省掉一次整批拉取
                         "at": iso_now(),
                     })
                     self.send_json(200, {"ok": True, "appended": appended})
@@ -998,6 +1017,11 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                     self.send_json(200, {"ok": True, "names": doc})
                 except Exception as exc:
                     self.send_json(500, {"ok": False, "error": str(exc)})
+                return
+
+            if request_path == "/api/voice/notify":
+                changed = announce_voice_if_changed(voice_dir) if voice_dir is not None else False
+                self.send_json(200, {"ok": True, "changed": changed})
                 return
 
             if request_path == "/api/client-log":
