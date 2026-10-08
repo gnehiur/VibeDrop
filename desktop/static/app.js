@@ -13434,7 +13434,7 @@ function syncVoiceChips() {
     document.body.classList.toggle('voice-skip-on', prefs.skip);
     const rates = $('voice-rate-chips');
     if (rates) {
-        rates.innerHTML = VOICE_RATES.map((rate) => `<button type="button" class="voice-chip${rate === prefs.rate ? ' active' : ''}" data-rate="${rate}">${rate}×</button>`).join('');
+        rates.innerHTML = VOICE_RATES.map((rate) => `<button type="button" role="radio" aria-checked="${rate === prefs.rate}" class="voice-rate${rate === prefs.rate ? ' active' : ''}" data-rate="${rate}">${rate}×</button>`).join('');
     }
     const item = voiceCurItem();
     const meta = $('voice-player-meta');

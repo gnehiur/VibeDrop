@@ -480,7 +480,7 @@ function dvSyncChips() {
     $dv('dv-skip')?.classList.toggle('active', prefs.skip);
     document.body.classList.toggle('voice-skip-on', prefs.skip);
     const rates = $dv('dv-rates');
-    if (rates) rates.innerHTML = DV_RATES.map((rate) => `<button type="button" class="voice-chip${rate === prefs.rate ? ' active' : ''}" data-rate="${rate}">${rate}×</button>`).join('');
+    if (rates) rates.innerHTML = DV_RATES.map((rate) => `<button type="button" role="radio" aria-checked="${rate === prefs.rate}" class="voice-rate${rate === prefs.rate ? ' active' : ''}" data-rate="${rate}">${rate}×</button>`).join('');
     const item = dvCurItem();
     const meta = $dv('dv-meta');
     if (item && meta) {
