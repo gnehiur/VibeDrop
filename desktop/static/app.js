@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v32-queue-swipe-ios-fix-20261006';
+window.__vdBuild = 'ui-v33-voice-audio-version-20261008';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -12906,7 +12906,8 @@ function voiceDuration() {
 function voiceAudioUrl(item) {
     const endpoint = getHomeVaultSettings().url || '';
     const path = String(item.f).split('/').map(encodeURIComponent).join('/');
-    return endpoint ? `${endpoint}/api/voice/audio/${path}` : '';
+    // ?v= 音频文件版本:文件换过(如补寻址表)时绕开 WebView 里一天的旧缓存
+    return endpoint ? `${endpoint}/api/voice/audio/${path}${item.fv ? `?v=${item.fv}` : ''}` : '';
 }
 
 // reveal:列表怎么跟过去。nearest=最少移动(点列表里那行时用,它就在手指底下);

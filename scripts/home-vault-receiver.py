@@ -540,7 +540,7 @@ VOICE_AUDIO_MIME = {
     ".ogg": "audio/ogg",
     ".opus": "audio/ogg",
 }
-VOICE_ITEM_FIELDS = ("id", "t", "dur", "f", "wv", "sk", "tx", "app", "wt")
+VOICE_ITEM_FIELDS = ("id", "t", "dur", "f", "fv", "wv", "sk", "tx", "app", "wt")  # fv=音频文件版本,客户端拼进 URL 防旧缓存
 VOICE_FINE_FIELDS = ("wf",)  # 细波形只给要的客户端(桌面端 ?fine=1),手机不背这份流量
 VOICE_ID = re.compile(r"^[0-9A-Za-z_-]{1,80}$")
 _voice_cache_lock = threading.Lock()
