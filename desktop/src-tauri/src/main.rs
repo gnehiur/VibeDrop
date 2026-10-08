@@ -2022,7 +2022,11 @@ fn main() {
                     window_config.center = false;
                 }
 
-                let window = WebviewWindowBuilder::from_config(app, &window_config)?.build()?;
+                // 部署脚本以 `open -g ... --args --background` 启动:窗口不抢焦点,不打乱台前调度(2026-10-08)
+                let launched_in_background = std::env::args().any(|arg| arg == "--background");
+                let window = WebviewWindowBuilder::from_config(app, &window_config)?
+                    .focused(!launched_in_background)
+                    .build()?;
                 #[cfg(target_os = "macos")]
                 if let Err(error) = configure_macos_native_drag_support(&window) {
                     warn!("配置 macOS 原生拖拽支持失败: {}", error);

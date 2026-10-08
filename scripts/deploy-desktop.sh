@@ -291,8 +291,9 @@ cleanup_legacy_launch_agent() {
 }
 
 open_app() {
-  log "Launching $DEST_APP_PATH"
-  open -n "$DEST_APP_PATH"
+  # -g:后台启动、不激活;--background 让 App 建窗口时也不抢焦点(台前调度下不打乱用户当前舞台,2026-10-08)
+  log "Launching $DEST_APP_PATH (background)"
+  open -g -n "$DEST_APP_PATH" --args --background
 }
 
 strip_extended_attributes() {
@@ -381,7 +382,10 @@ sign_share_extension "$DEST_APP_PATH/$SHARE_EXTENSION_INSTALL_PATH_SUFFIX" "$SIG
 sign_app "$DEST_APP_PATH" "$SIGNING_IDENTITY"
 verify_app "$DEST_APP_PATH"
 refresh_launch_services "$DEST_APP_PATH"
-refresh_macos_icon_cache "$DEST_APP_PATH"
+# 刷图标缓存会重启程序坞和访达(台前调度的舞台会被打乱):只在这次重新生成了图标时才做
+if [[ $SKIP_ICONS -eq 0 ]]; then
+  refresh_macos_icon_cache "$DEST_APP_PATH"
+fi
 register_share_extension "$DEST_APP_PATH/$SHARE_EXTENSION_INSTALL_PATH_SUFFIX"
 install_finder_workflow
 
