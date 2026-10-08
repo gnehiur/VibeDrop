@@ -2072,7 +2072,10 @@ function createLogElement(entryOrText, timestamp) {
                     : t('文字');
 
     const item = document.createElement('div');
-    item.className = entry._isNew ? 'log-item is-new' : 'log-item';
+    // 入场动画只在窗口处于前台时做:后台(台前调度挤到一边)时 WebKit 会暂停动画,
+    // 卡片停在透明的第一帧,列表里留下一块白,点一下窗口才出现(2026-10-08 用户截图)
+    const animateIn = entry._isNew && document.hasFocus() && document.visibilityState === 'visible';
+    item.className = animateIn ? 'log-item is-new' : 'log-item';
     entry._isNew = false; // 入场动画只演一次
     item.title = getLogEntryTitle(entry);
     item.style.cursor = isMedia && mediaItems.length > 1 ? 'default' : 'pointer';
