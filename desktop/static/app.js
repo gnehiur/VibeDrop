@@ -12895,6 +12895,7 @@ function voicePlay(item, frac = 0, { reveal = 'nearest' } = {}) {
         const wasWatching = reveal === 'follow' && isVoiceClipVisible(voicePlayer.cur);
         restoreVoiceKaraokeCard();
         voicePlayer.cur = item.id;
+        ensureVoiceWords(item);
         audio.src = voiceAudioUrl(item);
         audio.playbackRate = voicePlayer.prefs.rate;
         $('voice-player-wave').innerHTML = voiceWaveHTML(item);
@@ -13069,10 +13070,108 @@ function voiceVoicedChunks(item, duration) {
     return chunks;
 }
 
+// ---- 逐字时间(2026-10-08):Mac mini 存档时用 macOS 自带的离线识别算好(words/<id>.json),有它就逐字精确,
+// 没有再用上面的停顿+字数估算。苹果识别的字和输入法的字可能有出入:最长公共子序列逐字对齐,
+// 对上的字用苹果的时间,没对上的在前后两个已知时间之间线性插值 ----
+const voiceWordsCache = new Map();      // 录音 id → {text, w} | null(加载中) | false(没有)
+const voiceCharTimesCache = new Map();  // `${id}|${文字}` → Float64Array(每个字的开口时刻,秒) | null
+
+function ensureVoiceWords(item) {
+    if (!item?.wt || voiceWordsCache.has(item.id)) return;
+    const endpoint = getHomeVaultSettings().url;
+    if (!endpoint) return;
+    voiceWordsCache.set(item.id, null);
+    fetch(`${endpoint}/api/voice/words/${encodeURIComponent(item.id)}`)
+        .then((response) => response.json())
+        .then((data) => voiceWordsCache.set(item.id, data?.ok ? data : false))
+        .catch(() => voiceWordsCache.delete(item.id))
+        .finally(() => {
+            voiceKaraoke.playerSig = '';
+            voiceKaraoke.cardSig = '';
+            if (voicePlayer.cur === item.id) paintVoiceKaraoke();
+        });
+}
+
+function voiceCharTimes(item, text) {
+    const words = voiceWordsCache.get(item?.id);
+    if (!words || !Array.isArray(words.w) || !words.w.length || !text) return null;
+    const key = `${item.id}|${text}`;
+    if (voiceCharTimesCache.has(key)) return voiceCharTimesCache.get(key);
+    const ref = [];
+    const refTimes = [];
+    words.w.forEach(([piece, start, end]) => {
+        const chars = String(piece).toLowerCase().split('');
+        chars.forEach((ch, k) => {
+            ref.push(ch);
+            refTimes.push((start + ((end - start) * k) / chars.length) / 1000);
+        });
+    });
+    const shown = text.toLowerCase();
+    const n = shown.length;
+    const m = ref.length;
+    if (!m || n * m > 4e6) { // 太长就不算了(几千字的消息),退回估算
+        voiceCharTimesCache.set(key, null);
+        return null;
+    }
+    const width = m + 1;
+    const dp = new Uint16Array((n + 1) * width);
+    for (let i = 1; i <= n; i += 1) {
+        const ch = shown[i - 1];
+        for (let j = 1; j <= m; j += 1) {
+            dp[i * width + j] = ch === ref[j - 1]
+                ? dp[(i - 1) * width + j - 1] + 1
+                : Math.max(dp[(i - 1) * width + j], dp[i * width + j - 1]);
+        }
+    }
+    const times = new Float64Array(n).fill(NaN);
+    let matched = 0;
+    for (let i = n, j = m; i > 0 && j > 0;) {
+        if (shown[i - 1] === ref[j - 1]) {
+            times[i - 1] = refTimes[j - 1];
+            matched += 1;
+            i -= 1;
+            j -= 1;
+        } else if (dp[(i - 1) * width + j] >= dp[i * width + j - 1]) {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+    let content = 0;
+    for (const ch of text) if (!VOICE_KARAOKE_PUNCT.test(ch) && !/\s/.test(ch)) content += 1;
+    if (!content || matched < content * 0.4) {
+        voiceCharTimesCache.set(key, null);
+        return null;
+    }
+    const known = [];
+    for (let k = 0; k < n; k += 1) if (!Number.isNaN(times[k])) known.push(k);
+    for (let q = 0; q < known.length - 1; q += 1) {
+        const a = known[q];
+        const b = known[q + 1];
+        for (let k = a + 1; k < b; k += 1) times[k] = times[a] + ((times[b] - times[a]) * (k - a)) / (b - a);
+    }
+    for (let k = 0; k < known[0]; k += 1) times[k] = times[known[0]];
+    for (let k = known[known.length - 1] + 1; k < n; k += 1) times[k] = times[known[known.length - 1]];
+    for (let k = 1; k < n; k += 1) if (times[k] < times[k - 1]) times[k] = times[k - 1];
+    voiceCharTimesCache.set(key, times);
+    return times;
+}
+
 // 播到 time 秒时,text 读到第几个字(done)、正在读哪一句(clause)
 function voiceReadingPosition(text, item, time, duration) {
     const weights = voiceCharWeights(text);
     const clauses = voiceClauses(text, weights);
+    const charTimes = voiceCharTimes(item, text);
+    if (charTimes) {
+        let lo = 0;
+        let hi = charTimes.length;
+        while (lo < hi) { // 第一个还没开口的字
+            const mid = (lo + hi) >> 1;
+            if (charTimes[mid] <= time + 0.05) lo = mid + 1; else hi = mid;
+        }
+        const done = time >= duration - 0.05 ? text.length : lo;
+        return { done, clause: done < text.length ? (clauses.find(([, b]) => done < b) || null) : null };
+    }
     let total = 0;
     for (let i = 0; i < weights.length; i += 1) total += weights[i];
     if (!total || !duration) return { done: 0, clause: null };

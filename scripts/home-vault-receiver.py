@@ -539,7 +539,8 @@ VOICE_AUDIO_MIME = {
     ".ogg": "audio/ogg",
     ".opus": "audio/ogg",
 }
-VOICE_ITEM_FIELDS = ("id", "t", "dur", "f", "wv", "sk", "tx", "app")
+VOICE_ITEM_FIELDS = ("id", "t", "dur", "f", "wv", "sk", "tx", "app", "wt")
+VOICE_ID = re.compile(r"^[0-9A-Za-z_-]{1,80}$")
 _voice_cache_lock = threading.Lock()
 _voice_cache: dict[str, Any] = {"key": None, "doc": None}
 
@@ -901,6 +902,20 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                 try:
                     doc = load_voice_lexicon(voice_dir) if voice_dir is not None else {}
                     self.send_json(200, {"ok": True, "enabled": bool(doc), **doc, "count": len(doc.get("words") or [])})
+                except Exception as exc:
+                    self.send_json(500, {"ok": False, "error": str(exc)})
+                return
+
+            if path.startswith("/api/voice/words/"):
+                # 可选:逐字时间 words/<id>.json({text, w:[[字, 起毫秒, 止毫秒]]}),跟读高亮按它逐字推进
+                voice_id = path[len("/api/voice/words/"):]
+                words_file = (voice_dir / "words" / f"{voice_id}.json") if voice_dir is not None and VOICE_ID.match(voice_id) else None
+                if words_file is None or not words_file.is_file():
+                    self.send_json(404, {"ok": False, "error": "words not found"})
+                    return
+                try:
+                    doc = json.loads(words_file.read_text(encoding="utf-8"))
+                    self.send_json(200, {"ok": True, "text": doc.get("text", ""), "w": doc.get("w", [])})
                 except Exception as exc:
                     self.send_json(500, {"ok": False, "error": str(exc)})
                 return

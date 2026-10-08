@@ -51,6 +51,7 @@ voice-archive/
 | `sk` | | 停顿区间 `[[开始秒, 结束秒], …]`,播放器「跳过静音」用 |
 | `tx` | | 识别文字(可后补;采集程序更新索引即可) |
 | `app` | | 录音时所在 App 的包名 |
+| `wt` | | 有逐字时间(`words/<id>.json`)时为 1 |
 
 FLAC 请写成完整文件(不要从管道直接输出),否则缺总采样数和 seektable,浏览器里时长显示为无穷、进度条拖不动。
 
@@ -74,6 +75,16 @@ FLAC 请写成完整文件(不要从管道直接输出),否则缺总采样数和
 | `first` | 采集程序第一次见到这个词的日期;`baseline` 那天已存在的词不带此字段 |
 | `baseline` | 开始追踪「新增」的日期 |
 
+## words/<id>.json(可选:逐字时间)
+
+```json
+{"text": "我觉得…", "w": [["我", 240, 540], ["觉", 540, 660]]}
+```
+
+每段是 `[文字, 起毫秒, 止毫秒]`。有它时,跟读高亮按逐字时间推进(否则按停顿与字数估算);
+采集程序也应据它生成 `sk`:只跳字与字之间超过约 1 秒的空档、两侧留一点静音,保证不吃字。
+参考实现用 macOS 自带的离线语音识别(SpeechTranscriber),识别文字本身只取时间,显示仍用输入法的识别结果。
+
 ## 录音怎么挂到消息上
 
 手机端输入框会记下输入法每次把一段文字落进来的时刻(`dictation: [{t, text}]`,毫秒时间戳),随历史条目一起保存、推给 Vault。
@@ -91,6 +102,7 @@ FLAC 请写成完整文件(不要从管道直接输出),否则缺总采样数和
 |---|---|
 | `GET /api/voice/index[?v=<版本>][&limit=N]` | 返回 `{enabled, version, count, items}`,每条多一个 `ts`(毫秒时间戳);`v` 与当前版本相同时只回 `{unchanged:true}` |
 | `GET /api/voice/audio/<f>` | 音频流,支持 Range(iOS 播放必需) |
+| `GET /api/voice/words/<id>` | 逐字时间;没有时 404 |
 | `GET /api/voice/lexicon` | 返回 `{enabled, updated, baseline, count, words}`;没有 lexicon.json 时 `enabled:false` |
 | SSE `/api/events` | 索引变化时广播 `{"type":"voice-updated","version":…}` |
 
