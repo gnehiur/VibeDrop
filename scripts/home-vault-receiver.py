@@ -541,9 +541,10 @@ VOICE_AUDIO_MIME = {
     ".opus": "audio/ogg",
 }
 VOICE_ITEM_FIELDS = ("id", "t", "dur", "f", "wv", "sk", "tx", "app", "wt")
+VOICE_FINE_FIELDS = ("wf",)  # 细波形只给要的客户端(桌面端 ?fine=1),手机不背这份流量
 VOICE_ID = re.compile(r"^[0-9A-Za-z_-]{1,80}$")
 _voice_cache_lock = threading.Lock()
-_voice_cache: dict[str, Any] = {"key": None, "doc": None}
+_voice_cache: dict[str, Any] = {}
 
 
 def voice_index_version(voice_dir: pathlib.Path) -> str:
@@ -554,18 +555,20 @@ def voice_index_version(voice_dir: pathlib.Path) -> str:
     return f"{st.st_mtime_ns}-{st.st_size}"
 
 
-def load_voice_index(voice_dir: pathlib.Path) -> tuple[str, dict[str, Any]]:
-    """读索引并按 (mtime,size) 缓存;返回 (版本号, 精简后的文档)。"""
+def load_voice_index(voice_dir: pathlib.Path, fine: bool = False) -> tuple[str, dict[str, Any]]:
+    """读索引并按 (mtime,size) 缓存;返回 (版本号, 精简后的文档)。fine=True 时多带细波形 wf。"""
     version = voice_index_version(voice_dir)
+    fields = VOICE_ITEM_FIELDS + (VOICE_FINE_FIELDS if fine else ())
     with _voice_cache_lock:
-        if version and _voice_cache["key"] == version:
-            return version, _voice_cache["doc"]
+        cached = _voice_cache.get(fine)
+        if version and cached and cached[0] == version:
+            return version, cached[1]
     raw = json.loads((voice_dir / "index.json").read_text(encoding="utf-8")) if version else {}
     items = []
     for item in raw.get("items") or []:
         if not isinstance(item, dict) or not item.get("id") or not item.get("f"):
             continue
-        slim = {key: item[key] for key in VOICE_ITEM_FIELDS if item.get(key) not in (None, "")}
+        slim = {key: item[key] for key in fields if item.get(key) not in (None, "")}
         try:
             # t 是录音设备的本地钟点(无时区);按金库所在机器的时区换算成毫秒时间戳,方便和历史对齐
             slim["ts"] = int(dt.datetime.fromisoformat(str(item["t"])).timestamp() * 1000)
@@ -575,7 +578,7 @@ def load_voice_index(voice_dir: pathlib.Path) -> tuple[str, dict[str, Any]]:
     items.sort(key=lambda it: it["ts"], reverse=True)
     doc = {"audioRoot": str(raw.get("audioRoot") or "audio"), "items": items}
     with _voice_cache_lock:
-        _voice_cache["key"], _voice_cache["doc"] = version, doc
+        _voice_cache[fine] = (version, doc)
     return version, doc
 
 
@@ -896,7 +899,7 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                     return
                 try:
                     query = urllib.parse.parse_qs(parsed_path.query)
-                    version, doc = load_voice_index(voice_dir)
+                    version, doc = load_voice_index(voice_dir, fine=(query.get("fine") or [""])[0] == "1")
                     if version and (query.get("v") or [""])[0] == version:
                         self.send_json(200, {"ok": True, "enabled": True, "version": version, "unchanged": True})
                         return

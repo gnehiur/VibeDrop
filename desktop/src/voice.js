@@ -90,6 +90,7 @@ async function dvRefreshIndex() {
     try {
         const url = new URL(`${VAULT_ENDPOINT}/api/voice/index`);
         if (dv.version) url.searchParams.set('v', dv.version);
+        url.searchParams.set('fine', '1'); // 桌面端要细波形 wf(手机端不要,省流量)
         const response = await fetch(url.toString());
         if (!response.ok) return;
         const data = await response.json();
@@ -232,8 +233,77 @@ function dvAppLabel(pkg) {
     return known ? known() : pkg.split('.').pop();
 }
 
-function dvWaveHTML(item) {
-    const levels = item.wv ? [...item.wv].map((c) => parseInt(c, 36) || 0) : new Array(48).fill(3);
+// 波形条数跟着宽度走:桌面窗口宽,48 条太粗。数据优先用细波形 wf(按时长每秒 12 段),
+// 比可画条数多就分组取最大值缩下来,比可画条数少就按原样画(不凭空插值)。
+const DV_CLIP_PITCH = 3;    // 列表里每条占 3px(2px 条 + 1px 缝)
+const DV_PLAYER_PITCH = 4;  // 底部播放条每条占 4px(3px 条 + 1px 缝)
+let dvClipBars = 0;         // 列表波形条数,0 = 还没量过
+let dvFitQueued = false;
+
+function dvLevels(item) {
+    const src = item.wf || item.wv;
+    return src ? [...src].map((c) => parseInt(c, 36) || 0) : new Array(48).fill(3);
+}
+
+function dvResample(levels, bars) {
+    if (!bars || levels.length <= bars) return levels;
+    const out = [];
+    for (let i = 0; i < bars; i += 1) {
+        const start = Math.floor((i * levels.length) / bars);
+        const end = Math.max(start + 1, Math.floor(((i + 1) * levels.length) / bars));
+        let peak = 0;
+        for (let j = start; j < end; j += 1) if (levels[j] > peak) peak = levels[j];
+        out.push(peak);
+    }
+    return out;
+}
+
+function dvBarsFor(element, pitch) {
+    const width = element?.clientWidth || 0;
+    return width > 0 ? Math.max(24, Math.floor(width / pitch)) : 0;
+}
+
+// 量一次列表波形和播放条的实际宽度,条数变了才重画(新挂上的卡片、窗口改宽窄都走这里)
+function dvFitWaves() {
+    const clipBars = dvBarsFor(document.querySelector('#log-list .voice-clip .voice-wave'), DV_CLIP_PITCH);
+    if (clipBars) {
+        dvClipBars = clipBars;
+        document.querySelectorAll('#log-list .voice-clip').forEach((clip) => {
+            const wave = clip.querySelector('.voice-wave');
+            if (!wave || Number(wave.dataset.bars) === clipBars) return;
+            const item = dv.byId.get(clip.dataset.voiceId);
+            if (!item) return;
+            wave.innerHTML = dvWaveHTML(item, clipBars);
+            wave.dataset.bars = String(clipBars);
+        });
+    }
+    const playerWave = $dv('dv-wave');
+    const playerBars = dvBarsFor(playerWave, DV_PLAYER_PITCH);
+    const current = dv.byId.get(dvPlayer.cur);
+    if (playerWave && playerBars && current && Number(playerWave.dataset.bars) !== playerBars) {
+        playerWave.innerHTML = dvWaveHTML(current, playerBars);
+        playerWave.dataset.bars = String(playerBars);
+    }
+    dvPaintProgress();
+}
+
+function dvQueueFit() {
+    if (dvFitQueued) return;
+    dvFitQueued = true;
+    requestAnimationFrame(() => {
+        dvFitQueued = false;
+        dvFitWaves();
+    });
+}
+
+let dvResizeTimer = null;
+window.addEventListener('resize', () => {
+    clearTimeout(dvResizeTimer);
+    dvResizeTimer = setTimeout(dvFitWaves, 120);
+});
+
+function dvWaveHTML(item, bars) {
+    const levels = dvResample(dvLevels(item), bars || dvClipBars || 96);
     const duration = item.dur || 0;
     const silences = Array.isArray(item.sk) ? item.sk : [];
     return levels.map((level, i) => {
@@ -249,7 +319,7 @@ function dvClipHTML(item) {
     return `
         <div class="voice-clip${isCur ? ' cur' : ''}" data-voice-id="${escapeHtml(item.id)}">
             <span class="voice-clip-btn">${playing ? DV_ICONS.pause : DV_ICONS.play}</span>
-            <span class="voice-wave">${dvWaveHTML(item)}</span>
+            <span class="voice-wave" data-bars="${dvClipBars || ''}">${dvWaveHTML(item)}</span>
             <span class="voice-clip-dur">${dvClock(Math.round(item.dur || 0))}</span>
         </div>
     `;
@@ -262,6 +332,7 @@ function dvBindClips(container) {
             dvHandleClip(clip.dataset.voiceId);
         });
     });
+    dvQueueFit(); // 这时卡片多半还没插进页面,下一帧再量宽度
 }
 
 // main.js 的 createLogElement 对文字条目调它:有挂着的录音就加在文字下面
@@ -397,7 +468,10 @@ function dvPlay(item, { reveal = 'nearest' } = {}) {
         const path = String(item.f).split('/').map(encodeURIComponent).join('/');
         audio.src = `${VAULT_ENDPOINT}/api/voice/audio/${path}`;
         audio.playbackRate = dvPlayer.prefs.rate;
-        $dv('dv-wave').innerHTML = dvWaveHTML(item);
+        const playerWave = $dv('dv-wave');
+        const playerBars = dvBarsFor(playerWave, DV_PLAYER_PITCH);
+        playerWave.innerHTML = dvWaveHTML(item, playerBars || 160);
+        playerWave.dataset.bars = playerBars ? String(playerBars) : '';
         $dv('dv-time').textContent = formatLogTime(new Date(item.ts).toISOString());
         $dv('dv-total').textContent = dvClock(Math.round(item.dur || 0));
         $dv('dv-text').textContent = dvText(item);
@@ -408,6 +482,7 @@ function dvPlay(item, { reveal = 'nearest' } = {}) {
         dvPlayer.pendingFrac = 0;
         dvSyncChips();
         dvSyncVisibility();
+        dvQueueFit(); // 播放条刚显示出来时宽度才量得准
         if (reveal === 'center' || (reveal === 'follow' && wasWatching)) dvCenter(item.id);
         else if (reveal === 'nearest') dvClipEl(item.id)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }

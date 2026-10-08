@@ -2228,7 +2228,7 @@ body.voice-skip-on .voice-wave i.s { opacity: 0.45; }
 .voice-player-bar .voice-wave {
     width: 100%;
     height: 36px;
-    gap: 2px;
+    gap: 1px;
 }
 .voice-player-bar .voice-wave i { border-radius: 2px; }
 .voice-player-head {
