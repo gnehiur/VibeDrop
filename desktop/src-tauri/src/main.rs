@@ -1688,18 +1688,22 @@ fn log_input_injection(action: &'static str, chars: usize, result: Result<(), St
         let front = if asn.is_empty() {
             String::new()
         } else {
+            // 输出首行形如 `"Claude" ASN:0x0-0x61f61f: (in front)`,取第一对引号里的名字
             run("/usr/bin/lsappinfo", &["info", "-only", "name", &asn])
-                .rsplit('=')
+                .lines()
                 .next()
+                .and_then(|line| line.split('"').nth(1))
                 .unwrap_or("")
-                .trim()
-                .trim_matches('"')
                 .to_string()
         };
         let sources = run("/usr/bin/defaults", &["read", "com.apple.HIToolbox", "AppleSelectedInputSources"]);
         let input_source = sources
             .lines()
-            .filter(|l| l.contains("\"Input Mode\"") || l.contains("\"KeyboardLayout Name\""))
+            // 只认键名在行首的那两行;`InputSourceKind = "Input Mode";` 这行值里也带 "Input Mode",别误取
+            .filter(|l| {
+                let l = l.trim_start();
+                l.starts_with("\"Input Mode\" =") || l.starts_with("\"KeyboardLayout Name\" =")
+            })
             .filter_map(|l| l.split('=').nth(1))
             .map(|v| v.trim().trim_end_matches(';').trim().trim_matches('"').to_string())
             .last()
