@@ -1585,27 +1585,15 @@ fn build_discover_response(state: &ServerState, advertised_ip: String) -> Discov
 
 const MIN_WINDOW_WIDTH: f64 = 320.0;
 const MIN_WINDOW_HEIGHT: f64 = 420.0;
-// 超过该长度的文字改用「剪贴板 + Cmd+V」注入：
-// 逐字模拟打字时，高速事件流会被目标 App（网页/终端输入框）的输入法或
-// 事件队列乱序消费，导致个别字符跳到整段开头/结尾；粘贴是原子操作，不会乱序。
-const TYPE_TEXT_PASTE_THRESHOLD_CHARS: usize = 30;
-const TYPE_TEXT_CHUNK_CHARS: usize = 8;
-const TYPE_TEXT_CHUNK_DELAY_MS: u64 = 12;
+// 文字一律用「剪贴板 + Cmd+V」注入(2026-10-09 起,不再分长短)。
+// 逐字模拟打字有两个毛病:高速事件流会被目标 App 乱序消费(个别字跳到开头/结尾);
+// 更要命的是 Mac 处在中文输入法时,模拟敲出的字会被输入法吞掉,而打字接口照样报成功,
+// 手机显示「已发送」、输入框却是空的(短句 ≤30 字原先走打字,用户反复遇到)。粘贴原子、不经输入法。
 const PASTE_SETTLE_BEFORE_MS: u64 = 150;
 const PASTE_SETTLE_AFTER_MS: u64 = 400;
 const CLIPBOARD_SUPPRESS_WINDOW_SECS: u64 = 10;
 
 type ClipboardSuppressList = Arc<Mutex<Vec<(String, std::time::Instant)>>>;
-
-fn type_text_chunked(enigo: &mut Enigo, text: &str) -> Result<(), String> {
-    let chars: Vec<char> = text.chars().collect();
-    for chunk in chars.chunks(TYPE_TEXT_CHUNK_CHARS) {
-        let piece: String = chunk.iter().collect();
-        enigo.text(&piece).map_err(|e| format!("{:?}", e))?;
-        std::thread::sleep(std::time::Duration::from_millis(TYPE_TEXT_CHUNK_DELAY_MS));
-    }
-    Ok(())
-}
 
 fn suppress_clipboard_broadcast(suppress: &ClipboardSuppressList, text: &str) {
     let mut guard = suppress.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1656,6 +1644,7 @@ fn paste_inject_text(text: &str, suppress: &ClipboardSuppressList) -> Result<(),
     let mut clipboard =
         arboard::Clipboard::new().map_err(|e| format!("无法访问剪贴板: {}", e))?;
     let previous = clipboard.get_text().ok().filter(|t| !t.is_empty());
+    let previous_image = if previous.is_none() { clipboard.get_image().ok() } else { None };
 
     suppress_clipboard_broadcast(suppress, text);
     if let Some(prev) = &previous {
@@ -1672,20 +1661,64 @@ fn paste_inject_text(text: &str, suppress: &ClipboardSuppressList) -> Result<(),
     std::thread::sleep(std::time::Duration::from_millis(PASTE_SETTLE_AFTER_MS));
     if let Some(prev) = previous {
         let _ = clipboard.set_text(prev);
+    } else if let Some(image) = previous_image {
+        let _ = clipboard.set_image(image);
     }
     Ok(())
 }
 
-fn inject_text(
-    enigo: &mut Enigo,
-    text: &str,
-    suppress: &ClipboardSuppressList,
-) -> Result<(), String> {
-    if text.chars().count() <= TYPE_TEXT_PASTE_THRESHOLD_CHARS {
-        type_text_chunked(enigo, text)
-    } else {
-        paste_inject_text(text, suppress)
-    }
+fn inject_text(text: &str, suppress: &ClipboardSuppressList) -> Result<(), String> {
+    paste_inject_text(text, suppress)
+}
+
+// 每次往前台 App 注入文字后记一行到 ~/.vibedrop/debug.log(scope=input):当时最前面是哪个 App、
+// 什么输入法、多少字、结果、耗时。放到后台线程查,不拖慢注入本身。
+// 用 lsappinfo / defaults 子进程而不是 TIS 接口:TIS 在非主线程调用有崩溃风险。
+fn log_input_injection(action: &'static str, chars: usize, result: Result<(), String>, elapsed_ms: u128) {
+    std::thread::spawn(move || {
+        let run = |cmd: &str, args: &[&str]| -> String {
+            std::process::Command::new(cmd)
+                .args(args)
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default()
+        };
+        let asn = run("/usr/bin/lsappinfo", &["front"]);
+        let front = if asn.is_empty() {
+            String::new()
+        } else {
+            run("/usr/bin/lsappinfo", &["info", "-only", "name", &asn])
+                .rsplit('=')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_matches('"')
+                .to_string()
+        };
+        let sources = run("/usr/bin/defaults", &["read", "com.apple.HIToolbox", "AppleSelectedInputSources"]);
+        let input_source = sources
+            .lines()
+            .filter(|l| l.contains("\"Input Mode\"") || l.contains("\"KeyboardLayout Name\""))
+            .filter_map(|l| l.split('=').nth(1))
+            .map(|v| v.trim().trim_end_matches(';').trim().trim_matches('"').to_string())
+            .last()
+            .unwrap_or_default();
+        append_debug_log(
+            "input",
+            "inject",
+            serde_json::json!({
+                "action": action,
+                "method": "paste",
+                "chars": chars,
+                "ok": result.is_ok(),
+                "error": result.err(),
+                "ms": elapsed_ms,
+                "front_app": front,
+                "input_source": input_source,
+            }),
+        );
+    });
 }
 const DESKTOP_TO_MOBILE_CHUNK_BYTES: usize = 192 * 1024;
 const DESKTOP_INBOX_DIR_NAME: &str = "VibeDrop 收件箱";
@@ -1790,9 +1823,9 @@ fn main() {
         rt.block_on(async {
             while let Some(req) = input_rx.recv().await {
                 let reply = match req.action {
-                    InputAction::TypeText(text) => inject_text(&mut enigo, &text, &suppress),
+                    InputAction::TypeText(text) => inject_text(&text, &suppress),
                     InputAction::TypeTextAndEnter(text) => {
-                        match inject_text(&mut enigo, &text, &suppress) {
+                        match inject_text(&text, &suppress) {
                             Ok(()) => enigo
                                 .key(Key::Return, Direction::Click)
                                 .map_err(|e| format!("文字已发送，但回车失败: {:?}", e)),
@@ -1800,7 +1833,7 @@ fn main() {
                         }
                     }
                     InputAction::TypeTextAndCmdEnter(text) => {
-                        match inject_text(&mut enigo, &text, &suppress) {
+                        match inject_text(&text, &suppress) {
                             Ok(()) => send_cmd_return_event()
                                 .map_err(|e| format!("文字已发送，但 ⌘回车失败: {}", e)),
                             Err(e) => Err(e),
@@ -2628,8 +2661,28 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                         reply: reply_tx,
                                     };
 
+                                    let inject_action: &'static str = if send_with_cmd_enter {
+                                        "text+cmd_enter"
+                                    } else if send_with_enter {
+                                        "text+enter"
+                                    } else {
+                                        "text"
+                                    };
+                                    let inject_chars = text_content.chars().count();
+                                    let inject_started = std::time::Instant::now();
                                     if state.input_tx.send(req).await.is_ok() {
-                                        match reply_rx.await {
+                                        let reply_result = reply_rx.await;
+                                        log_input_injection(
+                                            inject_action,
+                                            inject_chars,
+                                            match &reply_result {
+                                                Ok(Ok(())) => Ok(()),
+                                                Ok(Err(e)) => Err(e.clone()),
+                                                Err(_) => Err("键盘输入线程无响应".to_string()),
+                                            },
+                                            inject_started.elapsed().as_millis(),
+                                        );
+                                        match reply_result {
                                             Ok(Ok(())) => {
                                                 info!("文字已输入");
                                                 tray_notify_received(&state, Some(text_content.as_str()), TrayFx::Ripple);
