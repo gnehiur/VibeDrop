@@ -5,8 +5,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.database.Cursor
@@ -17,6 +19,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -26,6 +29,7 @@ import android.util.Base64
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import kotlin.math.roundToInt
@@ -498,6 +502,40 @@ class MainActivity : TauriActivity() {
 
     // 延迟检查权限（只在启动时检查一次）
     window.decorView.postDelayed({ checkPermissionsOnce() }, 2000)
+  }
+
+  // 插电常亮(2026-10-16):常插 Mac mini 当备用机时,系统"充电时保持唤醒"只拦息屏不拦变暗,
+  // 半小时后屏幕会一直暗着。这里在 VibeDrop 前台且插着电时挂 FLAG_KEEP_SCREEN_ON(变暗、息屏都停),
+  // 拔电立即撤掉,不影响平时用电池的手机;电源键 / adb KEYCODE_SLEEP 仍能照常关屏。
+  private val powerStateReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+      applyKeepScreenOn(intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0)
+    }
+  }
+
+  private fun applyKeepScreenOn(plugged: Boolean) {
+    if (plugged) {
+      window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    } else {
+      window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    // ACTION_BATTERY_CHANGED 是粘性广播,注册时立刻回放一次当前电源状态
+    ContextCompat.registerReceiver(
+      this,
+      powerStateReceiver,
+      IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+      ContextCompat.RECEIVER_NOT_EXPORTED
+    )
+  }
+
+  override fun onPause() {
+    runCatching { unregisterReceiver(powerStateReceiver) }
+    applyKeepScreenOn(false)
+    super.onPause()
   }
 
   override fun onNewIntent(intent: Intent) {
