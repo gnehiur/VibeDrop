@@ -190,12 +190,13 @@
                 <summary class="advanced-connect-summary">
                     <div class="advanced-connect-copy">
                         <h3>Home Vault</h3>
-                        <p class="hint" data-i18n>历史与原件已全自动同步。只有出门在外要改 vault 地址（tailnet 域名）、或新设备要恢复历史时，才需要展开。</p>
+                        <p class="hint" data-i18n>历史与原件自动同步到你自己电脑上的金库。金库地址自动发现：在家连上一次，出门也会自动改走金库报出的远程地址。发现不到，或新设备要恢复历史时，才需要展开。</p>
                     </div>
-                    <span class="advanced-connect-toggle" data-i18n>自动同步中</span>
+                    <span id="home-vault-toggle" class="advanced-connect-toggle" data-i18n>自动同步中</span>
                 </summary>
                 <div class="advanced-connect-body home-vault-sync">
-                    <input id="home-vault-url-input" class="home-vault-url-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://minideMac-mini.local:8788">
+                    <input id="home-vault-url-input" class="home-vault-url-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="留空 = 自动发现" data-i18n-placeholder>
+                    <div id="home-vault-route-info" class="home-vault-sync-status"></div>
                     <div class="home-vault-sync-actions">
                         <button id="sync-home-vault-btn" class="primary-btn" type="button" data-i18n>同步到 Mac mini</button>
                         <button id="restore-home-vault-btn" class="secondary-btn" type="button" data-i18n>从 Mac mini 恢复</button>

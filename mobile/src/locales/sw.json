@@ -123,7 +123,6 @@
   "单个图片/视频直接进手机相册；其它单文件进下载，多文件和文件夹会按规则自动发送或打包。": "Picha au video moja huenda moja kwa moja kwenye albamu; faili nyingine moja huenda Vipakuliwa, na faili nyingi au folda hutumwa au kufungwa kiotomatiki.",
   "历史": "Historia",
   "历史 {processed}/{total}": "Historia {processed}/{total}",
-  "历史与原件已全自动同步。只有出门在外要改 vault 地址（tailnet 域名）、或新设备要恢复历史时，才需要展开。": "Historia na asili husawazishwa kiotomatiki. Panua hapa tu kubadili anwani ya Vault ukiwa nje (kikoa cha tailnet), au kurejesha historia kwenye kifaa kipya.",
   "原件": "Asili",
   "原件已丢失，无法查看": "Asili imepotea na haiwezi kuonekana",
   "原因：{value}": "Sababu: {value}",
@@ -670,5 +669,15 @@
   "抖音": "Douyin",
   "读取所选图片失败": "Imeshindwa kusoma picha uliyochagua",
   "定位到这条": "Nenda kwenye rekodi hii",
-  "当前筛选条件下看不到这条录音": "Rekodi hii imefichwa na vichujio vya sasa"
+  "当前筛选条件下看不到这条录音": "Rekodi hii imefichwa na vichujio vya sasa",
+  "历史与原件自动同步到你自己电脑上的金库。金库地址自动发现：在家连上一次，出门也会自动改走金库报出的远程地址。发现不到，或新设备要恢复历史时，才需要展开。": "Historia na faili asili husawazishwa kiotomatiki kwenye Vault iliyo kwenye kompyuta yako mwenyewe. Anwani yake hupatikana kiotomatiki: unganisha mara moja ukiwa nyumbani, na ukiwa nje programu itatumia anwani ya mbali ambayo Vault imetangaza. Fungua tu ikiwa haipatikani, au kurejesha historia kwenye kifaa kipya.",
+  "留空 = 自动发现": "Acha wazi = tafuta kiotomatiki",
+  "当前：{host} · 已知地址 {count} 个": "Sasa: {host} · anwani {count} zinazojulikana",
+  "还没连上过金库": "Bado hujaunganishwa na Vault",
+  "未发现金库": "Vault haikupatikana",
+  "还没找到金库，请先在上面填金库地址": "Vault bado haijapatikana. Kwanza weka anwani ya Vault hapo juu",
+  "已改为自动发现": "Imebadilishwa kuwa utafutaji wa kiotomatiki",
+  "金库": "Vault",
+  "跨设备历史和语音存在你自己电脑上的金库里。地址自动发现：金库在本机，或手机连上本机时转告；发现不到才需要手填。": "Historia ya vifaa vyote na sauti huhifadhiwa kwenye Vault iliyo kwenye kompyuta yako mwenyewe. Anwani hupatikana kiotomatiki: Vault iko kwenye Mac hii, au simu huileta inapounganishwa. Iandike tu ikiwa haipatikani.",
+  "还没连上金库": "Haijaunganishwa na Vault"
 }

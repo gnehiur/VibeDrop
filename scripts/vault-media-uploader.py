@@ -7,7 +7,7 @@
 
 用法:
   python3 vault-media-uploader.py                       # 默认端点 http://127.0.0.1:8788
-  python3 vault-media-uploader.py --endpoint http://192.168.3.2:8788
+  python3 vault-media-uploader.py --endpoint http://<金库电脑的局域网IP>:8788
   python3 vault-media-uploader.py --dry-run             # 只统计不上传
 """
 from __future__ import annotations

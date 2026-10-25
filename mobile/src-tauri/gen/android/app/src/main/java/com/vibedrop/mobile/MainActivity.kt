@@ -1846,7 +1846,7 @@ class MainActivity : TauriActivity() {
       return when {
         trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
         trimmed.isNotBlank() -> "http://$trimmed"
-        else -> "http://minideMac-mini.local:8788"
+        else -> ""
       }.trimEnd('/')
     }
 

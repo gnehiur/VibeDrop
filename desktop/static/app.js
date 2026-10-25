@@ -35,7 +35,7 @@ function scheduleProbeUpload(delay) {
         try {
             // 当前地址优先,不通再挨个试家里地址和备用地址:选路出错时诊断也能回来(2026-10-25)
             const current = getHomeVaultSettings().url || '';
-            const tried = [current, getHomeVaultPrimaryUrl(), ...HOME_VAULT_FALLBACK_URLS].filter((url, i, all) => url && all.indexOf(url) === i);
+            const tried = [current, ...getHomeVaultCandidates()].filter((url, i, all) => url && all.indexOf(url) === i);
             for (const endpoint of tried) {
                 try {
                     const response = await fetch(`${endpoint}/api/client-log`, {
@@ -60,7 +60,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v38-vault-route-sticky-20261025';
+window.__vdBuild = 'ui-v39-vault-autodiscover-20261025';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -340,12 +340,14 @@ const MEDIA_OPENER_KINDS = ['image', 'video'];
 const NEARBY_REORDER_LONG_PRESS_MS = 260;
 const NEARBY_REORDER_CANCEL_DISTANCE = 10;
 const NEARBY_REORDER_HINT_KEY = 'vibedrop_nearby_reorder_hint_seen';
-const HOME_VAULT_DEFAULT_URL = 'http://192.168.3.2:8788';
-// 金库备用地址(Tailscale HTTPS,只有自己 tailnet 里的设备够得着;必须是 HTTPS:苹果 ATS 只放行局域网地址的明文 HTTP,tailnet 的 100.x 明文会被拦):家里局域网地址连不上(出差异地)就自动改走它,
-// 回到家又自动切回局域网。每分钟、回前台、网络恢复、长连接断开时各探一次(2026-10-25)。
-const HOME_VAULT_FALLBACK_URLS = ['https://minimac-mini.tail966595.ts.net:8443'];
-const homeVaultRoute = { primary: '', active: '', probing: null, loaded: false };
+// 金库地址一律不写死(2026-10-25,1.6.0):谁的金库就用谁的地址。
+// 金库在 /health 里自报它的全部地址(局域网 + Tailscale HTTPS),手机在家连上一次就记住(HOME_VAULT_ENDPOINTS_KEY);
+// 出门连不上局域网就自动改走记住的远程地址,回家再切回。一个都没记住时,顺手试已配对电脑的 8788 端口(金库多半跑在其中一台上)。
+// 设置里手填的地址最优先。远程地址必须是 HTTPS:苹果 ATS 只放行局域网的明文 HTTP。每分钟、回前台、网络恢复、长连接断开时各选一次路。
+const HOME_VAULT_PORT = 8788;
+const homeVaultRoute = { active: '', probing: null, loaded: false };
 const HOME_VAULT_ROUTE_KEY = 'vibedrop-vault-route'; // 上次用通的金库地址,下次启动直接从它开始
+const HOME_VAULT_ENDPOINTS_KEY = 'vibedrop-vault-endpoints'; // 金库自报的地址表
 const SMART_DISCOVERY_REFRESH_COOLDOWN_MS = 15000;
 const DIAGNOSTICS_REFRESH_INTERVAL_MS = 1000;
 const CONNECTION_EVENT_LOG_KEY = 'vibedrop_connection_events';
@@ -3068,6 +3070,7 @@ async function pushDeviceNamesToVault() {
         });
         if (!Object.keys(names).length) return;
         const endpoint = getHomeVaultSettings().url;
+        if (!endpoint) return;
         await fetch(`${endpoint}/api/device-names`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3079,6 +3082,7 @@ async function pushDeviceNamesToVault() {
 async function fetchAndApplyVaultDeviceNames() {
     try {
         const endpoint = getHomeVaultSettings().url;
+        if (!endpoint) return;
         const response = await fetch(`${endpoint}/api/device-names`);
         const data = await response.json();
         if (!data?.ok || typeof data.names !== 'object') return;
@@ -6819,6 +6823,7 @@ function connectDevice(deviceId, ip, port, pin) {
                 reconcileAuthenticatedDesktopIdentity(deviceId, data);
                 updateDeviceUI(deviceId, 'connected', data.hostname);
                 startHeartbeat(deviceId, conn.ip, conn.port, conn.pin);
+                shareVaultEndpointsWithDesktops(deviceId); // 电脑端靠手机转告才知道金库在哪(1.6.0)
             } else {
                 debugLog('connect:auth_fail', { deviceId, error: data.error || 'PIN 错误' });
                 updateDeviceUI(deviceId, 'error', data.error || t('PIN 错误'));
@@ -9164,7 +9169,8 @@ function waitForNativeBridgeEvent(eventName, invokeNative, timeoutMs = 15000) {
 }
 
 function normalizeHomeVaultUrl(rawUrl = '') {
-    const trimmed = String(rawUrl || '').trim() || HOME_VAULT_DEFAULT_URL;
+    const trimmed = String(rawUrl || '').trim();
+    if (!trimmed) return '';
     const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
         ? trimmed
         : `http://${trimmed}`;
@@ -9181,6 +9187,7 @@ function normalizeHomeVaultHostToken(value = '') {
 
 function resolveHomeVaultUrlForNetwork(rawUrl = '') {
     const normalized = normalizeHomeVaultUrl(rawUrl);
+    if (!normalized) return '';
     let url;
     try {
         url = new URL(normalized);
@@ -9209,20 +9216,28 @@ function resolveHomeVaultUrlForNetwork(rawUrl = '') {
     });
 
     if (!matched?.ip) {
-        try {
-            const fallback = new URL(HOME_VAULT_DEFAULT_URL);
-            url.hostname = fallback.hostname;
-            if (!url.port && fallback.port) {
-                url.port = fallback.port;
-            }
-            return url.toString().replace(/\/+$/, '');
-        } catch (error) {
-            return normalized;
-        }
+        return normalized; // 认不出是哪台电脑就原样用,让系统自己解析 .local
     }
 
     url.hostname = matched.ip;
     return url.toString().replace(/\/+$/, '');
+}
+
+function getHomeVaultConfiguredUrl() {
+    const settings = getStoredSettingsObject();
+    const homeVault = settings.homeVault && typeof settings.homeVault === 'object' ? settings.homeVault : {};
+    return resolveHomeVaultUrlForNetwork(homeVault.url || '');
+}
+
+function loadHomeVaultRoute() {
+    if (homeVaultRoute.loaded) return;
+    homeVaultRoute.loaded = true;
+    try {
+        const saved = JSON.parse(localStorage.getItem(HOME_VAULT_ROUTE_KEY) || '{}');
+        // 1.5.x 存的是 { primary, active },active 为空表示当时在用家里地址
+        const active = String(saved.active || saved.primary || '');
+        if (/^https?:\/\//.test(active)) homeVaultRoute.active = active;
+    } catch (_) { /* 记忆坏了就重新选路 */ }
 }
 
 function getHomeVaultSettings() {
@@ -9230,19 +9245,9 @@ function getHomeVaultSettings() {
     const homeVault = settings.homeVault && typeof settings.homeVault === 'object'
         ? settings.homeVault
         : {};
-    const primary = resolveHomeVaultUrlForNetwork(homeVault.url || HOME_VAULT_DEFAULT_URL);
-    if (!homeVaultRoute.loaded) {
-        homeVaultRoute.loaded = true;
-        try {
-            const saved = JSON.parse(localStorage.getItem(HOME_VAULT_ROUTE_KEY) || '{}');
-            if (saved.primary === primary && typeof saved.active === 'string') {
-                homeVaultRoute.primary = primary;
-                homeVaultRoute.active = saved.active;
-            }
-        } catch (_) { /* 记忆坏了就从家里地址开始 */ }
-    }
+    loadHomeVaultRoute();
     return {
-        url: homeVaultRoute.active && homeVaultRoute.primary === primary ? homeVaultRoute.active : primary,
+        url: homeVaultRoute.active || getHomeVaultConfiguredUrl() || readLearnedVaultEndpoints()[0] || '',
         lastSyncedAt: homeVault.lastSyncedAt || '',
         lastEntryCount: Number(homeVault.lastEntryCount || 0),
         lastRestoredAt: homeVault.lastRestoredAt || '',
@@ -9254,71 +9259,153 @@ function getHomeVaultSettings() {
 function saveHomeVaultSettings(patch = {}) {
     const settings = getStoredSettingsObject();
     const current = getHomeVaultSettings();
+    // url 只存手填的地址(空 = 自动发现),别把选路选出来的地址写进去
+    const url = Object.prototype.hasOwnProperty.call(patch, 'url')
+        ? resolveHomeVaultUrlForNetwork(patch.url)
+        : getHomeVaultConfiguredUrl();
     saveStoredSettingsObject({
         ...settings,
         homeVault: {
             ...current,
             ...patch,
-            url: resolveHomeVaultUrlForNetwork(patch.url || getHomeVaultPrimaryUrl()), // 存配置的地址,别把临时备用地址写进去
+            url,
         },
     });
 }
 
-function getHomeVaultPrimaryUrl() {
-    const settings = getStoredSettingsObject();
-    const homeVault = settings.homeVault && typeof settings.homeVault === 'object' ? settings.homeVault : {};
-    return resolveHomeVaultUrlForNetwork(homeVault.url || HOME_VAULT_DEFAULT_URL);
+function readLearnedVaultEndpoints() {
+    try {
+        const list = JSON.parse(localStorage.getItem(HOME_VAULT_ENDPOINTS_KEY) || '[]');
+        return Array.isArray(list) ? list.filter((url) => typeof url === 'string' && /^https?:\/\//.test(url)) : [];
+    } catch (_) {
+        return [];
+    }
 }
 
-async function probeHomeVaultUrl(url, timeoutMs) {
+function vaultHostOf(url) {
+    return (String(url || '').match(/\/\/([^/]+)/) || [])[1] || String(url || '');
+}
+
+// 金库自报的地址表变了就记下,并转告已连上的电脑(电脑端自己发现不了别的机器上的金库)
+function learnVaultEndpoints(list) {
+    const clean = (Array.isArray(list) ? list : [])
+        .map((url) => String(url || '').trim().replace(/\/+$/, ''))
+        .filter((url, i, all) => /^https?:\/\//.test(url) && all.indexOf(url) === i)
+        .slice(0, 8);
+    if (!clean.length || JSON.stringify(clean) === JSON.stringify(readLearnedVaultEndpoints())) return;
     try {
-        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
-        return response.ok;
+        localStorage.setItem(HOME_VAULT_ENDPOINTS_KEY, JSON.stringify(clean));
+    } catch (_) { /* 存不了就下次再学 */ }
+    probe('vault-endpoints', clean.map(vaultHostOf).join(' '));
+    shareVaultEndpointsWithDesktops();
+    renderHomeVaultRouteInfo();
+}
+
+function shareVaultEndpointsWithDesktops(deviceId = '') {
+    const list = readLearnedVaultEndpoints();
+    if (!list.length) return;
+    const message = JSON.stringify({ action: 'vault_endpoints', text: JSON.stringify(list) });
+    Object.entries(connections).forEach(([id, conn]) => {
+        if (deviceId && id !== deviceId) return;
+        if (conn?.authenticated && conn.ws && conn.ws.readyState === WebSocket.OPEN) {
+            try { conn.ws.send(message); } catch (_) { /* 下次连上再转告 */ }
+        }
+    });
+}
+
+function isLocalVaultUrl(url) {
+    try {
+        const { protocol, hostname } = new URL(url);
+        if (protocol !== 'http:') return false;
+        return /\.local$/i.test(hostname) || hostname === 'localhost'
+            || /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname);
     } catch (_) {
         return false;
     }
 }
 
-function setHomeVaultRoute(primary, url, reason) {
-    const before = getHomeVaultSettings().url;
-    homeVaultRoute.primary = primary;
-    homeVaultRoute.active = url === primary ? '' : url;
+function getHomeVaultCandidates() {
+    const configured = getHomeVaultConfiguredUrl();
+    const learned = readLearnedVaultEndpoints();
+    loadHomeVaultRoute();
+    // 一个地址都不知道时(新装、别人的手机):试已配对电脑的金库端口
+    const paired = configured || learned.length
+        ? []
+        : getDevices().filter((device) => device?.ip).map((device) => `http://${device.ip}:${HOME_VAULT_PORT}`);
+    return [configured, ...learned, ...paired, homeVaultRoute.active].filter((url, i, all) => url && all.indexOf(url) === i);
+}
+
+async function probeHomeVaultUrl(url, timeoutMs) {
     try {
-        localStorage.setItem(HOME_VAULT_ROUTE_KEY, JSON.stringify({ primary, active: homeVaultRoute.active, at: Date.now() }));
-    } catch (_) { /* 存不了就下次再探 */ }
-    if (url !== before) {
-        probe('vault-route', `${(url.match(/\/\/([^/:]+)/) || [])[1] || url} (${reason})`);
-        onHomeVaultRouteChanged(before, url);
+        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+        if (!response.ok) return false;
+        const data = await response.json().catch(() => ({}));
+        if (!String(data?.service || '').startsWith('vibedrop-home-vault')) return false; // 这个端口上跑的不是金库
+        learnVaultEndpoints(data.endpoints);
+        return true;
+    } catch (_) {
+        return false;
     }
 }
 
-// 选路(2026-10-25 第二版):家里地址 1.5 秒探一下,通就用;不通说明不在家,直接改走 Tailscale 备用地址——
-// 备用地址给 8 秒探,探不通也照样切过去(没有第三条路,留在家里地址只会每个请求都悄悄失败)。
-// 第一版要求备用地址 2.5 秒内探通才切:出差时 iPhone 第一次经中转建 HTTPS 常超过 2.5 秒,整轮会话卡在家里地址,推送全丢。
+function setHomeVaultRoute(url, reason) {
+    const before = getHomeVaultSettings().url;
+    homeVaultRoute.active = url;
+    try {
+        localStorage.setItem(HOME_VAULT_ROUTE_KEY, JSON.stringify({ active: url, at: Date.now() }));
+    } catch (_) { /* 存不了就下次再探 */ }
+    if (url !== before) {
+        probe('vault-route', `${vaultHostOf(url)} (${reason})`);
+        onHomeVaultRouteChanged(before, url);
+    }
+    renderHomeVaultRouteInfo();
+}
+
+// 选路(1.6.0):局域网地址一起探 1.5 秒,按顺序取第一个通的;都不通说明不在家,远程地址挨个给 8 秒探;
+// 远程也全不通就照样切到第一个远程地址(没有别的路,留在局域网地址只会每个请求都悄悄失败)。
+// 1.5.2 要求备用地址 2.5 秒内探通才切:出差时 iPhone 第一次经中转建 HTTPS 常超过 2.5 秒,整轮会话推送全丢。
 function pickHomeVaultRoute() {
     if (homeVaultRoute.probing) return homeVaultRoute.probing;
-    const primary = getHomeVaultPrimaryUrl();
-    const fallbacks = HOME_VAULT_FALLBACK_URLS.filter((url) => url && url !== primary);
+    const candidates = getHomeVaultCandidates();
+    const local = candidates.filter(isLocalVaultUrl);
     homeVaultRoute.probing = (async () => {
-        if (await probeHomeVaultUrl(primary, 1500)) {
-            setHomeVaultRoute(primary, primary, 'home');
-            return primary;
+        const localOk = await Promise.all(local.map((url) => probeHomeVaultUrl(url, 1500)));
+        const home = local.find((_, i) => localOk[i]);
+        if (home) {
+            setHomeVaultRoute(home, 'home');
+            return home;
         }
-        for (const url of fallbacks) {
+        const remote = getHomeVaultCandidates().filter((url) => !isLocalVaultUrl(url));
+        for (const url of remote) {
             if (await probeHomeVaultUrl(url, 8000)) {
-                setHomeVaultRoute(primary, url, 'away');
+                setHomeVaultRoute(url, 'away');
                 return url;
             }
         }
-        if (fallbacks.length) {
-            setHomeVaultRoute(primary, fallbacks[0], 'away-unverified');
-            return fallbacks[0];
+        if (remote.length) {
+            setHomeVaultRoute(remote[0], 'away-unverified');
+            return remote[0];
         }
-        return '';
+        renderHomeVaultRouteInfo();
+        return homeVaultRoute.active;
     })().finally(() => {
         homeVaultRoute.probing = null;
     });
     return homeVaultRoute.probing;
+}
+
+// 设置页显示当前在用的金库;一个金库都不知道时,藏掉只有金库才有的功能(消息自我研究)
+function renderHomeVaultRouteInfo() {
+    const known = Boolean(getHomeVaultSettings().url);
+    document.body?.classList.toggle('no-home-vault', !known);
+    const info = $('home-vault-route-info');
+    if (info) {
+        info.textContent = homeVaultRoute.active
+            ? t('当前：{host} · 已知地址 {count} 个', { host: vaultHostOf(homeVaultRoute.active), count: readLearnedVaultEndpoints().length })
+            : t('还没连上过金库');
+    }
+    const toggle = $('home-vault-toggle');
+    if (toggle) toggle.textContent = known ? t('自动同步中') : t('未发现金库');
 }
 
 function onHomeVaultRouteChanged(from, to) {
@@ -9636,6 +9723,7 @@ async function refreshVaultMergedHistory({ deep = false } = {}) {
     vaultMergedFetchInFlight = true;
     try {
         const endpoint = getHomeVaultSettings().url;
+        if (!endpoint) return;
         const url = new URL(`${endpoint}/api/history/merged`);
         url.searchParams.set('limit', deep ? '10000' : '2000');
         const response = await fetch(url.toString());
@@ -9766,6 +9854,7 @@ function scheduleHomeVaultAutoPush() {
             const history = getHistory();
             if (!history.length) return;
             const endpoint = getHomeVaultSettings().url;
+            if (!endpoint) return;
             host = (endpoint.match(/\/\/([^/:]+)/) || [])[1] || endpoint;
             const fresh = collectUnpushedEntries(history);
 
@@ -9911,12 +10000,11 @@ async function syncHomeVaultHistory() {
         return;
     }
 
-    const input = $('home-vault-url-input');
-    const endpoint = resolveHomeVaultUrlForNetwork(input?.value || HOME_VAULT_DEFAULT_URL);
-    if (input) {
-        input.value = endpoint;
+    const endpoint = getHomeVaultSettings().url;
+    if (!endpoint) {
+        setHomeVaultStatus(t('还没找到金库，请先在上面填金库地址'), 'error');
+        return;
     }
-    saveHomeVaultSettings({ url: endpoint });
 
     const button = $('sync-home-vault-btn');
     if (button) {
@@ -9958,7 +10046,6 @@ async function syncHomeVaultHistory() {
             || syncedCount;
         const syncedAt = new Date().toISOString();
         saveHomeVaultSettings({
-            url: endpoint,
             lastSyncedAt: syncedAt,
             lastEntryCount: syncedCount,
         });
@@ -9977,12 +10064,11 @@ async function syncHomeVaultHistory() {
 }
 
 async function restoreHomeVaultHistory() {
-    const input = $('home-vault-url-input');
-    const endpoint = resolveHomeVaultUrlForNetwork(input?.value || HOME_VAULT_DEFAULT_URL);
-    if (input) {
-        input.value = endpoint;
+    const endpoint = getHomeVaultSettings().url;
+    if (!endpoint) {
+        setHomeVaultStatus(t('还没找到金库，请先在上面填金库地址'), 'error');
+        return;
     }
-    saveHomeVaultSettings({ url: endpoint });
 
     const button = $('restore-home-vault-btn');
     const syncButton = $('sync-home-vault-btn');
@@ -10021,7 +10107,6 @@ async function restoreHomeVaultHistory() {
                 scheduleHistoryRender();
                 const restoredAt = new Date().toISOString();
                 saveHomeVaultSettings({
-                    url: endpoint,
                     lastRestoredAt: restoredAt,
                     lastRestoreCount: result.restoredCount || currentCount,
                 });
@@ -10070,7 +10155,6 @@ async function restoreHomeVaultHistory() {
         const mergeResult = mergeImportedHistoryEntries(result.history);
         const restoredAt = new Date().toISOString();
         saveHomeVaultSettings({
-            url: endpoint,
             lastRestoredAt: restoredAt,
             lastRestoreCount: mergeResult.added,
         });
@@ -10114,7 +10198,8 @@ function initHomeVaultSync() {
     }
 
     const settings = getHomeVaultSettings();
-    input.value = settings.url;
+    input.value = getHomeVaultConfiguredUrl();
+    renderHomeVaultRouteInfo();
     if (settings.lastSyncedAt) {
         const date = new Date(settings.lastSyncedAt);
         const label = Number.isNaN(date.getTime())
@@ -10133,7 +10218,9 @@ function initHomeVaultSync() {
         const url = resolveHomeVaultUrlForNetwork(input.value);
         input.value = url;
         saveHomeVaultSettings({ url });
-        setHomeVaultStatus(t('服务器地址已保存'));
+        setHomeVaultStatus(url ? t('服务器地址已保存') : t('已改为自动发现'));
+        homeVaultRoute.active = '';
+        void pickHomeVaultRoute();
     });
     button.addEventListener('click', () => syncHomeVaultHistory());
     if (restoreButton) {

@@ -3356,3 +3356,8 @@ body.voice-skip-on .voice-wave i.s { opacity: 0.45; }
 .history-text { position: relative; }
 .vk-done { color: var(--accent); }
 .vk-now { background: rgba(10, 132, 255, 0.14); border-radius: 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+
+/* 一个金库都不知道时,藏掉只有金库才有的功能(1.6.0) */
+.no-home-vault #history-selfstudy-card {
+    display: none;
+}

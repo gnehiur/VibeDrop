@@ -3042,6 +3042,20 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                 let _ = ws_sender.send(Message::Text(reply.to_string().into())).await;
                             }
 
+                            "vault_endpoints" => {
+                                // 手机转告金库自报的地址(text 是 JSON 数组字符串),前端记下来选路(1.6.0,金库地址不再写死)
+                                if !authenticated {
+                                    continue;
+                                }
+                                if let Some(list) = client_msg.text.clone() {
+                                    if let Ok(guard) = state.app_handle.lock() {
+                                        if let Some(handle) = guard.as_ref() {
+                                            let _ = handle.emit("vault-endpoints", list);
+                                        }
+                                    }
+                                }
+                            }
+
                             "list_peer_phones" => {
                                 if !authenticated {
                                     continue;

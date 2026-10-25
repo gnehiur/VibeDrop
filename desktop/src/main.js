@@ -336,6 +336,14 @@ async function initDesktopDropExperience() {
             upsertDesktopTransferItem(event.payload);
         });
 
+        // 手机连上时转告金库自报的地址:桌面端自己发现不了别的机器上的金库(1.6.0)
+        eventApi.listen('vault-endpoints', (event) => {
+            try {
+                learnVaultEndpoints(JSON.parse(String(event.payload || '[]')));
+            } catch (_) { /* 格式不对就忽略 */ }
+            if (!vaultLastOk) void pickVaultEndpoint();
+        });
+
         eventApi.listen('tauri://drag-enter', (event) => {
             const paths = event.payload?.paths || [];
             toggleWindowDropOverlay(true, paths.length || 1);
@@ -2174,44 +2182,133 @@ function getLogMediaOpenPath(item) {
 }
 
 // ---- Home Vault:跨设备合并时间线 + 原件下载打开 ----
-// 金库地址:先家里局域网,连不上(出差异地)自动改走 Tailscale HTTPS 备用地址,回家再切回(2026-10-25;明文 100.x 会被 ATS 拦,所以用 tailscale serve 的 https)
-const VAULT_ENDPOINTS = ['http://192.168.3.2:8788', 'https://minimac-mini.tail966595.ts.net:8443'];
-let VAULT_ENDPOINT = VAULT_ENDPOINTS[0];
+// 金库地址不写死(2026-10-25,1.6.0):本机 127.0.0.1 先试(金库常和桌面端跑在同一台);
+// 其余地址来自金库 /health 自报、手机连上时转告(vault-endpoints 事件)或设置页手填。
+// 局域网地址一起探 1.5 秒;都不通(出差)就挨个给远程地址 8 秒,远程全不通也切到第一个远程地址。
+// 远程地址必须是 HTTPS:明文 HTTP 到 tailnet 的 100.x 会被 ATS 拦。
+const VAULT_LOCAL_URL = 'http://127.0.0.1:8788';
+const VAULT_ENDPOINTS_KEY = 'vibedrop-vault-endpoints'; // 金库自报的地址表
+const VAULT_ACTIVE_KEY = 'vibedrop-vault-active';       // 上次用通的地址,下次启动直接从它开始
+const VAULT_MANUAL_KEY = 'vibedrop-vault-url';          // 设置页手填的地址(空 = 自动发现)
+let VAULT_ENDPOINT = localStorage.getItem(VAULT_ACTIVE_KEY) || localStorage.getItem(VAULT_MANUAL_KEY) || VAULT_LOCAL_URL;
+let vaultLastOk = '';
 let vaultPickInFlight = null;
 
-async function probeVaultEndpoint(url, timeoutMs) {
+function readLearnedVaultEndpoints() {
     try {
-        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
-        return response.ok;
+        const list = JSON.parse(localStorage.getItem(VAULT_ENDPOINTS_KEY) || '[]');
+        return Array.isArray(list) ? list.filter((url) => typeof url === 'string' && /^https?:\/\//.test(url)) : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+function learnVaultEndpoints(list) {
+    const clean = (Array.isArray(list) ? list : [])
+        .map((url) => String(url || '').trim().replace(/\/+$/, ''))
+        .filter((url, i, all) => /^https?:\/\//.test(url) && all.indexOf(url) === i)
+        .slice(0, 8);
+    if (!clean.length || JSON.stringify(clean) === JSON.stringify(readLearnedVaultEndpoints())) return;
+    localStorage.setItem(VAULT_ENDPOINTS_KEY, JSON.stringify(clean));
+    renderVaultSettingsInfo();
+}
+
+function isLocalVaultUrl(url) {
+    try {
+        const { protocol, hostname } = new URL(url);
+        if (protocol !== 'http:') return false;
+        return /\.local$/i.test(hostname) || hostname === 'localhost'
+            || /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname);
     } catch (_) {
         return false;
     }
 }
 
+function vaultCandidates() {
+    const manual = localStorage.getItem(VAULT_MANUAL_KEY) || '';
+    return [manual, VAULT_LOCAL_URL, ...readLearnedVaultEndpoints(), VAULT_ENDPOINT]
+        .filter((url, i, all) => url && all.indexOf(url) === i);
+}
+
+async function probeVaultEndpoint(url, timeoutMs) {
+    try {
+        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+        if (!response.ok) return false;
+        const data = await response.json().catch(() => ({}));
+        if (!String(data?.service || '').startsWith('vibedrop-home-vault')) return false; // 这个端口上跑的不是金库
+        learnVaultEndpoints(data.endpoints);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function setVaultEndpoint(url, ok) {
+    vaultLastOk = ok ? url : '';
+    localStorage.setItem(VAULT_ACTIVE_KEY, url);
+    if (url !== VAULT_ENDPOINT) {
+        console.info('Home Vault 地址切换', VAULT_ENDPOINT, '→', url);
+        VAULT_ENDPOINT = url;
+        if (typeof dvReconnectEvents === 'function') dvReconnectEvents();
+        refreshVaultRemoteEntries();
+        if (typeof dvRefreshIndex === 'function') dvRefreshIndex();
+    }
+    renderVaultSettingsInfo();
+}
+
 function pickVaultEndpoint() {
     if (vaultPickInFlight) return vaultPickInFlight;
     vaultPickInFlight = (async () => {
-        // 家里地址 1.5 秒探,备用 8 秒探;都不通也切到备用(不在家时留在家里地址只会全部悄悄失败)
-        let chosen = '';
-        for (const [i, url] of VAULT_ENDPOINTS.entries()) {
-            if (await probeVaultEndpoint(url, i === 0 ? 1500 : 8000)) { chosen = url; break; }
+        const local = vaultCandidates().filter(isLocalVaultUrl);
+        const localOk = await Promise.all(local.map((url) => probeVaultEndpoint(url, 1500)));
+        const home = local.find((_, i) => localOk[i]);
+        if (home) {
+            setVaultEndpoint(home, true);
+            return home;
         }
-        if (!chosen && VAULT_ENDPOINTS.length > 1) chosen = VAULT_ENDPOINTS[1];
-        for (const url of chosen ? [chosen] : []) {
-            if (url !== VAULT_ENDPOINT) {
-                console.info('Home Vault 地址切换', VAULT_ENDPOINT, '→', url);
-                VAULT_ENDPOINT = url;
-                if (typeof dvReconnectEvents === 'function') dvReconnectEvents();
-                refreshVaultRemoteEntries();
-                if (typeof dvRefreshIndex === 'function') dvRefreshIndex();
+        const remote = vaultCandidates().filter((url) => !isLocalVaultUrl(url));
+        for (const url of remote) {
+            if (await probeVaultEndpoint(url, 8000)) {
+                setVaultEndpoint(url, true);
+                return url;
             }
-            return url;
         }
+        if (remote.length) {
+            setVaultEndpoint(remote[0], false);
+            return remote[0];
+        }
+        vaultLastOk = '';
+        renderVaultSettingsInfo();
         return '';
     })().finally(() => {
         vaultPickInFlight = null;
     });
     return vaultPickInFlight;
+}
+
+// 设置页「金库」卡片:手填地址(空 = 自动发现)+ 当前在用的地址
+function renderVaultSettingsInfo() {
+    const info = document.getElementById('vault-route-info');
+    if (!info) return;
+    const host = (VAULT_ENDPOINT.match(/\/\/([^/]+)/) || [])[1] || VAULT_ENDPOINT;
+    info.textContent = vaultLastOk
+        ? t('当前：{host} · 已知地址 {count} 个', { host, count: readLearnedVaultEndpoints().length })
+        : t('还没连上金库');
+}
+
+function initVaultSettings() {
+    const input = document.getElementById('vault-url-input');
+    if (!input) return;
+    input.value = localStorage.getItem(VAULT_MANUAL_KEY) || '';
+    input.addEventListener('change', () => {
+        let url = input.value.trim().replace(/\/+$/, '');
+        if (url && !/^https?:\/\//i.test(url)) url = `http://${url}`;
+        input.value = url;
+        if (url) localStorage.setItem(VAULT_MANUAL_KEY, url);
+        else localStorage.removeItem(VAULT_MANUAL_KEY);
+        void pickVaultEndpoint();
+    });
+    renderVaultSettingsInfo();
 }
 let vaultRemoteEntries = [];
 
@@ -2258,7 +2355,7 @@ async function refreshVaultRemoteEntries() {
         void pickVaultEndpoint(); // 可能换了网络,重选地址
     }
 }
-setTimeout(() => { pickVaultEndpoint().finally(refreshVaultRemoteEntries); }, 3000);
+setTimeout(() => { initVaultSettings(); pickVaultEndpoint().finally(refreshVaultRemoteEntries); }, 3000);
 setInterval(refreshVaultRemoteEntries, 5 * 60 * 1000);
 setInterval(pickVaultEndpoint, 60 * 1000);
 window.addEventListener('online', () => { void pickVaultEndpoint(); });

@@ -22,7 +22,7 @@ DEFAULT_REMOTE = "mini@minideMac-mini.local"
 DEFAULT_REMOTE_ROOT = "/Volumes/SN850X/VibeDropVault"
 DEFAULT_ANDROID_PACKAGE = "com.vibedrop.mobile"
 DEFAULT_VIEWER_MDNS_URL = "http://minideMac-mini.local:8787/viewer/"
-DEFAULT_VIEWER_IP_URL = "http://192.168.3.2:8787/viewer/"
+DEFAULT_VIEWER_IP_URL = "http://localhost:8787/viewer/"
 DEFAULT_VIEWER_URL = DEFAULT_VIEWER_IP_URL
 LOCAL_VIEWER_URL = "http://localhost:8787/viewer/"
 OBJECT_BUCKETS = [f"{i:02x}" for i in range(256)]
@@ -1181,7 +1181,7 @@ def start_remote_viewer(remote: str, remote_root: str, port: int) -> str:
         f"> logs/viewer-http.log 2>&1 & echo started; fi"
     )
     remote_shell(remote, command, check=False, capture=True)
-    return f"http://192.168.3.2:{port}/viewer/"
+    return f"http://{remote.rpartition('@')[2] or 'localhost'}:{port}/viewer/"
 
 
 def prune_remote_unreferenced_objects(remote: str, remote_root: str) -> int:

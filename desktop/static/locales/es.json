@@ -123,7 +123,6 @@
   "单个图片/视频直接进手机相册；其它单文件进下载，多文件和文件夹会按规则自动发送或打包。": "Las imágenes/vídeos individuales se introducen directamente en el álbum del teléfono móvil; se descargan otros archivos individuales y se envían o empaquetan automáticamente varios archivos y carpetas de acuerdo con las reglas.",
   "历史": "Historial",
   "历史 {processed}/{total}": "Historia {processed}/{total}",
-  "历史与原件已全自动同步。只有出门在外要改 vault 地址（tailnet 域名）、或新设备要恢复历史时，才需要展开。": "El historial y los originales se sincronizan de forma totalmente automática. Solo necesita expandirlo cuando desee cambiar la dirección de la bóveda (nombre de dominio de tailnet) cuando esté fuera de casa o cuando desee restaurar el historial de un nuevo dispositivo.",
   "原件": "Originales",
   "原件已丢失，无法查看": "El original se ha perdido y no se puede ver.",
   "原因：{value}": "Razón: {value}",
@@ -670,5 +669,15 @@
   "抖音": "Douyin",
   "读取所选图片失败": "No se pudo leer la foto seleccionada",
   "定位到这条": "Ir a esta grabación",
-  "当前筛选条件下看不到这条录音": "Esta grabación no aparece con los filtros actuales"
+  "当前筛选条件下看不到这条录音": "Esta grabación no aparece con los filtros actuales",
+  "历史与原件自动同步到你自己电脑上的金库。金库地址自动发现：在家连上一次，出门也会自动改走金库报出的远程地址。发现不到，或新设备要恢复历史时，才需要展开。": "El historial y los originales se sincronizan solos con el Vault de tu propio ordenador. Su dirección se detecta sola: conéctate una vez en casa y, fuera, la app usará la dirección remota que indique el Vault. Despliega solo si no se encuentra o para restaurar el historial en un dispositivo nuevo.",
+  "留空 = 自动发现": "Vacío = detección automática",
+  "当前：{host} · 已知地址 {count} 个": "Actual: {host} · {count} direcciones conocidas",
+  "还没连上过金库": "Aún no se ha conectado a ningún Vault",
+  "未发现金库": "No se encontró el Vault",
+  "还没找到金库，请先在上面填金库地址": "Aún no se encuentra el Vault. Introduce primero su dirección arriba",
+  "已改为自动发现": "Cambiado a detección automática",
+  "金库": "Vault",
+  "跨设备历史和语音存在你自己电脑上的金库里。地址自动发现：金库在本机，或手机连上本机时转告；发现不到才需要手填。": "El historial entre dispositivos y la voz se guardan en el Vault de tu propio ordenador. La dirección se detecta sola: el Vault está en este Mac o un móvil la comunica al conectarse. Introdúcela solo si no se encuentra.",
+  "还没连上金库": "Sin conexión al Vault"
 }

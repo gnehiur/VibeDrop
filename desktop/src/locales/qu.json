@@ -123,7 +123,6 @@
   "单个图片/视频直接进手机相册；其它单文件进下载，多文件和文件夹会按规则自动发送或打包。": "Huk rikch'a/video telefonopa albumniykiman rin; wakin huk archivo Urquy-man, achka archivo/carpetakuna kamachiy hina kachakun utaq q'ipikun.",
   "历史": "Historial",
   "历史 {processed}/{total}": "Historial {processed}/{total}",
-  "历史与原件已全自动同步。只有出门在外要改 vault 地址（tailnet 域名）、或新设备要恢复历史时，才需要展开。": "Historialwan qallariy archivokunawan kikillanmanta tinkuchikun. Hawapi kaspa Vault tiyayta (tailnet dominio) tikranapaq utaq musuq dispositivopi historialta kutichinapaqllam kayta mast'ariy.",
   "原件": "Qallariy archivo",
   "原件已丢失，无法查看": "Qallariy archivo chinkasqa; mana qhawakunchu",
   "原因：{value}": "Imarayku: {value}",
@@ -670,5 +669,15 @@
   "抖音": "Douyin",
   "读取所选图片失败": "Akllasqa siq'ita mana ñawinchayta atikunchu",
   "定位到这条": "Kay grabacionman riy",
-  "当前筛选条件下看不到这条录音": "Kunan akllanakunawan kay grabacionqa mana rikukunchu"
+  "当前筛选条件下看不到这条录音": "Kunan akllanakunawan kay grabacionqa mana rikukunchu",
+  "历史与原件自动同步到你自己电脑上的金库。金库地址自动发现：在家连上一次，出门也会自动改走金库报出的远程地址。发现不到，或新设备要恢复历史时，才需要展开。": "Historialpas originalkunapas kikiykipa computadoraykipi kaq Vaultman kikillanmanta tupachisqa kanku. Direccionninqa kikillanmanta tarisqa: wasipi huk kutilla tinkiy, hawapitaq app Vaultpa willasqan karu direccionman kikillan tikrakun. Mana tarikuptinlla, utaq musuq aparatopi historialta kutichinaykipaqlla kichay.",
+  "留空 = 自动发现": "Ch'usaq = kikillan maskay",
+  "当前：{host} · 已知地址 {count} 个": "Kunan: {host} · {count} riqsisqa direccionkuna",
+  "还没连上过金库": "Manaraq Vaultwan tinkisqachu",
+  "未发现金库": "Mana Vault tarikunchu",
+  "还没找到金库，请先在上面填金库地址": "Manaraq Vault tarikunchu. Ñawpaqta hanaqpi Vaultpa direccionninta qillqay",
+  "已改为自动发现": "Kikillan maskaymanña tikrasqa",
+  "金库": "Vault",
+  "跨设备历史和语音存在你自己电脑上的金库里。地址自动发现：金库在本机，或手机连上本机时转告；发现不到才需要手填。": "Aparatokuna purapi historialpas kunkakunapas kikiykipa computadoraykipi kaq Vaultpi waqaychasqa. Direccionqa kikillanmanta tarisqa: Vault kay Macpi kachkan, utaq celular tinkikuspa willan. Mana tarikuptinlla qillqay.",
+  "还没连上金库": "Mana Vaultwan tinkisqachu"
 }

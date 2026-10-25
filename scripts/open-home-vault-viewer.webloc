@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>URL</key>
-  <string>http://192.168.3.2:8787/viewer/</string>
+  <string>http://localhost:8787/viewer/</string>
 </dict>
 </plist>

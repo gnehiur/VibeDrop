@@ -129,7 +129,6 @@
   "单个图片/视频直接进手机相册；其它单文件进下载，多文件和文件夹会按规则自动发送或打包。": "A single image or video goes directly to Photos. Other single files go to Downloads; multiple files and folders are sent or packaged automatically.",
   "历史": "History",
   "历史 {processed}/{total}": "History {processed}/{total}",
-  "历史与原件已全自动同步。只有出门在外要改 vault 地址（tailnet 域名）、或新设备要恢复历史时，才需要展开。": "History and original files sync automatically. Expand this only to change the Vault address (tailnet hostname) while away or to restore history on a new device.",
   "原件": "Original file",
   "原件已丢失，无法查看": "The original file is missing and cannot be opened",
   "原因：{value}": "Reason: {value}",
@@ -699,5 +698,15 @@
   "抖音": "Douyin",
   "读取所选图片失败": "Couldn't read the selected photo",
   "定位到这条": "Show in list",
-  "当前筛选条件下看不到这条录音": "This recording is hidden by the current filters"
+  "当前筛选条件下看不到这条录音": "This recording is hidden by the current filters",
+  "历史与原件自动同步到你自己电脑上的金库。金库地址自动发现：在家连上一次，出门也会自动改走金库报出的远程地址。发现不到，或新设备要恢复历史时，才需要展开。": "History and originals sync automatically to the Vault on your own computer. Its address is discovered automatically: connect once at home, and when you're away the app switches to the remote address the Vault reports. Expand only if it can't be found, or to restore history on a new device.",
+  "留空 = 自动发现": "Leave empty = auto-discover",
+  "当前：{host} · 已知地址 {count} 个": "Current: {host} · {count} known addresses",
+  "还没连上过金库": "Never connected to a Vault yet",
+  "未发现金库": "No Vault found",
+  "还没找到金库，请先在上面填金库地址": "No Vault found yet. Enter the Vault address above first",
+  "已改为自动发现": "Switched to auto-discovery",
+  "金库": "Vault",
+  "跨设备历史和语音存在你自己电脑上的金库里。地址自动发现：金库在本机，或手机连上本机时转告；发现不到才需要手填。": "Cross-device history and voice live in the Vault on your own computer. The address is discovered automatically: the Vault runs on this Mac, or a phone passes it on when it connects. Enter it only if it can't be found.",
+  "还没连上金库": "Not connected to a Vault"
 }

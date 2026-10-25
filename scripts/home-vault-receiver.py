@@ -10,6 +10,7 @@ import pathlib
 import queue
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -671,6 +672,100 @@ def prepare_restore_history(history: list[Any], mode: str, limit: int) -> list[A
     return [compact_history_entry(entry) for entry in selected]
 
 
+# ---- 金库自报地址(2026-10-25,1.6.0)----
+# 客户端代码里不写死任何人的地址:金库在 /health 里报出自己的全部地址,手机/电脑在家连上一次就记住,
+# 出门连不上局域网时自动改走远程地址。顺序:--advertise 手填的 → 本机局域网 IPv4 → tailscale serve 转到本端口的 HTTPS 地址。
+# 远程必须是 HTTPS(苹果 ATS 只放行局域网明文 HTTP);没开 tailscale serve 就只报局域网地址。
+_SKIP_IFACE = re.compile(r"^(lo|utun|tun|tap|tailscale|zt|wg|docker|br-|veth|virbr|bridge|awdl|llw|gif|stf|anpi|ap\d)", re.I)
+_TAILSCALE_CLIS = ("tailscale", "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale",
+                   "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+_endpoint_state: dict[str, Any] = {"urls": []}
+
+
+def _is_lan_ipv4(ip: str) -> bool:
+    try:
+        a, b = (int(part) for part in ip.split(".")[:2])
+    except ValueError:
+        return False
+    return a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
+
+
+def lan_ipv4_addresses() -> list[str]:
+    found: list[str] = []
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(["/sbin/ifconfig"], capture_output=True, text=True, timeout=5).stdout
+            iface, flags = "", ""
+            for line in out.splitlines():
+                head = re.match(r"^([A-Za-z0-9_.-]+): flags=\w+<([^>]*)>", line)
+                if head:
+                    iface, flags = head.group(1), head.group(2)
+                    continue
+                inet = re.match(r"^\s+inet (\d+\.\d+\.\d+\.\d+)", line)
+                if inet and "RUNNING" in flags and "POINTOPOINT" not in flags and not _SKIP_IFACE.match(iface):
+                    found.append(inet.group(1))
+        else:
+            out = subprocess.run(["ip", "-4", "-o", "addr", "show", "up"], capture_output=True, text=True, timeout=5).stdout
+            for line in out.splitlines():
+                inet = re.match(r"^\d+:\s+(\S+)\s+inet (\d+\.\d+\.\d+\.\d+)", line)
+                if inet and not _SKIP_IFACE.match(inet.group(1)):
+                    found.append(inet.group(2))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not found:
+        try:  # 兜底:默认路由那块网卡的地址(不真发包)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.connect(("10.255.255.255", 1))
+                found.append(probe.getsockname()[0])
+        except OSError:
+            pass
+    return [ip for i, ip in enumerate(found) if _is_lan_ipv4(ip) and ip not in found[:i]]
+
+
+def tailscale_https_urls(port: int) -> list[str]:
+    for cli in _TAILSCALE_CLIS:
+        path = cli if os.path.isabs(cli) and os.access(cli, os.X_OK) else shutil.which(cli)
+        if not path:
+            continue
+        try:
+            done = subprocess.run([path, "serve", "status", "--json"], capture_output=True, text=True, timeout=8)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if done.returncode != 0:
+            continue
+        try:
+            web = (json.loads(done.stdout or "{}") or {}).get("Web") or {}
+        except ValueError:
+            return []
+        urls = []
+        for host_port, conf in web.items():
+            proxy = str((((conf or {}).get("Handlers") or {}).get("/") or {}).get("Proxy", ""))
+            target = re.match(r"^(?:https?://)?(?:(?:127\.0\.0\.1|localhost|\[::1\]):)?(\d+)/?$", proxy)
+            if target and int(target.group(1)) == port:
+                host, _, listen = host_port.rpartition(":")
+                urls.append(f"https://{host}" if listen == "443" else f"https://{host_port}")
+        return urls
+    return []
+
+
+def refresh_advertised_endpoints(port: int, extra: list[str]) -> list[str]:
+    urls = [u.strip().rstrip("/") for u in extra if u.strip()]
+    urls += [f"http://{ip}:{port}" for ip in lan_ipv4_addresses()]
+    urls += tailscale_https_urls(port)
+    _endpoint_state["urls"] = [u for i, u in enumerate(urls) if u not in urls[:i]]
+    return _endpoint_state["urls"]
+
+
+def watch_advertised_endpoints(port: int, extra: list[str]) -> None:
+    # 换网络、开关 tailscale serve 都会变,每分钟重查一次;/health 只读缓存,不让慢命令拖住探针
+    while True:
+        time.sleep(60)
+        try:
+            refresh_advertised_endpoints(port, extra)
+        except Exception as exc:  # noqa: BLE001 — 查地址失败不能拖垮金库
+            print(f"advertise refresh failed: {exc}", file=sys.stderr, flush=True)
+
+
 def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
     vault_root = pathlib.Path(config.vault_root).expanduser().resolve()
     sync_script = pathlib.Path(config.sync_script).expanduser().resolve()
@@ -767,6 +862,7 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                         "service": "vibedrop-home-vault-receiver",
                         "vaultRoot": str(vault_root),
                         "viewerUrl": viewer_url,
+                        "endpoints": list(_endpoint_state["urls"]),
                         "time": iso_now(),
                     },
                 )
@@ -1213,12 +1309,23 @@ def main() -> int:
         "--sync-script",
         default=str(pathlib.Path(__file__).with_name("sync-home-vault.py")),
     )
-    parser.add_argument("--viewer-url", default="http://192.168.3.2:8787/viewer/")
+    parser.add_argument("--viewer-url", default="", help="默认:本机第一个局域网地址的 8787 端口")
+    parser.add_argument(
+        "--advertise",
+        action="append",
+        default=[],
+        help="额外报给客户端的金库地址,可重复;默认自动报本机局域网地址和 tailscale serve 的 HTTPS 地址",
+    )
     parser.add_argument("--max-bytes", type=int, default=MAX_REQUEST_BYTES)
     parser.add_argument("--sync-timeout", type=int, default=180)
     parser.add_argument("--token", default=os.environ.get("VIBEDROP_VAULT_TOKEN", ""))
     parser.add_argument("--voice-dir", default=os.environ.get("VIBEDROP_VOICE_DIR", ""), help="可选:语音存档目录(含 index.json)")
     args = parser.parse_args()
+    advertised = refresh_advertised_endpoints(args.port, args.advertise)
+    if not args.viewer_url:
+        lan = lan_ipv4_addresses()
+        args.viewer_url = f"http://{lan[0] if lan else '127.0.0.1'}:8787/viewer/"
+    threading.Thread(target=watch_advertised_endpoints, args=(args.port, args.advertise), daemon=True).start()
 
     pathlib.Path(args.vault_root).expanduser().resolve().mkdir(parents=True, exist_ok=True)
     handler = make_handler(args)
@@ -1228,6 +1335,7 @@ def main() -> int:
         print(f"Voice archive: {pathlib.Path(args.voice_dir).expanduser().resolve()}", flush=True)
     print(f"VibeDrop Home Vault receiver listening on {args.host}:{args.port}", flush=True)
     print(f"Vault root: {pathlib.Path(args.vault_root).expanduser().resolve()}", flush=True)
+    print(f"Advertised endpoints: {' '.join(advertised) or '(none)'}", flush=True)
     server.serve_forever()
     return 0
 
