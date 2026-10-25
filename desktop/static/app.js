@@ -33,9 +33,12 @@ function scheduleProbeUpload(delay) {
     probeUploadTimer = setTimeout(async () => {
         probeUploadTimer = null;
         try {
-            const endpoint = getHomeVaultSettings().url || '';
-            if (!endpoint) return;
-            await fetch(`${endpoint}/api/client-log`, {
+            // 当前地址优先,不通再挨个试家里地址和备用地址:选路出错时诊断也能回来(2026-10-25)
+            const current = getHomeVaultSettings().url || '';
+            const tried = [current, getHomeVaultPrimaryUrl(), ...HOME_VAULT_FALLBACK_URLS].filter((url, i, all) => url && all.indexOf(url) === i);
+            for (const endpoint of tried) {
+                try {
+                    const response = await fetch(`${endpoint}/api/client-log`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -45,7 +48,11 @@ function scheduleProbeUpload(delay) {
                     probes: bootProbe.records,
                     prevSessionProbes: bootProbe.prev.slice(-80),
                 }),
-            });
+                        signal: AbortSignal.timeout(10000),
+                    });
+                    if (response.ok) break;
+                } catch (_) { /* 这个地址不通,试下一个 */ }
+            }
         } catch (error) { /* vault 不在线时静默 */ }
     }, delay);
 }
@@ -53,7 +60,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v37-vault-push-retry-20261025';
+window.__vdBuild = 'ui-v38-vault-route-sticky-20261025';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -337,7 +344,8 @@ const HOME_VAULT_DEFAULT_URL = 'http://192.168.3.2:8788';
 // 金库备用地址(Tailscale HTTPS,只有自己 tailnet 里的设备够得着;必须是 HTTPS:苹果 ATS 只放行局域网地址的明文 HTTP,tailnet 的 100.x 明文会被拦):家里局域网地址连不上(出差异地)就自动改走它,
 // 回到家又自动切回局域网。每分钟、回前台、网络恢复、长连接断开时各探一次(2026-10-25)。
 const HOME_VAULT_FALLBACK_URLS = ['https://minimac-mini.tail966595.ts.net:8443'];
-const homeVaultRoute = { primary: '', active: '', probing: null };
+const homeVaultRoute = { primary: '', active: '', probing: null, loaded: false };
+const HOME_VAULT_ROUTE_KEY = 'vibedrop-vault-route'; // 上次用通的金库地址,下次启动直接从它开始
 const SMART_DISCOVERY_REFRESH_COOLDOWN_MS = 15000;
 const DIAGNOSTICS_REFRESH_INTERVAL_MS = 1000;
 const CONNECTION_EVENT_LOG_KEY = 'vibedrop_connection_events';
@@ -9223,6 +9231,16 @@ function getHomeVaultSettings() {
         ? settings.homeVault
         : {};
     const primary = resolveHomeVaultUrlForNetwork(homeVault.url || HOME_VAULT_DEFAULT_URL);
+    if (!homeVaultRoute.loaded) {
+        homeVaultRoute.loaded = true;
+        try {
+            const saved = JSON.parse(localStorage.getItem(HOME_VAULT_ROUTE_KEY) || '{}');
+            if (saved.primary === primary && typeof saved.active === 'string') {
+                homeVaultRoute.primary = primary;
+                homeVaultRoute.active = saved.active;
+            }
+        } catch (_) { /* 记忆坏了就从家里地址开始 */ }
+    }
     return {
         url: homeVaultRoute.active && homeVaultRoute.primary === primary ? homeVaultRoute.active : primary,
         lastSyncedAt: homeVault.lastSyncedAt || '',
@@ -9252,28 +9270,49 @@ function getHomeVaultPrimaryUrl() {
     return resolveHomeVaultUrlForNetwork(homeVault.url || HOME_VAULT_DEFAULT_URL);
 }
 
-async function probeHomeVaultUrl(url) {
+async function probeHomeVaultUrl(url, timeoutMs) {
     try {
-        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
         return response.ok;
     } catch (_) {
         return false;
     }
 }
 
-// 按顺序探:配置的地址(默认家里局域网)优先,不通再试备用;选定后若和当前不同就整体切过去
+function setHomeVaultRoute(primary, url, reason) {
+    const before = getHomeVaultSettings().url;
+    homeVaultRoute.primary = primary;
+    homeVaultRoute.active = url === primary ? '' : url;
+    try {
+        localStorage.setItem(HOME_VAULT_ROUTE_KEY, JSON.stringify({ primary, active: homeVaultRoute.active, at: Date.now() }));
+    } catch (_) { /* 存不了就下次再探 */ }
+    if (url !== before) {
+        probe('vault-route', `${(url.match(/\/\/([^/:]+)/) || [])[1] || url} (${reason})`);
+        onHomeVaultRouteChanged(before, url);
+    }
+}
+
+// 选路(2026-10-25 第二版):家里地址 1.5 秒探一下,通就用;不通说明不在家,直接改走 Tailscale 备用地址——
+// 备用地址给 8 秒探,探不通也照样切过去(没有第三条路,留在家里地址只会每个请求都悄悄失败)。
+// 第一版要求备用地址 2.5 秒内探通才切:出差时 iPhone 第一次经中转建 HTTPS 常超过 2.5 秒,整轮会话卡在家里地址,推送全丢。
 function pickHomeVaultRoute() {
     if (homeVaultRoute.probing) return homeVaultRoute.probing;
     const primary = getHomeVaultPrimaryUrl();
-    const candidates = [primary, ...HOME_VAULT_FALLBACK_URLS.filter((url) => url && url !== primary)];
+    const fallbacks = HOME_VAULT_FALLBACK_URLS.filter((url) => url && url !== primary);
     homeVaultRoute.probing = (async () => {
-        for (const url of candidates) {
-            if (!(await probeHomeVaultUrl(url))) continue;
-            const before = getHomeVaultSettings().url;
-            homeVaultRoute.primary = primary;
-            homeVaultRoute.active = url === primary ? '' : url;
-            if (url !== before) onHomeVaultRouteChanged(before, url);
-            return url;
+        if (await probeHomeVaultUrl(primary, 1500)) {
+            setHomeVaultRoute(primary, primary, 'home');
+            return primary;
+        }
+        for (const url of fallbacks) {
+            if (await probeHomeVaultUrl(url, 8000)) {
+                setHomeVaultRoute(primary, url, 'away');
+                return url;
+            }
+        }
+        if (fallbacks.length) {
+            setHomeVaultRoute(primary, fallbacks[0], 'away-unverified');
+            return fallbacks[0];
         }
         return '';
     })().finally(() => {

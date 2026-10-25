@@ -2179,9 +2179,9 @@ const VAULT_ENDPOINTS = ['http://192.168.3.2:8788', 'https://minimac-mini.tail96
 let VAULT_ENDPOINT = VAULT_ENDPOINTS[0];
 let vaultPickInFlight = null;
 
-async function probeVaultEndpoint(url) {
+async function probeVaultEndpoint(url, timeoutMs) {
     try {
-        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
         return response.ok;
     } catch (_) {
         return false;
@@ -2191,8 +2191,13 @@ async function probeVaultEndpoint(url) {
 function pickVaultEndpoint() {
     if (vaultPickInFlight) return vaultPickInFlight;
     vaultPickInFlight = (async () => {
-        for (const url of VAULT_ENDPOINTS) {
-            if (!(await probeVaultEndpoint(url))) continue;
+        // 家里地址 1.5 秒探,备用 8 秒探;都不通也切到备用(不在家时留在家里地址只会全部悄悄失败)
+        let chosen = '';
+        for (const [i, url] of VAULT_ENDPOINTS.entries()) {
+            if (await probeVaultEndpoint(url, i === 0 ? 1500 : 8000)) { chosen = url; break; }
+        }
+        if (!chosen && VAULT_ENDPOINTS.length > 1) chosen = VAULT_ENDPOINTS[1];
+        for (const url of chosen ? [chosen] : []) {
             if (url !== VAULT_ENDPOINT) {
                 console.info('Home Vault 地址切换', VAULT_ENDPOINT, '→', url);
                 VAULT_ENDPOINT = url;
