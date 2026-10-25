@@ -746,7 +746,15 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                 pass
 
         def do_OPTIONS(self) -> None:
-            self.send_json(204, {})
+            # 跨域预检:204 必须不带响应体。原先走 send_json 会多带 2 字节 "{}"——家里明文 HTTP/1.0 直连时浏览器能忍,
+            # 经 Tailscale HTTPS(HTTP/2)出差时 iPhone 预检过后上传请求一直发不出来(2026-10-25)
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-VibeDrop-Token")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def do_GET(self) -> None:
             parsed_path = urllib.parse.urlparse(self.path)
