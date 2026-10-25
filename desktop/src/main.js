@@ -2174,7 +2174,40 @@ function getLogMediaOpenPath(item) {
 }
 
 // ---- Home Vault:跨设备合并时间线 + 原件下载打开 ----
-const VAULT_ENDPOINT = 'http://192.168.3.2:8788';
+// 金库地址:先家里局域网,连不上(出差异地)自动改走 Tailscale 备用地址,回家再切回(2026-10-25)
+const VAULT_ENDPOINTS = ['http://192.168.3.2:8788', 'http://100.102.57.22:8788'];
+let VAULT_ENDPOINT = VAULT_ENDPOINTS[0];
+let vaultPickInFlight = null;
+
+async function probeVaultEndpoint(url) {
+    try {
+        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+        return response.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
+function pickVaultEndpoint() {
+    if (vaultPickInFlight) return vaultPickInFlight;
+    vaultPickInFlight = (async () => {
+        for (const url of VAULT_ENDPOINTS) {
+            if (!(await probeVaultEndpoint(url))) continue;
+            if (url !== VAULT_ENDPOINT) {
+                console.info('Home Vault 地址切换', VAULT_ENDPOINT, '→', url);
+                VAULT_ENDPOINT = url;
+                if (typeof dvReconnectEvents === 'function') dvReconnectEvents();
+                refreshVaultRemoteEntries();
+                if (typeof dvRefreshIndex === 'function') dvRefreshIndex();
+            }
+            return url;
+        }
+        return '';
+    })().finally(() => {
+        vaultPickInFlight = null;
+    });
+    return vaultPickInFlight;
+}
 let vaultRemoteEntries = [];
 
 function convertVaultEntry(entry) {
@@ -2217,10 +2250,13 @@ async function refreshVaultRemoteEntries() {
         }
     } catch (error) {
         console.warn('拉取 Home Vault 合并历史失败(vault 可能不在线)', error);
+        void pickVaultEndpoint(); // 可能换了网络,重选地址
     }
 }
-setTimeout(refreshVaultRemoteEntries, 3000);
+setTimeout(() => { pickVaultEndpoint().finally(refreshVaultRemoteEntries); }, 3000);
 setInterval(refreshVaultRemoteEntries, 5 * 60 * 1000);
+setInterval(pickVaultEndpoint, 60 * 1000);
+window.addEventListener('online', () => { void pickVaultEndpoint(); });
 
 async function openLogMediaItem(item) {
     const localPath = item?.file_path || item?.saved_path || '';

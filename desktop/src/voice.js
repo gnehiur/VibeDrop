@@ -67,8 +67,17 @@ function dvConnectEvents() {
     source.onerror = () => {
         source.close();
         if (dvEventSource === source) dvEventSource = null;
-        setTimeout(dvConnectEvents, 15000);
+        setTimeout(() => { pickVaultEndpoint().finally(dvConnectEvents); }, 15000); // 断了先重选地址
     };
+}
+
+// main.js 换了金库地址时调它:断开旧长连接,马上按新地址重连
+function dvReconnectEvents() {
+    if (dvEventSource) {
+        dvEventSource.close();
+        dvEventSource = null;
+    }
+    dvConnectEvents();
 }
 
 function dvUpsertRemote(entries) {

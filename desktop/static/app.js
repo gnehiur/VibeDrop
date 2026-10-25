@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v34-voice-wav-20261008';
+window.__vdBuild = 'ui-v35-vault-route-20261025';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -334,6 +334,10 @@ const NEARBY_REORDER_LONG_PRESS_MS = 260;
 const NEARBY_REORDER_CANCEL_DISTANCE = 10;
 const NEARBY_REORDER_HINT_KEY = 'vibedrop_nearby_reorder_hint_seen';
 const HOME_VAULT_DEFAULT_URL = 'http://192.168.3.2:8788';
+// 金库备用地址(Tailscale,只有自己 tailnet 里的设备够得着):家里局域网地址连不上(出差异地)就自动改走它,
+// 回到家又自动切回局域网。每分钟、回前台、网络恢复、长连接断开时各探一次(2026-10-25)。
+const HOME_VAULT_FALLBACK_URLS = ['http://100.102.57.22:8788'];
+const homeVaultRoute = { primary: '', active: '', probing: null };
 const SMART_DISCOVERY_REFRESH_COOLDOWN_MS = 15000;
 const DIAGNOSTICS_REFRESH_INTERVAL_MS = 1000;
 const CONNECTION_EVENT_LOG_KEY = 'vibedrop_connection_events';
@@ -4993,9 +4997,13 @@ function initNavigation() {
     });
     // 启动后台拉一次全设备合并历史,并挂上长连接接收后续实时通知
     setTimeout(() => {
-        refreshVaultMergedHistory();
-        connectVaultEventStream();
+        pickHomeVaultRoute().finally(() => {
+            refreshVaultMergedHistory();
+            connectVaultEventStream();
+        });
     }, 2500);
+    setInterval(pickHomeVaultRoute, 60 * 1000);
+    window.addEventListener('online', () => { void pickHomeVaultRoute(); });
     setTimeout(() => {
         refreshLocalMediaExistence().then(() => autoUploadLocalMediaToVault());
     }, 12000);
@@ -5004,8 +5012,10 @@ function initNavigation() {
     scheduleProbeUpload(6000);
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
-        connectVaultEventStream();
-        refreshVaultMergedHistory();
+        pickHomeVaultRoute().finally(() => {
+            connectVaultEventStream();
+            refreshVaultMergedHistory();
+        });
     });
 }
 
@@ -9211,8 +9221,9 @@ function getHomeVaultSettings() {
     const homeVault = settings.homeVault && typeof settings.homeVault === 'object'
         ? settings.homeVault
         : {};
+    const primary = resolveHomeVaultUrlForNetwork(homeVault.url || HOME_VAULT_DEFAULT_URL);
     return {
-        url: resolveHomeVaultUrlForNetwork(homeVault.url || HOME_VAULT_DEFAULT_URL),
+        url: homeVaultRoute.active && homeVaultRoute.primary === primary ? homeVaultRoute.active : primary,
         lastSyncedAt: homeVault.lastSyncedAt || '',
         lastEntryCount: Number(homeVault.lastEntryCount || 0),
         lastRestoredAt: homeVault.lastRestoredAt || '',
@@ -9229,9 +9240,57 @@ function saveHomeVaultSettings(patch = {}) {
         homeVault: {
             ...current,
             ...patch,
-            url: resolveHomeVaultUrlForNetwork(patch.url || current.url),
+            url: resolveHomeVaultUrlForNetwork(patch.url || getHomeVaultPrimaryUrl()), // 存配置的地址,别把临时备用地址写进去
         },
     });
+}
+
+function getHomeVaultPrimaryUrl() {
+    const settings = getStoredSettingsObject();
+    const homeVault = settings.homeVault && typeof settings.homeVault === 'object' ? settings.homeVault : {};
+    return resolveHomeVaultUrlForNetwork(homeVault.url || HOME_VAULT_DEFAULT_URL);
+}
+
+async function probeHomeVaultUrl(url) {
+    try {
+        const response = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+        return response.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
+// 按顺序探:配置的地址(默认家里局域网)优先,不通再试备用;选定后若和当前不同就整体切过去
+function pickHomeVaultRoute() {
+    if (homeVaultRoute.probing) return homeVaultRoute.probing;
+    const primary = getHomeVaultPrimaryUrl();
+    const candidates = [primary, ...HOME_VAULT_FALLBACK_URLS.filter((url) => url && url !== primary)];
+    homeVaultRoute.probing = (async () => {
+        for (const url of candidates) {
+            if (!(await probeHomeVaultUrl(url))) continue;
+            const before = getHomeVaultSettings().url;
+            homeVaultRoute.primary = primary;
+            homeVaultRoute.active = url === primary ? '' : url;
+            if (url !== before) onHomeVaultRouteChanged(before, url);
+            return url;
+        }
+        return '';
+    })().finally(() => {
+        homeVaultRoute.probing = null;
+    });
+    return homeVaultRoute.probing;
+}
+
+function onHomeVaultRouteChanged(from, to) {
+    debugLog('vault-route-changed', { from, to });
+    if (vaultEventSource) {
+        vaultEventSource.close();
+        vaultEventSource = null;
+    }
+    connectVaultEventStream();
+    refreshVaultMergedHistory();
+    refreshVoiceIndex();
+    scheduleHomeVaultAutoPush(); // 连不上那段时间攒下的记录补推上去
 }
 
 function setHomeVaultStatus(message, tone = '') {
@@ -9613,7 +9672,9 @@ function connectVaultEventStream() {
             source.close();
             if (vaultEventSource === source) vaultEventSource = null;
             if (vaultEventRetryTimer) clearTimeout(vaultEventRetryTimer);
-            vaultEventRetryTimer = setTimeout(connectVaultEventStream, 15000);
+            vaultEventRetryTimer = setTimeout(() => {
+                pickHomeVaultRoute().finally(connectVaultEventStream); // 断了先重选地址(可能刚离开或回到家)
+            }, 15000);
         };
     } catch (error) {
         debugLog('vault-sse-connect-failed', { endpoint, message: String(error?.message || error) });
