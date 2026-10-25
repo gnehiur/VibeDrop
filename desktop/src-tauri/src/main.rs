@@ -36,6 +36,8 @@ use tracing::{error, info, warn};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 
+mod lazy_paste;
+
 #[cfg(target_os = "macos")]
 enum MacosResolvedDrop {
     None,
@@ -1589,8 +1591,6 @@ const MIN_WINDOW_HEIGHT: f64 = 420.0;
 // 逐字模拟打字有两个毛病:高速事件流会被目标 App 乱序消费(个别字跳到开头/结尾);
 // 更要命的是 Mac 处在中文输入法时,模拟敲出的字会被输入法吞掉,而打字接口照样报成功,
 // 手机显示「已发送」、输入框却是空的(短句 ≤30 字原先走打字,用户反复遇到)。粘贴原子、不经输入法。
-const PASTE_SETTLE_BEFORE_MS: u64 = 150;
-const PASTE_SETTLE_AFTER_MS: u64 = 400;
 const CLIPBOARD_SUPPRESS_WINDOW_SECS: u64 = 10;
 
 type ClipboardSuppressList = Arc<Mutex<Vec<(String, std::time::Instant)>>>;
@@ -1640,29 +1640,21 @@ fn send_cmd_return_event() -> Result<(), String> {
     send_cmd_key_event(KVK_RETURN)
 }
 
+// 粘贴走惰性剪贴板(1.6.1,细节见 lazy_paste.rs):目标 App 真来取了字才恢复原剪贴板。
+// 1.6.0 及以前固定等 400ms 就恢复,App 忙时取到的是恢复回去的旧内容(贴出上一条)。
+// 每次的剪贴板情况(原内容、App 隔多久来取、是否恢复)交给注入日志(LAST_PASTE_REPORT)。
+static LAST_PASTE_REPORT: Mutex<Option<serde_json::Value>> = Mutex::new(None);
+
 fn paste_inject_text(text: &str, suppress: &ClipboardSuppressList) -> Result<(), String> {
-    let mut clipboard =
-        arboard::Clipboard::new().map_err(|e| format!("无法访问剪贴板: {}", e))?;
-    let previous = clipboard.get_text().ok().filter(|t| !t.is_empty());
-    let previous_image = if previous.is_none() { clipboard.get_image().ok() } else { None };
-
     suppress_clipboard_broadcast(suppress, text);
-    if let Some(prev) = &previous {
-        suppress_clipboard_broadcast(suppress, prev);
-    }
-
-    clipboard
-        .set_text(text.to_string())
-        .map_err(|e| format!("无法写入剪贴板: {}", e))?;
-    std::thread::sleep(std::time::Duration::from_millis(PASTE_SETTLE_BEFORE_MS));
-
-    send_cmd_v_event()?;
-
-    std::thread::sleep(std::time::Duration::from_millis(PASTE_SETTLE_AFTER_MS));
-    if let Some(prev) = previous {
-        let _ = clipboard.set_text(prev);
-    } else if let Some(image) = previous_image {
-        let _ = clipboard.set_image(image);
+    let report = lazy_paste::paste_text(text, |prev| suppress_clipboard_broadcast(suppress, prev), send_cmd_v_event)?;
+    if let Ok(mut last) = LAST_PASTE_REPORT.lock() {
+        *last = Some(serde_json::json!({
+            "prev": report.prev,
+            "served_ms": report.served_ms,
+            "eager": report.eager,
+            "restore": report.restore,
+        }));
     }
     Ok(())
 }
@@ -1674,7 +1666,13 @@ fn inject_text(text: &str, suppress: &ClipboardSuppressList) -> Result<(), Strin
 // 每次往前台 App 注入文字后记一行到 ~/.vibedrop/debug.log(scope=input):当时最前面是哪个 App、
 // 什么输入法、多少字、结果、耗时。放到后台线程查,不拖慢注入本身。
 // 用 lsappinfo / defaults 子进程而不是 TIS 接口:TIS 在非主线程调用有崩溃风险。
-fn log_input_injection(action: &'static str, chars: usize, result: Result<(), String>, elapsed_ms: u128) {
+fn log_input_injection(
+    action: &'static str,
+    chars: usize,
+    result: Result<(), String>,
+    elapsed_ms: u128,
+    paste: Option<serde_json::Value>,
+) {
     std::thread::spawn(move || {
         let run = |cmd: &str, args: &[&str]| -> String {
             std::process::Command::new(cmd)
@@ -1688,11 +1686,13 @@ fn log_input_injection(action: &'static str, chars: usize, result: Result<(), St
         let front = if asn.is_empty() {
             String::new()
         } else {
-            // 输出首行形如 `"Claude" ASN:0x0-0x61f61f: (in front)`,取第一对引号里的名字
-            run("/usr/bin/lsappinfo", &["info", "-only", "name", &asn])
-                .lines()
-                .next()
-                .and_then(|line| line.split('"').nth(1))
+            // 输出有两种:`"LSDisplayName"="终端"`(MacBook 实测)或 `"Claude" ASN:0x0-0x61f61f: (in front)`;
+            // 前一种取等号后的名字,1.6.0 以前一律取第一对引号,MacBook 上全记成了 LSDisplayName
+            let line = run("/usr/bin/lsappinfo", &["info", "-only", "name", &asn]);
+            let line = line.lines().next().unwrap_or("");
+            let parts: Vec<&str> = line.split('"').collect();
+            (if line.contains("\"=\"") { parts.get(3) } else { parts.get(1) })
+                .copied()
                 .unwrap_or("")
                 .to_string()
         };
@@ -1720,6 +1720,7 @@ fn log_input_injection(action: &'static str, chars: usize, result: Result<(), St
                 "ms": elapsed_ms,
                 "front_app": front,
                 "input_source": input_source,
+                "paste": paste,
             }),
         );
     });
@@ -1906,6 +1907,9 @@ fn main() {
 
         loop {
             std::thread::sleep(std::time::Duration::from_millis(500));
+            if lazy_paste::in_flight() {
+                continue; // 粘贴进行中别读:一读就把惰性数据取走,感知不到目标 App 什么时候来取
+            }
             if let Ok(current) = clipboard.get_text() {
                 if current != last_text && !current.is_empty() {
                     last_text = current.clone();
@@ -2685,6 +2689,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                                 Err(_) => Err("键盘输入线程无响应".to_string()),
                                             },
                                             inject_started.elapsed().as_millis(),
+                                            LAST_PASTE_REPORT.lock().ok().and_then(|mut last| last.take()),
                                         );
                                         match reply_result {
                                             Ok(Ok(())) => {
