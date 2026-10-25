@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v36-vault-route-https-20261025';
+window.__vdBuild = 'ui-v37-vault-push-retry-20261025';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -5002,7 +5002,7 @@ function initNavigation() {
             connectVaultEventStream();
         });
     }, 2500);
-    setInterval(pickHomeVaultRoute, 60 * 1000);
+    setInterval(() => { pickHomeVaultRoute().finally(scheduleHomeVaultAutoPush); }, 60 * 1000); // 每分钟:重选地址 + 补推积压
     window.addEventListener('online', () => { void pickHomeVaultRoute(); });
     setTimeout(() => {
         refreshLocalMediaExistence().then(() => autoUploadLocalMediaToVault());
@@ -5015,6 +5015,7 @@ function initNavigation() {
         pickHomeVaultRoute().finally(() => {
             connectVaultEventStream();
             refreshVaultMergedHistory();
+            scheduleHomeVaultAutoPush(); // 回到前台补推:上次发完就切走、没推完的这里补上
         });
     });
 }
@@ -9691,30 +9692,46 @@ function collectUnpushedEntries(history) {
 }
 
 async function pushHomeVaultDelta(endpoint, entries) {
+    const body = JSON.stringify({
+        deviceId: clientIdentity.id,
+        deviceName: clientIdentity.name,
+        entries: buildHistoryExportData(entries),
+    });
+    // keepalive:App 切到后台时请求照样发完(出差走流量 + Tailscale 慢,发完就切走曾整轮丢推送,2026-10-25)。
+    // 规范限制 keepalive 请求体 ≤64KB,大批量补推就不带
     const response = await fetch(`${endpoint}/api/history/append`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            deviceId: clientIdentity.id,
-            deviceName: clientIdentity.name,
-            entries: buildHistoryExportData(entries),
-        }),
+        body,
+        keepalive: body.length < 60000,
     });
     if (!response.ok) throw new Error(t('append 失败 HTTP {status}', { status: response.status }));
     return response.json();
 }
 
+// 推送触发:每次新记录落账、回到前台、每分钟、换金库地址时都走这里;游标后面没有新条目就秒退,不打扰服务端。
+// 正在推时又来新的,推完再补一轮(homeVaultPushAgain),不并发、不漏。
+let homeVaultPushInFlight = false;
+let homeVaultPushAgain = false;
 function scheduleHomeVaultAutoPush() {
     if (homeVaultAutoPushTimer) clearTimeout(homeVaultAutoPushTimer);
     homeVaultAutoPushTimer = setTimeout(async () => {
         homeVaultAutoPushTimer = null;
+        if (homeVaultPushInFlight) {
+            homeVaultPushAgain = true;
+            return;
+        }
+        homeVaultPushInFlight = true;
+        let host = '';
         try {
             const history = getHistory();
             if (!history.length) return;
             const endpoint = getHomeVaultSettings().url;
+            host = (endpoint.match(/\/\/([^/:]+)/) || [])[1] || endpoint;
             const fresh = collectUnpushedEntries(history);
 
             if (fresh && fresh.length === 0) return;      // 没有新增,不打扰服务端
+            probe('vault-push', `${fresh ? fresh.length : 'full'} → ${host}`);
             if (fresh) {
                 await pushHomeVaultDelta(endpoint, fresh); // 增量:只发这几条
             } else {
@@ -9722,8 +9739,18 @@ function scheduleHomeVaultAutoPush() {
                 await syncHomeVaultWithFetch(endpoint, buildHomeVaultPayload(history));
             }
             saveHomeVaultSettings({ lastPushedEntryId: String(history[0]?.id || '') });
+            probe('vault-push-ok', `${fresh ? fresh.length : 'full'} → ${host}`);
         } catch (error) {
-            debugLog('vault-auto-push-failed', { message: String(error?.message || error) });
+            const message = String(error?.message || error);
+            debugLog('vault-auto-push-failed', { message });
+            probe('vault-push-fail', `${host}: ${message}`);
+            scheduleProbeUpload(3000); // 失败原因回传金库,远程可查
+        } finally {
+            homeVaultPushInFlight = false;
+            if (homeVaultPushAgain) {
+                homeVaultPushAgain = false;
+                scheduleHomeVaultAutoPush();
+            }
         }
     }, 150); // 原 800ms:新记录尽快推给 Vault,其他设备秒级可见
 }
@@ -10222,7 +10249,9 @@ function pushHomeVaultEntryUpdate(entry) {
     const endpoint = getHomeVaultSettings().url;
     if (!endpoint) return;
     pushHomeVaultDelta(endpoint, [entry]).catch((error) => {
-        debugLog('vault-status-push-failed', { message: String(error?.message || error) });
+        const message = String(error?.message || error);
+        debugLog('vault-status-push-failed', { message });
+        probe('vault-status-push-fail', message);
     });
 }
 
