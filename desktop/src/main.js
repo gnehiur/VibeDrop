@@ -2174,8 +2174,8 @@ function getLogMediaOpenPath(item) {
 }
 
 // ---- Home Vault:跨设备合并时间线 + 原件下载打开 ----
-// 金库地址:先家里局域网,连不上(出差异地)自动改走 Tailscale 备用地址,回家再切回(2026-10-25)
-const VAULT_ENDPOINTS = ['http://192.168.3.2:8788', 'http://100.102.57.22:8788'];
+// 金库地址:先家里局域网,连不上(出差异地)自动改走 Tailscale HTTPS 备用地址,回家再切回(2026-10-25;明文 100.x 会被 ATS 拦,所以用 tailscale serve 的 https)
+const VAULT_ENDPOINTS = ['http://192.168.3.2:8788', 'https://minimac-mini.tail966595.ts.net:8443'];
 let VAULT_ENDPOINT = VAULT_ENDPOINTS[0];
 let vaultPickInFlight = null;
 

@@ -53,7 +53,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v35-vault-route-20261025';
+window.__vdBuild = 'ui-v36-vault-route-https-20261025';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -334,9 +334,9 @@ const NEARBY_REORDER_LONG_PRESS_MS = 260;
 const NEARBY_REORDER_CANCEL_DISTANCE = 10;
 const NEARBY_REORDER_HINT_KEY = 'vibedrop_nearby_reorder_hint_seen';
 const HOME_VAULT_DEFAULT_URL = 'http://192.168.3.2:8788';
-// 金库备用地址(Tailscale,只有自己 tailnet 里的设备够得着):家里局域网地址连不上(出差异地)就自动改走它,
+// 金库备用地址(Tailscale HTTPS,只有自己 tailnet 里的设备够得着;必须是 HTTPS:苹果 ATS 只放行局域网地址的明文 HTTP,tailnet 的 100.x 明文会被拦):家里局域网地址连不上(出差异地)就自动改走它,
 // 回到家又自动切回局域网。每分钟、回前台、网络恢复、长连接断开时各探一次(2026-10-25)。
-const HOME_VAULT_FALLBACK_URLS = ['http://100.102.57.22:8788'];
+const HOME_VAULT_FALLBACK_URLS = ['https://minimac-mini.tail966595.ts.net:8443'];
 const homeVaultRoute = { primary: '', active: '', probing: null };
 const SMART_DISCOVERY_REFRESH_COOLDOWN_MS = 15000;
 const DIAGNOSTICS_REFRESH_INTERVAL_MS = 1000;
