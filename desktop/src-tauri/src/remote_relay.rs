@@ -199,7 +199,7 @@ pub async fn relay_text(
 // 把它的文件地址放进剪贴板,贴出来是一行路径(用户实测)。
 // 现在:MacBook 剪贴板出现图片、最前面又是远控工具、且配了转发时,把图片原始数据(不重新编码,TIFF/HEIC 也行)转给被控电脑的
 // VibeDrop,由它写进自己的剪贴板;UU 随后写来的占位文件会被盖回去(put_clipboard_image + rewrite_if_placeholder)。
-// 不打转:UU 把 Mini 剪贴板反向同步回 MacBook 时是文件地址不是图片;同一张图只转一次;VibeDrop 自己粘贴/恢复引起的变化不算。
+// 不打转:UU 把 Mini 剪贴板反向同步回 MacBook 时是指向 UU 文件夹的地址,不算;同一张图只转一次;VibeDrop 自己粘贴/恢复引起的变化不算。
 use base64::Engine as _;
 use objc2_app_kit::NSPasteboard;
 use objc2_foundation::{NSData, NSString};
@@ -213,11 +213,56 @@ fn pasteboard_types(pb: &NSPasteboard) -> Vec<String> {
     pb.types().map(|types| types.iter().map(|t| t.to_string()).collect()).unwrap_or_default()
 }
 
-/// 剪贴板里的图片(格式, 原始字节);有文件地址的(拷文件、UU 占位)不算
+/// file:// 地址转本地路径(百分号解码,中文文件名是 UTF-8 编码的)
+fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
+    let rest = url.strip_prefix("file://")?;
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    let raw = rest.as_bytes();
+    let mut out = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'%' && i + 2 < raw.len() {
+            if let Ok(byte) = u8::from_str_radix(std::str::from_utf8(&raw[i + 1..i + 3]).ok()?, 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(raw[i]);
+        i += 1;
+    }
+    Some(std::path::PathBuf::from(String::from_utf8(out).ok()?))
+}
+
+/// 剪贴板是图片文件的地址时读文件内容。1.8.1:iPhone 照片 App 复制的图片经通用剪贴板到 Mac,
+/// 剪贴板里不是图片数据,而是系统先下载到 …/useractivityd/shared-pasteboard/items/… 的图片文件地址(用户实测),
+/// 1.8.0「有文件地址就不算」把它也挡掉了。UU 自己文件夹里的地址(空占位 / 反向同步)仍不算,这是防打转的关键。
+fn read_clipboard_image_file(pb: &NSPasteboard) -> Option<(String, Vec<u8>)> {
+    let url = pb.stringForType(&NSString::from_str("public.file-url"))?.to_string();
+    let path = file_url_to_path(&url)?;
+    if path.to_string_lossy().contains("com.netease.uuremote") {
+        return None;
+    }
+    let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    let uti = match ext.as_str() {
+        "png" => "public.png",
+        "jpg" | "jpeg" => "public.jpeg",
+        "heic" => "public.heic",
+        "tif" | "tiff" => "public.tiff",
+        _ => return None,
+    };
+    let size = std::fs::metadata(&path).ok()?.len() as usize;
+    if size == 0 || size > IMAGE_MAX_BYTES {
+        return None;
+    }
+    Some((uti.to_string(), std::fs::read(&path).ok()?))
+}
+
+/// 剪贴板里的图片(格式, 原始字节):先认图片数据;是文件地址就看是不是图片文件
 fn read_clipboard_image(pb: &NSPasteboard) -> Option<(String, Vec<u8>)> {
     let types = pasteboard_types(pb);
     if types.iter().any(|t| t == "public.file-url") {
-        return None;
+        return read_clipboard_image_file(pb);
     }
     let mut best: Option<(String, Vec<u8>)> = None;
     for ty in IMAGE_TYPES {
