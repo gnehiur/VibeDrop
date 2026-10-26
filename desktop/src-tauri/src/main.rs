@@ -347,7 +347,6 @@ struct ConnectedClient {
     base_id: String,
     name: String,
     can_receive_files: bool,
-    receives_clipboard: bool,
     sender: mpsc::UnboundedSender<String>,
 }
 
@@ -2362,7 +2361,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                                     base_id: base_id.clone(),
                                                     name: client_name.clone(),
                                                     can_receive_files,
-                                                    receives_clipboard,
                                                     sender: outgoing_tx.clone(),
                                                 },
                                             );
@@ -3289,12 +3287,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
             clipboard_text = clipboard_rx.recv() => {
                 if authenticated {
                     if let Ok(text) = clipboard_text {
-                        let send_to_explicit_receivers_only = state
-                            .clients
-                            .lock()
-                            .map(|clients| clients.values().any(|client| client.receives_clipboard))
-                            .unwrap_or(false);
-                        if send_to_explicit_receivers_only && !current_receives_clipboard {
+                        // 只推给明确声明要收剪贴板的连接(安卓原生剪贴板同步连接)。1.6.2 及以前:一个声明的都没连着时推给所有人,
+                        // iPhone 就动不动弹「已同步到剪贴板」,写进自己剪贴板后又经苹果通用剪贴板回写 Mac,跟 UU远程的剪贴板同步搅在一起;
+                        // iPhone 本来就有苹果通用剪贴板,这个推送对它多余(26-10-26 用户要求 iPhone 不再收)。
+                        // 手机互传(relay_text)走的是定向发送,不受影响。
+                        if !current_receives_clipboard {
                             continue;
                         }
                         let msg = serde_json::json!({
