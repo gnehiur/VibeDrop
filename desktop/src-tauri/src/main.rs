@@ -2296,6 +2296,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
     let mut current_client_id = String::new();
     let mut current_client_name = String::new();
     let mut current_receives_clipboard = false;
+    // 1.6.4:对方是另一台电脑转发来的(device_role=relay,见 remote_relay.rs)
+    let mut current_is_relay = false;
     let mut active_incoming_file_transfers = std::collections::HashSet::new();
     // 手机互传:transfer_id → 目标手机 client_id(上传完成后经现有出站管线转投)
     let mut relay_targets: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -2352,6 +2354,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                             .as_deref()
                                             .unwrap_or("primary");
                                         current_receives_clipboard = receives_clipboard;
+                                        current_is_relay = device_role == "relay";
                                         if let Ok(mut clients) = state.clients.lock() {
                                             clients.insert(
                                                 client_id.clone(),
@@ -2744,7 +2747,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                         },
                                     );
                                     history_entry.transfer_id = client_msg.transfer_id.clone();
-                                    append_history_entry(&history_entry);
+                                    // 转发来的不记本机历史:原始那条手机已记进金库,合并历史里本来就有;再记一份就成了两行
+                                    // (来源名不同,去重认不出;26-10-26 用户截图发现 1.6.2 起每条重复)
+                                    if !current_is_relay {
+                                        append_history_entry(&history_entry);
+                                    }
 
                                     let (reply_tx, reply_rx) = oneshot::channel();
                                     let req = InputRequest {
@@ -2785,8 +2792,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                                 info!("文字已输入");
                                                 tray_notify_received(&state, Some(text_content.as_str()), TrayFx::Ripple);
 
-                                                // 通知 Tauri 前端窗口
-                                                if let Ok(guard) = state.app_handle.lock() {
+                                                // 通知 Tauri 前端窗口(转发来的不插,理由同上)
+                                                if current_is_relay {
+                                                } else if let Ok(guard) = state.app_handle.lock() {
                                                     if let Some(handle) = guard.as_ref() {
                                                         let _ = handle.emit("text-received", &history_entry);
                                                     }
