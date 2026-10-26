@@ -14,7 +14,7 @@
 //! - 远程模式(1.6.2,最前面是 UU远程等远控工具、又没走 remote_relay 转发时):远控工具盯着剪贴板一变就读走、经网络同步到被控电脑,
 //!   ⌘V 也转过去;按键比剪贴板内容先到,被控电脑就贴出上一次同步的旧内容。所以先等它读走(最多 1 秒),再给它 1.2 秒传过去,
 //!   才按 ⌘V;之后感知不到被控电脑何时取,固定等 1.5 秒再恢复。
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -37,6 +37,12 @@ const REMOTE_SYNC_MS: u64 = 1200; // 远程模式:读走后给它把内容传到
 const REMOTE_AFTER_MS: u64 = 1500; // 远程模式:⌘V 后等被控电脑贴完再恢复
 
 static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static OWN_RESTORE_COUNT: AtomicIsize = AtomicIsize::new(-1);
+
+/// 这次剪贴板变化是不是本模块恢复原剪贴板造成的(1.8.0:剪贴板图片转发据此跳过,别把恢复回去的旧图当新复制转走)
+pub fn is_own_change(change_count: isize) -> bool {
+    OWN_RESTORE_COUNT.load(Ordering::SeqCst) == change_count
+}
 
 /// 粘贴进行中:剪贴板轮询此时别去读(一读就把惰性数据取走缓存,感知不到目标 App 了)
 pub fn in_flight() -> bool {
@@ -103,6 +109,11 @@ fn snapshot(pb: &NSPasteboard) -> Snapshot {
 }
 
 fn restore(pb: &NSPasteboard, snap: &Snapshot) {
+    restore_items(pb, snap);
+    OWN_RESTORE_COUNT.store(pb.changeCount(), Ordering::SeqCst);
+}
+
+fn restore_items(pb: &NSPasteboard, snap: &Snapshot) {
     pb.clearContents();
     let objects: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = snap
         .iter()

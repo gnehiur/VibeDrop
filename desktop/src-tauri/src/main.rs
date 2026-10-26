@@ -1896,6 +1896,11 @@ fn main() {
     // 转发给被控电脑时用的身份(1.6.2)
     let relay_device_id = format!("relay-{}", server_id);
     let relay_device_name = format!("{} 转发", hostname);
+    // 剪贴板图片转发(1.8.0):远程控制时把本机剪贴板里的图片转给被控电脑(见 remote_relay.rs)
+    {
+        let (image_relay_id, image_relay_name) = (relay_device_id.clone(), relay_device_name.clone());
+        std::thread::spawn(move || remote_relay::watch_clipboard_images(image_relay_id, image_relay_name));
+    }
 
     std::thread::spawn(move || {
         let mut enigo = Enigo::new(&Settings::default())
@@ -2896,6 +2901,49 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                         }
                                     }
                                 }
+                            }
+
+                            "relay_clipboard_image" => {
+                                // 1.8.0:另一台电脑转来的剪贴板图片(见 remote_relay.rs),原样写进本机剪贴板;不记历史
+                                if !authenticated || !current_is_relay {
+                                    let reply = ServerMessage {
+                                        status: "error".to_string(),
+                                        hostname: None,
+                                        error: Some("未认证".to_string()),
+                                    };
+                                    let _ = ws_sender.send(Message::Text(serde_json::to_string(&reply).unwrap().into())).await;
+                                    continue;
+                                }
+                                let uti = client_msg.mime_type.clone().unwrap_or_default();
+                                let written = client_msg
+                                    .image_base64
+                                    .as_deref()
+                                    .ok_or_else(|| "缺少图片数据".to_string())
+                                    .and_then(decode_base64_bytes)
+                                    .and_then(|bytes| remote_relay::put_clipboard_image(&uti, &bytes).map(|ours| (bytes, ours)));
+                                let reply = match written {
+                                    Ok((bytes, ours)) => {
+                                        tray_notify_received(&state, None, TrayFx::ClipboardSync);
+                                        // UU 可能随后用 0 字节占位文件盖掉:过 1.5 秒、再过 2.5 秒各查一次,被盖就写回
+                                        tokio::spawn(async move {
+                                            for wait_ms in [1500u64, 2500] {
+                                                tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                                                let (uti, bytes) = (uti.clone(), bytes.clone());
+                                                let rewrote = tokio::task::spawn_blocking(move || {
+                                                    remote_relay::rewrite_if_placeholder(&uti, &bytes, ours)
+                                                })
+                                                .await
+                                                .unwrap_or(false);
+                                                if rewrote {
+                                                    append_debug_log("relay", "clipboard_image_rewrite", serde_json::json!({ "after_ms": wait_ms }));
+                                                }
+                                            }
+                                        });
+                                        ServerMessage { status: "ok".to_string(), hostname: None, error: None }
+                                    }
+                                    Err(e) => ServerMessage { status: "error".to_string(), hostname: None, error: Some(e) },
+                                };
+                                let _ = ws_sender.send(Message::Text(serde_json::to_string(&reply).unwrap().into())).await;
                             }
 
                             "image_clipboard" => {

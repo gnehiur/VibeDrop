@@ -192,3 +192,152 @@ pub async fn relay_text(
         ))
     }
 }
+
+// ---- 剪贴板图片转发(1.8.0,2026-10-26)----
+// 场景:iPhone 上复制图片 → 苹果通用剪贴板放进 MacBook 剪贴板 → 想在 UU远程里的 Mini 上 ⌘V。
+// UU 不传图片内容:只在 Mini 上建个 0 字节占位文件(~/Library/Application Support/com.netease.uuremote.server/Clipboard/.uuremote_*),
+// 把它的文件地址放进剪贴板,贴出来是一行路径(用户实测)。
+// 现在:MacBook 剪贴板出现图片、最前面又是远控工具、且配了转发时,把图片原始数据(不重新编码,TIFF/HEIC 也行)转给被控电脑的
+// VibeDrop,由它写进自己的剪贴板;UU 随后写来的占位文件会被盖回去(put_clipboard_image + rewrite_if_placeholder)。
+// 不打转:UU 把 Mini 剪贴板反向同步回 MacBook 时是文件地址不是图片;同一张图只转一次;VibeDrop 自己粘贴/恢复引起的变化不算。
+use base64::Engine as _;
+use objc2_app_kit::NSPasteboard;
+use objc2_foundation::{NSData, NSString};
+
+/// 按优先级挑剪贴板里的图片格式;同一张图多种格式都在时取最小的那份(WebSocket 单帧上限 16MB)
+const IMAGE_TYPES: &[&str] = &["public.png", "public.jpeg", "public.heic", "public.tiff"];
+const IMAGE_MAX_BYTES: usize = 11 * 1024 * 1024; // base64 后约 15MB,留在 16MB 帧上限内
+const UU_PLACEHOLDER_MARK: &str = "com.netease.uuremote.server/Clipboard";
+
+fn pasteboard_types(pb: &NSPasteboard) -> Vec<String> {
+    pb.types().map(|types| types.iter().map(|t| t.to_string()).collect()).unwrap_or_default()
+}
+
+/// 剪贴板里的图片(格式, 原始字节);有文件地址的(拷文件、UU 占位)不算
+fn read_clipboard_image(pb: &NSPasteboard) -> Option<(String, Vec<u8>)> {
+    let types = pasteboard_types(pb);
+    if types.iter().any(|t| t == "public.file-url") {
+        return None;
+    }
+    let mut best: Option<(String, Vec<u8>)> = None;
+    for ty in IMAGE_TYPES {
+        if !types.iter().any(|t| t == ty) {
+            continue;
+        }
+        if let Some(data) = pb.dataForType(&NSString::from_str(ty)) {
+            let bytes = data.to_vec();
+            if !bytes.is_empty() && best.as_ref().map(|(_, b)| bytes.len() < b.len()).unwrap_or(true) {
+                best = Some((ty.to_string(), bytes));
+            }
+        }
+    }
+    best
+}
+
+/// 被控电脑一侧:图片原样写进剪贴板,返回写完后的 changeCount
+pub fn put_clipboard_image(uti: &str, bytes: &[u8]) -> Result<isize, String> {
+    if !IMAGE_TYPES.contains(&uti) {
+        return Err(format!("不认识的图片格式: {uti}"));
+    }
+    let pb = NSPasteboard::generalPasteboard();
+    pb.clearContents();
+    if !pb.setData_forType(Some(&NSData::with_bytes(bytes)), &NSString::from_str(uti)) {
+        return Err("写入剪贴板失败".to_string());
+    }
+    Ok(pb.changeCount())
+}
+
+/// UU 晚到一步、用占位文件盖掉了刚写进去的图片 → 写回。返回是否写回了
+pub fn rewrite_if_placeholder(uti: &str, bytes: &[u8], ours: isize) -> bool {
+    let pb = NSPasteboard::generalPasteboard();
+    if pb.changeCount() == ours {
+        return false;
+    }
+    let url = pb.stringForType(&NSString::from_str("public.file-url")).map(|s| s.to_string()).unwrap_or_default();
+    let decoded = url.replace("%20", " ");
+    if !decoded.contains(UU_PLACEHOLDER_MARK) {
+        return false; // 是用户自己又复制了别的,不碰
+    }
+    put_clipboard_image(uti, bytes).is_ok()
+}
+
+async fn relay_image(
+    cfg: &RelayConfig,
+    uti: &str,
+    bytes: &[u8],
+    device_id: &str,
+    device_name: &str,
+) -> Result<String, String> {
+    let (mut ws, host) = connect_and_auth(cfg, device_id, device_name).await?;
+    let message = serde_json::json!({
+        "action": "relay_clipboard_image",
+        "mime_type": uti,
+        "image_base64": base64::engine::general_purpose::STANDARD.encode(bytes),
+    });
+    ws.send(WsMessage::Text(message.to_string().into())).await.map_err(|e| format!("发送失败: {e}"))?;
+    let reply = wait_status(&mut ws, Duration::from_secs(20)).await?;
+    let _ = ws.close(None).await;
+    if reply.get("status").and_then(|s| s.as_str()) == Some("ok") {
+        Ok(host)
+    } else {
+        Err(reply.get("error").and_then(|e| e.as_str()).unwrap_or("被控电脑写剪贴板失败").to_string())
+    }
+}
+
+/// MacBook 一侧常驻线程:每 0.5 秒看一次剪贴板,满足条件就把图片转给被控电脑
+pub fn watch_clipboard_images(device_id: String, device_name: String) {
+    let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+        return;
+    };
+    let pb = NSPasteboard::generalPasteboard();
+    let mut last_count = pb.changeCount();
+    let mut last_hash: u64 = 0;
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let count = pb.changeCount();
+        if count == last_count {
+            continue;
+        }
+        last_count = count;
+        if crate::lazy_paste::in_flight() || crate::lazy_paste::is_own_change(count) {
+            continue;
+        }
+        let Some(cfg) = load() else { continue };
+        let front = front_bundle_id();
+        if !is_remote_desktop(&front) {
+            continue;
+        }
+        let started = Instant::now();
+        let Some((uti, bytes)) = read_clipboard_image(&pb) else { continue };
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            hasher.finish()
+        };
+        if hash == last_hash {
+            continue;
+        }
+        last_hash = hash;
+        let read_ms = started.elapsed().as_millis();
+        let result = if bytes.len() > IMAGE_MAX_BYTES {
+            Err(format!("图片太大({} 字节),跳过", bytes.len()))
+        } else {
+            rt.block_on(relay_image(&cfg, &uti, &bytes, &device_id, &device_name))
+        };
+        crate::append_debug_log(
+            "relay",
+            "clipboard_image",
+            serde_json::json!({
+                "type": uti,
+                "bytes": bytes.len(),
+                "read_ms": read_ms,
+                "total_ms": started.elapsed().as_millis(),
+                "remote_app": front,
+                "ok": result.is_ok(),
+                "host": result.as_ref().ok(),
+                "error": result.as_ref().err(),
+            }),
+        );
+    }
+}
