@@ -687,5 +687,10 @@
   "已连上 {host}": "Verbunden mit {host}",
   "连接失败：{error}": "Verbindung fehlgeschlagen: {error}",
   "未设置：远程控制时改为等同步完再粘贴": "Nicht gesetzt: bei Fernsteuerung nach Sync einfügen",
-  "正在测试连接…": "Verbindung wird getestet…"
+  "正在测试连接…": "Verbindung wird getestet…",
+  "接收电脑剪贴板": "Zwischenablage des Computers empfangen",
+  "电脑上复制的文字自动进这台手机的剪贴板。iPhone 和 Mac 登录同一个 Apple ID 的话，苹果自带的通用剪贴板已经会同步，不用开。iPhone 只在 VibeDrop 开着时收得到。": "Auf dem Computer kopierter Text landet automatisch in der Zwischenablage dieses Handys. Nutzen iPhone und Mac dieselbe Apple-ID, synchronisiert Apples universelle Zwischenablage das schon – dann nicht nötig. Das iPhone empfängt nur, solange VibeDrop geöffnet ist.",
+  "上次收到：{time}": "Zuletzt empfangen: {time}",
+  "已开启：电脑上复制的文字会进这台手机的剪贴板": "An: Auf dem Computer kopierter Text landet auf diesem Handy",
+  "已关闭：不再接收电脑剪贴板": "Aus: Zwischenablage des Computers wird nicht mehr empfangen"
 }

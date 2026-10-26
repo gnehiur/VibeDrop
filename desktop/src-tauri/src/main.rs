@@ -3302,9 +3302,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                         if !current_receives_clipboard {
                             continue;
                         }
+                        // source=desktop:手机据此安静写入、不弹提示(手机互传发来的 clipboard 不带它,照旧提示)
                         let msg = serde_json::json!({
                             "action": "clipboard",
-                            "text": text
+                            "text": text,
+                            "source": "desktop",
                         });
                         let _ = ws_sender.send(Message::Text(msg.to_string().into())).await;
                     }

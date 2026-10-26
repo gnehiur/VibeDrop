@@ -687,5 +687,10 @@
   "已连上 {host}": "Conectado a {host}",
   "连接失败：{error}": "Error de conexión: {error}",
   "未设置：远程控制时改为等同步完再粘贴": "Sin configurar: en control remoto, pega tras sincronizar",
-  "正在测试连接…": "Probando conexión…"
+  "正在测试连接…": "Probando conexión…",
+  "接收电脑剪贴板": "Recibir portapapeles del ordenador",
+  "电脑上复制的文字自动进这台手机的剪贴板。iPhone 和 Mac 登录同一个 Apple ID 的话，苹果自带的通用剪贴板已经会同步，不用开。iPhone 只在 VibeDrop 开着时收得到。": "El texto que copies en el ordenador pasa solo al portapapeles de este móvil. Si tu iPhone y tu Mac usan el mismo Apple ID, el Portapapeles Universal de Apple ya lo sincroniza y no hace falta. El iPhone solo recibe con VibeDrop abierto.",
+  "上次收到：{time}": "Última recepción: {time}",
+  "已开启：电脑上复制的文字会进这台手机的剪贴板": "Activado: lo que copies en el ordenador irá al portapapeles de este móvil",
+  "已关闭：不再接收电脑剪贴板": "Desactivado: ya no se recibe el portapapeles del ordenador"
 }

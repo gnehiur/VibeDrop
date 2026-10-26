@@ -60,7 +60,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v39-vault-autodiscover-20261025';
+window.__vdBuild = 'ui-v40-desktop-clipboard-toggle-20261026';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -619,6 +619,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initNavigation();
     initSettingsButton();
     initOutingModeSetting();
+    initDesktopClipboardSetting();
     initHomeCardsSetting();
     initLanguageSetting();
     initAboutSection();
@@ -917,7 +918,8 @@ function syncNativeBackgroundClipboardConfig(identity = clientIdentity, devices 
                 id: identity.id,
                 name: identity.name,
             } : null,
-            devices: buildNativeBackgroundClipboardDevices(devices),
+            // 「接收电脑剪贴板」关着就不给原生后台连接电脑列表,它就不连、不收(1.7.0)
+            devices: wantsDesktopClipboard() ? buildNativeBackgroundClipboardDevices(devices) : [],
         });
         window.NativeBackgroundClipboard.syncConfig(payload);
     } catch (error) {
@@ -1378,6 +1380,47 @@ function initLanguageSetting() {
     select.value = localStorage.getItem(window.vibeI18n.LANG_KEY) || 'system';
     select.addEventListener('change', () => {
         window.vibeI18n.setLanguage(select.value); // 内部会整页重载
+    });
+}
+
+// ---- 接收电脑剪贴板(1.7.0,2026-10-26):每台手机自己决定要不要收电脑的剪贴板 ----
+// 电脑只推给认证时声明 receives_clipboard 的连接(桌面端 1.6.3 起)。安卓默认开:原生后台连接负责收(开关关掉就不给它电脑列表);
+// iPhone 默认关:和 Mac 登录同一个 Apple ID 时苹果通用剪贴板已经会同步,重复推送只会刷屏,还会经通用剪贴板回写 Mac。
+// 没有通用剪贴板的人(Apple ID 不同、Windows 电脑等)自己打开。iPhone 只有 VibeDrop 在前台时连得上,所以是「打开 App 时拿到电脑最新复制的」。
+const DESKTOP_CLIPBOARD_LAST_KEY = 'vibedrop_desktop_clipboard_last';
+
+function hasNativeBackgroundClipboard() {
+    return Boolean(window.NativeBackgroundClipboard && window.NativeBackgroundClipboard.syncConfig);
+}
+
+function wantsDesktopClipboard() {
+    const value = getStoredSettingsObject().receiveDesktopClipboard;
+    return typeof value === 'boolean' ? value : hasNativeBackgroundClipboard();
+}
+
+function renderDesktopClipboardInfo() {
+    const info = $('desktop-clipboard-info');
+    if (!info) return;
+    const last = Number(localStorage.getItem(DESKTOP_CLIPBOARD_LAST_KEY) || 0);
+    info.textContent = wantsDesktopClipboard() && last
+        ? t('上次收到：{time}', { time: new Date(last).toLocaleString() })
+        : '';
+}
+
+function initDesktopClipboardSetting() {
+    const toggle = $('desktop-clipboard-toggle');
+    if (!toggle) {
+        return;
+    }
+    toggle.checked = wantsDesktopClipboard();
+    renderDesktopClipboardInfo();
+    toggle.addEventListener('change', () => {
+        saveStoredSettingsObject({ ...getStoredSettingsObject(), receiveDesktopClipboard: toggle.checked });
+        syncNativeBackgroundClipboardConfig();
+        renderDesktopClipboardInfo();
+        showToast(toggle.checked ? t('已开启：电脑上复制的文字会进这台手机的剪贴板') : t('已关闭：不再接收电脑剪贴板'));
+        // 声明在认证时告诉电脑,所以重连一遍
+        void connectAll({ force: true, discoveryReason: 'desktop-clipboard-toggle' });
     });
 }
 
@@ -6633,6 +6676,7 @@ async function connectAll({
     discoveryReason = 'connect-all',
     targetDeviceIds = null,
     clearNativeBackgroundBeforeDiscovery = true,
+    force = false, // 已连好的也断开重连(要把新的认证声明告诉电脑时用)
 } = {}) {
     const targetIdSet = getConnectionTargetIdSet(targetDeviceIds);
     if (refreshDiscovery && alignNativeBackgroundConfig && clearNativeBackgroundBeforeDiscovery) {
@@ -6651,7 +6695,7 @@ async function connectAll({
     }
     devices.forEach(dev => {
         if (dev.ip && isUsableDesktopEndpoint(dev) && shouldIncludeConnectionTarget(dev, targetIdSet)) {
-            connectDevice(dev.id, dev.ip, dev.port || '9001', dev.pin || '');
+            connectDevice(dev.id, dev.ip, dev.port || '9001', dev.pin || '', force);
         }
     });
 }
@@ -6670,7 +6714,7 @@ function disconnectAll() {
     });
 }
 
-function connectDevice(deviceId, ip, port, pin) {
+function connectDevice(deviceId, ip, port, pin, force = false) {
     const conn = ensureConnection(deviceId);
     const normalizedPort = String(port || DESKTOP_DISCOVERY_DEFAULT_PORT).trim() || String(DESKTOP_DISCOVERY_DEFAULT_PORT);
     const normalizedPin = String(pin || '').trim();
@@ -6681,7 +6725,7 @@ function connectDevice(deviceId, ip, port, pin) {
         return;
     }
 
-    if (isConnectionReady(conn) && conn.endpoint === endpoint && conn.pin === normalizedPin) {
+    if (!force && isConnectionReady(conn) && conn.endpoint === endpoint && conn.pin === normalizedPin) {
         debugLog('connect:skip_existing_ready', { deviceId, endpoint });
         updateDeviceUI(deviceId, 'connected', conn.hostname || undefined);
         return;
@@ -6737,6 +6781,8 @@ function connectDevice(deviceId, ip, port, pin) {
             device_id: clientIdentity.id,
             device_name: clientIdentity.name,
             can_receive_files: supportsNativeFileReceive(),
+            // 安卓由原生后台连接收剪贴板,前台连接不再重复收
+            receives_clipboard: wantsDesktopClipboard() && !hasNativeBackgroundClipboard(),
         }));
         updateDeviceUI(deviceId, 'connecting', t('认证中...'));
     };
@@ -6786,10 +6832,18 @@ function connectDevice(deviceId, ip, port, pin) {
 
         if (data.action === 'clipboard') {
             if (data.text) {
+                // 电脑剪贴板推送(source=desktop)安静写入,只在设置里记「上次收到」;手机互传发来的照旧提示
+                const fromDesktop = data.source === 'desktop';
                 writeClipboard(data.text).then(() => {
-                    showToast(t('已同步到剪贴板'));
+                    if (fromDesktop) {
+                        try { localStorage.setItem(DESKTOP_CLIPBOARD_LAST_KEY, String(Date.now())); } catch (_) { /* 记不了就算了 */ }
+                        renderDesktopClipboardInfo();
+                    } else {
+                        showToast(t('已同步到剪贴板'));
+                    }
                 }).catch(() => {
-                    showToast(t('剪贴板写入失败'));
+                    if (fromDesktop) probe('desktop-clipboard-write-fail', String(data.text.length));
+                    else showToast(t('剪贴板写入失败'));
                 });
             }
             return;

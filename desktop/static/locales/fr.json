@@ -687,5 +687,10 @@
   "已连上 {host}": "Connecté à {host}",
   "连接失败：{error}": "Échec de connexion : {error}",
   "未设置：远程控制时改为等同步完再粘贴": "Non défini : en contrôle à distance, coller après synchro",
-  "正在测试连接…": "Test de connexion…"
+  "正在测试连接…": "Test de connexion…",
+  "接收电脑剪贴板": "Recevoir le presse-papiers de l'ordinateur",
+  "电脑上复制的文字自动进这台手机的剪贴板。iPhone 和 Mac 登录同一个 Apple ID 的话，苹果自带的通用剪贴板已经会同步，不用开。iPhone 只在 VibeDrop 开着时收得到。": "Le texte copié sur l'ordinateur arrive automatiquement dans le presse-papiers de ce téléphone. Si votre iPhone et votre Mac utilisent le même identifiant Apple, le presse-papiers universel d'Apple le synchronise déjà : inutile de l'activer. L'iPhone ne reçoit que lorsque VibeDrop est ouvert.",
+  "上次收到：{time}": "Dernière réception : {time}",
+  "已开启：电脑上复制的文字会进这台手机的剪贴板": "Activé : le texte copié sur l'ordinateur arrive dans ce téléphone",
+  "已关闭：不再接收电脑剪贴板": "Désactivé : presse-papiers de l'ordinateur non reçu"
 }

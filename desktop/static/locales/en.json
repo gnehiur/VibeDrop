@@ -716,5 +716,10 @@
   "已连上 {host}": "Connected to {host}",
   "连接失败：{error}": "Connection failed: {error}",
   "未设置：远程控制时改为等同步完再粘贴": "Not set: when remote controlling, paste after sync finishes",
-  "正在测试连接…": "Testing connection…"
+  "正在测试连接…": "Testing connection…",
+  "接收电脑剪贴板": "Receive computer clipboard",
+  "电脑上复制的文字自动进这台手机的剪贴板。iPhone 和 Mac 登录同一个 Apple ID 的话，苹果自带的通用剪贴板已经会同步，不用开。iPhone 只在 VibeDrop 开着时收得到。": "Text you copy on the computer goes into this phone's clipboard automatically. If your iPhone and Mac use the same Apple ID, Apple's Universal Clipboard already syncs it, so you don't need this. iPhone only receives while VibeDrop is open.",
+  "上次收到：{time}": "Last received: {time}",
+  "已开启：电脑上复制的文字会进这台手机的剪贴板": "On: text copied on the computer goes into this phone's clipboard",
+  "已关闭：不再接收电脑剪贴板": "Off: no longer receiving the computer clipboard"
 }

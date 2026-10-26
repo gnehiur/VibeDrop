@@ -687,5 +687,10 @@
   "已连上 {host}": "Imeunganishwa na {host}",
   "连接失败：{error}": "Muunganisho umeshindwa: {error}",
   "未设置：远程控制时改为等同步完再粘贴": "Haijawekwa: ukidhibiti kwa mbali, bandika baada ya kusawazisha",
-  "正在测试连接…": "Inajaribu muunganisho…"
+  "正在测试连接…": "Inajaribu muunganisho…",
+  "接收电脑剪贴板": "Pokea ubao wa kunakili wa kompyuta",
+  "电脑上复制的文字自动进这台手机的剪贴板。iPhone 和 Mac 登录同一个 Apple ID 的话，苹果自带的通用剪贴板已经会同步，不用开。iPhone 只在 VibeDrop 开着时收得到。": "Maandishi unayonakili kwenye kompyuta huingia kiotomatiki kwenye ubao wa kunakili wa simu hii. Ikiwa iPhone na Mac zinatumia Apple ID moja, Universal Clipboard ya Apple tayari husawazisha, hivyo huhitaji hii. iPhone hupokea tu VibeDrop ikiwa wazi.",
+  "上次收到：{time}": "Ilipokelewa mwisho: {time}",
+  "已开启：电脑上复制的文字会进这台手机的剪贴板": "Imewashwa: maandishi yaliyonakiliwa kwenye kompyuta yataingia kwenye simu hii",
+  "已关闭：不再接收电脑剪贴板": "Imezimwa: haipokei tena ubao wa kunakili wa kompyuta"
 }

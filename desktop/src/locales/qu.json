@@ -687,5 +687,10 @@
   "已连上 {host}": "{host}wan tinkisqaña",
   "连接失败：{error}": "Mana tinkiyta atikunchu: {error}",
   "未设置：远程控制时改为等同步完再粘贴": "Mana churasqachu: karumanta kamachispa tupachisqa qhipallan pegay",
-  "正在测试连接…": "Tinkiyta pruebachkan…"
+  "正在测试连接…": "Tinkiyta pruebachkan…",
+  "接收电脑剪贴板": "Computadorapa portapapelesninta chaskiy",
+  "电脑上复制的文字自动进这台手机的剪贴板。iPhone 和 Mac 登录同一个 Apple ID 的话，苹果自带的通用剪贴板已经会同步，不用开。iPhone 只在 VibeDrop 开着时收得到。": "Computadorapi copiasqayki qillqaqa kay celularpa portapapelesninman kikillanmanta yaykun. iPhonepas Macpas huk Apple IDllawan kaptinku, Applepa Universal Clipboardnin tupachinña, mana kichanaykichu. iPhoneqa VibeDrop kichasqa kachkaptinlla chaskin.",
+  "上次收到：{time}": "Qhipa chaskisqa: {time}",
+  "已开启：电脑上复制的文字会进这台手机的剪贴板": "Kichasqa: computadorapi copiasqayki kay celularman yaykunqa",
+  "已关闭：不再接收电脑剪贴板": "Wichqasqa: manaña computadorapa portapapelesninta chaskinchu"
 }
