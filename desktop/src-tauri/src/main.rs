@@ -2924,20 +2924,50 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                 let reply = match written {
                                     Ok((bytes, ours)) => {
                                         tray_notify_received(&state, None, TrayFx::ClipboardSync);
-                                        // UU 可能随后用 0 字节占位文件盖掉:过 1.5 秒、再过 2.5 秒各查一次,被盖就写回
-                                        tokio::spawn(async move {
-                                            for wait_ms in [1500u64, 2500] {
-                                                tokio::time::sleep(Duration::from_millis(wait_ms)).await;
-                                                let (uti, bytes) = (uti.clone(), bytes.clone());
-                                                let rewrote = tokio::task::spawn_blocking(move || {
-                                                    remote_relay::rewrite_if_placeholder(&uti, &bytes, ours)
-                                                })
-                                                .await
-                                                .unwrap_or(false);
-                                                if rewrote {
-                                                    append_debug_log("relay", "clipboard_image_rewrite", serde_json::json!({ "after_ms": wait_ms }));
+                                        // 1.8.2:记一条图片历史(这类图手机那边没有记录,不记就哪都留不下),原图存 received-images
+                                        let (mime, ext) = remote_relay::image_mime_ext(&uti);
+                                        let source_name = format!("{} 剪贴板转发", current_client_name.trim_end_matches(" 转发"));
+                                        match save_received_image(&bytes, Some(&format!("剪贴板图片.{ext}")), Some(mime)) {
+                                            Ok((file_name, image_path)) => {
+                                                let thumbnail = image::load_from_memory(&bytes)
+                                                    .ok()
+                                                    .and_then(|img| build_thumbnail_data_url(&img).ok());
+                                                let history_entry = HistoryEntry {
+                                                    timestamp: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false),
+                                                    text: format!("[图片] {}", file_name),
+                                                    client_ip: "ws-client".to_string(),
+                                                    client_id: Some(current_client_id.clone()),
+                                                    client_name: Some(source_name),
+                                                    kind: Some("image".to_string()),
+                                                    file_name: Some(file_name),
+                                                    image_path: Some(image_path),
+                                                    thumbnail_data_url: thumbnail,
+                                                    file_path: None,
+                                                    direction: None,
+                                                    status: None,
+                                                    session_id: None,
+                                                    item_count: None,
+                                                    save_target: None,
+                                                    items: None,
+                                                    transfer_id: None,
+                                                };
+                                                append_history_entry(&history_entry);
+                                                if let Ok(guard) = state.app_handle.lock() {
+                                                    if let Some(handle) = guard.as_ref() {
+                                                        let _ = handle.emit("text-received", &history_entry);
+                                                    }
                                                 }
                                             }
+                                            Err(e) => warn!("剪贴板转发图片存档失败: {}", e),
+                                        }
+                                        // UU 双向同步,会晚几秒用 0 字节占位盖掉:守 30 秒,盖了就写回(见 remote_relay::guard_clipboard_image)
+                                        tokio::task::spawn_blocking(move || {
+                                            let (rewrites, ended) = remote_relay::guard_clipboard_image(&uti, &bytes, ours);
+                                            append_debug_log(
+                                                "relay",
+                                                "clipboard_image_guard",
+                                                serde_json::json!({ "rewrites": rewrites, "ended": ended }),
+                                            );
                                         });
                                         ServerMessage { status: "ok".to_string(), hostname: None, error: None }
                                     }

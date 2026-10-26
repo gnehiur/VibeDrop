@@ -292,18 +292,58 @@ pub fn put_clipboard_image(uti: &str, bytes: &[u8]) -> Result<isize, String> {
     Ok(pb.changeCount())
 }
 
-/// UU 晚到一步、用占位文件盖掉了刚写进去的图片 → 写回。返回是否写回了
-pub fn rewrite_if_placeholder(uti: &str, bytes: &[u8], ours: isize) -> bool {
-    let pb = NSPasteboard::generalPasteboard();
-    if pb.changeCount() == ours {
-        return false;
-    }
+fn is_uu_placeholder(pb: &NSPasteboard) -> bool {
     let url = pb.stringForType(&NSString::from_str("public.file-url")).map(|s| s.to_string()).unwrap_or_default();
-    let decoded = url.replace("%20", " ");
-    if !decoded.contains(UU_PLACEHOLDER_MARK) {
-        return false; // 是用户自己又复制了别的,不碰
+    url.replace("%20", " ").contains(UU_PLACEHOLDER_MARK)
+}
+
+/// 被控电脑一侧:写进图片后守 30 秒,被 UU 的空占位盖掉就写回(最多 10 次)。
+/// 1.8.2:UU 双向同步,我们一写它就同步回 MacBook、再同步回来,来回一趟要几秒;1.8.1 只在 1.5 秒、4 秒各查一次,
+/// 19:33 那次 UU 晚 6 秒才盖,没写回,用户又贴出路径。用户自己复制了别的(不是 UU 占位)就立刻停手。
+/// 返回(写回次数, 结束原因)
+pub fn guard_clipboard_image(uti: &str, bytes: &[u8], mut ours: isize) -> (u32, &'static str) {
+    let pb = NSPasteboard::generalPasteboard();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut rewrites = 0u32;
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(300));
+        let count = pb.changeCount();
+        if count == ours || crate::lazy_paste::in_flight() {
+            continue;
+        }
+        if crate::lazy_paste::is_own_change(count) {
+            ours = count; // 本机粘贴完恢复原剪贴板(里面就是这张图),算我们的
+            continue;
+        }
+        if pasteboard_types(&pb).is_empty() {
+            continue; // UU 先清空再写,中间态等下一轮
+        }
+        if !is_uu_placeholder(&pb) {
+            return (rewrites, "user-copied");
+        }
+        if rewrites >= 10 {
+            return (rewrites, "max-rewrites");
+        }
+        match put_clipboard_image(uti, bytes) {
+            Ok(count) => {
+                ours = count;
+                rewrites += 1;
+                crate::append_debug_log("relay", "clipboard_image_rewrite", serde_json::json!({ "n": rewrites }));
+            }
+            Err(_) => return (rewrites, "write-failed"),
+        }
     }
-    put_clipboard_image(uti, bytes).is_ok()
+    (rewrites, "timeout")
+}
+
+/// 图片格式 → (MIME, 扩展名),记历史存原图用
+pub fn image_mime_ext(uti: &str) -> (&'static str, &'static str) {
+    match uti {
+        "public.jpeg" => ("image/jpeg", "jpg"),
+        "public.heic" => ("image/heic", "heic"),
+        "public.tiff" => ("image/tiff", "tiff"),
+        _ => ("image/png", "png"),
+    }
 }
 
 async fn relay_image(
