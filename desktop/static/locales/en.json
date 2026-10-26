@@ -708,5 +708,13 @@
   "已改为自动发现": "Switched to auto-discovery",
   "金库": "Vault",
   "跨设备历史和语音存在你自己电脑上的金库里。地址自动发现：金库在本机，或手机连上本机时转告；发现不到才需要手填。": "Cross-device history and voice live in the Vault on your own computer. The address is discovered automatically: the Vault runs on this Mac, or a phone passes it on when it connects. Enter it only if it can't be found.",
-  "还没连上金库": "Not connected to a Vault"
+  "还没连上金库": "Not connected to a Vault",
+  "远程控制转发": "Remote control relay",
+  "用 UU远程等工具控制另一台电脑时，文字直接交给那台电脑上的 VibeDrop 在它本机输入，不经远控工具的剪贴板同步。填那台电脑的地址和 PIN；不填则改为等远控工具同步完再粘贴。": "When you control another computer with UU Remote or similar tools, text goes straight to VibeDrop on that computer and is typed there, bypassing the remote tool's clipboard sync. Enter that computer's address and PIN; if left empty, VibeDrop waits for the remote tool to finish syncing before pasting.",
+  "被控电脑地址，如 100.x.x.x:9001": "Remote computer address, e.g. 100.x.x.x:9001",
+  "被控电脑的 PIN": "Remote computer's PIN",
+  "已连上 {host}": "Connected to {host}",
+  "连接失败：{error}": "Connection failed: {error}",
+  "未设置：远程控制时改为等同步完再粘贴": "Not set: when remote controlling, paste after sync finishes",
+  "正在测试连接…": "Testing connection…"
 }

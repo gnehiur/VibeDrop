@@ -11,6 +11,9 @@
 //! - 恢复前看 changeCount:这期间用户自己复制了新东西就不覆盖。
 //! - 坑:数据被取过一次系统就缓存,再取不再回调。所以本 App 自己的剪贴板轮询在粘贴期间要停(`in_flight()`);
 //!   若 ⌘V 前已被别人(剪贴板管理器之类)抢先取走,退回固定等 1.5 秒。原型与实测记录:Mini ~/Documents/vibedrop/research/1.6.1-lazy-paste/
+//! - 远程模式(1.6.2,最前面是 UU远程等远控工具、又没走 remote_relay 转发时):远控工具盯着剪贴板一变就读走、经网络同步到被控电脑,
+//!   ⌘V 也转过去;按键比剪贴板内容先到,被控电脑就贴出上一次同步的旧内容。所以先等它读走(最多 1 秒),再给它 1.2 秒传过去,
+//!   才按 ⌘V;之后感知不到被控电脑何时取,固定等 1.5 秒再恢复。
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -29,6 +32,9 @@ const GRACE_MS: u64 = 150; // 目标 App 取完字后再等一会儿才恢复(�
 const EAGER_FALLBACK_MS: u64 = 1500; // ⌘V 前已被别人取走、感知不到目标 App 时的固定等待
 const TIMEOUT_MS: u64 = 4000; // 一直没人来取(没贴上)也要恢复
 const SNAPSHOT_MAX_BYTES: usize = 64 * 1024 * 1024;
+const REMOTE_READ_WAIT_MS: u64 = 1000; // 远程模式:等远控工具读走剪贴板
+const REMOTE_SYNC_MS: u64 = 1200; // 远程模式:读走后给它把内容传到被控电脑的时间
+const REMOTE_AFTER_MS: u64 = 1500; // 远程模式:⌘V 后等被控电脑贴完再恢复
 
 static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
@@ -152,6 +158,8 @@ pub struct PasteReport {
     pub eager: bool,
     /// restored / skipped-user-copied
     pub restore: &'static str,
+    /// 远程模式下远控工具隔多久读走剪贴板(毫秒);None = 1 秒内没人读
+    pub remote_read_ms: Option<u128>,
 }
 
 struct InFlightGuard;
@@ -162,9 +170,10 @@ impl Drop for InFlightGuard {
 }
 
 /// 惰性写入 text → 调 send_cmd_v 按 ⌘V → 等目标 App 来取 → 完整恢复原剪贴板。
-/// on_prev_text:原剪贴板里的纯文字(调用方登记广播抑制)。
+/// on_prev_text:原剪贴板里的纯文字(调用方登记广播抑制)。remote:最前面是远控工具(见文件头「远程模式」)。
 pub fn paste_text(
     text: &str,
+    remote: bool,
     on_prev_text: impl FnOnce(&str),
     send_cmd_v: impl FnOnce() -> Result<(), String>,
 ) -> Result<PasteReport, String> {
@@ -193,6 +202,22 @@ pub fn paste_text(
     std::thread::sleep(Duration::from_millis(SETTLE_MS));
 
     let (lock, cv) = &*signal;
+    let mut remote_read_ms = None;
+    if remote {
+        let written = Instant::now();
+        let deadline = written + Duration::from_millis(REMOTE_READ_WAIT_MS);
+        let mut times = lock.lock().map_err(|_| "剪贴板信号锁失效".to_string())?;
+        while times.is_empty() {
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            times = cv.wait_timeout(times, deadline - now).map_err(|_| "剪贴板信号锁失效".to_string())?.0;
+        }
+        remote_read_ms = times.first().map(|at| at.duration_since(written).as_millis());
+        drop(times);
+        std::thread::sleep(Duration::from_millis(REMOTE_SYNC_MS));
+    }
     let eager = lock.lock().map(|times| !times.is_empty()).unwrap_or(false);
     let sent = Instant::now();
     if let Err(error) = send_cmd_v() {
@@ -201,7 +226,9 @@ pub fn paste_text(
     }
 
     let mut served_ms = None;
-    if eager {
+    if remote {
+        std::thread::sleep(Duration::from_millis(REMOTE_AFTER_MS));
+    } else if eager {
         std::thread::sleep(Duration::from_millis(EAGER_FALLBACK_MS));
     } else {
         let deadline = sent + Duration::from_millis(TIMEOUT_MS);
@@ -230,5 +257,5 @@ pub fn paste_text(
         "skipped-user-copied"
     };
     drop(provider);
-    Ok(PasteReport { prev: snapshot_summary(&snap), served_ms, eager, restore: restore_state })
+    Ok(PasteReport { prev: snapshot_summary(&snap), served_ms, eager, restore: restore_state, remote_read_ms })
 }

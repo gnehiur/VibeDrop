@@ -2296,6 +2296,36 @@ function renderVaultSettingsInfo() {
         : t('还没连上金库');
 }
 
+// 设置页「远程控制转发」(1.6.2):用 UU远程等控制另一台电脑时,文字直接交给那台电脑的 VibeDrop 本机输入。
+// 改了地址或 PIN 就保存并测一次连接;地址清空 = 关掉转发(退回等远控工具同步完再粘贴)
+function initRelaySettings() {
+    const urlInput = document.getElementById('relay-url-input');
+    const pinInput = document.getElementById('relay-pin-input');
+    const status = document.getElementById('relay-status');
+    if (!urlInput || !pinInput) return;
+    const show = (text) => { if (status) status.textContent = text; };
+    async function save() {
+        if (!urlInput.value.trim()) show(t('未设置：远程控制时改为等同步完再粘贴'));
+        else show(t('正在测试连接…'));
+        try {
+            const host = await invoke('set_remote_relay', { url: urlInput.value, pin: pinInput.value });
+            const cfg = await invoke('get_remote_relay');
+            urlInput.value = cfg?.url || '';
+            if (urlInput.value) show(t('已连上 {host}', { host: host || urlInput.value }));
+        } catch (error) {
+            show(t('连接失败：{error}', { error }));
+        }
+    }
+    urlInput.addEventListener('change', save);
+    pinInput.addEventListener('change', save);
+    invoke('get_remote_relay').then((cfg) => {
+        urlInput.value = cfg?.url || '';
+        pinInput.value = cfg?.pin || '';
+        if (cfg?.url) void save();
+        else show(t('未设置：远程控制时改为等同步完再粘贴'));
+    }).catch(() => {});
+}
+
 function initVaultSettings() {
     const input = document.getElementById('vault-url-input');
     if (!input) return;
@@ -2355,7 +2385,7 @@ async function refreshVaultRemoteEntries() {
         void pickVaultEndpoint(); // 可能换了网络,重选地址
     }
 }
-setTimeout(() => { initVaultSettings(); pickVaultEndpoint().finally(refreshVaultRemoteEntries); }, 3000);
+setTimeout(() => { initVaultSettings(); initRelaySettings(); pickVaultEndpoint().finally(refreshVaultRemoteEntries); }, 3000);
 setInterval(refreshVaultRemoteEntries, 5 * 60 * 1000);
 setInterval(pickVaultEndpoint, 60 * 1000);
 window.addEventListener('online', () => { void pickVaultEndpoint(); });

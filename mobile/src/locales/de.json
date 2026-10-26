@@ -679,5 +679,13 @@
   "已改为自动发现": "Auf automatische Erkennung umgestellt",
   "金库": "Vault",
   "跨设备历史和语音存在你自己电脑上的金库里。地址自动发现：金库在本机，或手机连上本机时转告；发现不到才需要手填。": "Geräteübergreifender Verlauf und Sprachaufnahmen liegen im Vault auf deinem eigenen Computer. Die Adresse wird automatisch erkannt: Der Vault läuft auf diesem Mac, oder ein Handy meldet sie beim Verbinden. Nur eingeben, wenn er nicht gefunden wird.",
-  "还没连上金库": "Nicht mit dem Vault verbunden"
+  "还没连上金库": "Nicht mit dem Vault verbunden",
+  "远程控制转发": "Fernsteuerungs-Weiterleitung",
+  "用 UU远程等工具控制另一台电脑时，文字直接交给那台电脑上的 VibeDrop 在它本机输入，不经远控工具的剪贴板同步。填那台电脑的地址和 PIN；不填则改为等远控工具同步完再粘贴。": "Wenn du mit UU Remote o. Ä. einen anderen Computer steuerst, geht der Text direkt an VibeDrop auf diesem Computer und wird dort eingegeben – ohne die Zwischenablage-Synchronisierung des Tools. Gib Adresse und PIN dieses Computers ein; leer gelassen wird erst nach abgeschlossener Synchronisierung eingefügt.",
+  "被控电脑地址，如 100.x.x.x:9001": "Adresse des Zielcomputers, z. B. 100.x.x.x:9001",
+  "被控电脑的 PIN": "PIN des Zielcomputers",
+  "已连上 {host}": "Verbunden mit {host}",
+  "连接失败：{error}": "Verbindung fehlgeschlagen: {error}",
+  "未设置：远程控制时改为等同步完再粘贴": "Nicht gesetzt: bei Fernsteuerung nach Sync einfügen",
+  "正在测试连接…": "Verbindung wird getestet…"
 }

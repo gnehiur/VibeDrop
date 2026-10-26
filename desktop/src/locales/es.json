@@ -679,5 +679,13 @@
   "已改为自动发现": "Cambiado a detección automática",
   "金库": "Vault",
   "跨设备历史和语音存在你自己电脑上的金库里。地址自动发现：金库在本机，或手机连上本机时转告；发现不到才需要手填。": "El historial entre dispositivos y la voz se guardan en el Vault de tu propio ordenador. La dirección se detecta sola: el Vault está en este Mac o un móvil la comunica al conectarse. Introdúcela solo si no se encuentra.",
-  "还没连上金库": "Sin conexión al Vault"
+  "还没连上金库": "Sin conexión al Vault",
+  "远程控制转发": "Reenvío de control remoto",
+  "用 UU远程等工具控制另一台电脑时，文字直接交给那台电脑上的 VibeDrop 在它本机输入，不经远控工具的剪贴板同步。填那台电脑的地址和 PIN；不填则改为等远控工具同步完再粘贴。": "Cuando controlas otro ordenador con UU Remote u otra herramienta, el texto va directo a VibeDrop en ese ordenador y se escribe allí, sin pasar por la sincronización del portapapeles de la herramienta. Introduce la dirección y el PIN de ese ordenador; si lo dejas vacío, se esperará a que termine la sincronización antes de pegar.",
+  "被控电脑地址，如 100.x.x.x:9001": "Dirección del equipo remoto, p. ej. 100.x.x.x:9001",
+  "被控电脑的 PIN": "PIN del equipo remoto",
+  "已连上 {host}": "Conectado a {host}",
+  "连接失败：{error}": "Error de conexión: {error}",
+  "未设置：远程控制时改为等同步完再粘贴": "Sin configurar: en control remoto, pega tras sincronizar",
+  "正在测试连接…": "Probando conexión…"
 }

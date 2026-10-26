@@ -37,6 +37,7 @@ use walkdir::WalkDir;
 use zip::write::FileOptions;
 
 mod lazy_paste;
+mod remote_relay;
 
 #[cfg(target_os = "macos")]
 enum MacosResolvedDrop {
@@ -1645,22 +1646,101 @@ fn send_cmd_return_event() -> Result<(), String> {
 // 每次的剪贴板情况(原内容、App 隔多久来取、是否恢复)交给注入日志(LAST_PASTE_REPORT)。
 static LAST_PASTE_REPORT: Mutex<Option<serde_json::Value>> = Mutex::new(None);
 
-fn paste_inject_text(text: &str, suppress: &ClipboardSuppressList) -> Result<(), String> {
-    suppress_clipboard_broadcast(suppress, text);
-    let report = lazy_paste::paste_text(text, |prev| suppress_clipboard_broadcast(suppress, prev), send_cmd_v_event)?;
+fn set_paste_report(value: serde_json::Value) {
     if let Ok(mut last) = LAST_PASTE_REPORT.lock() {
-        *last = Some(serde_json::json!({
-            "prev": report.prev,
-            "served_ms": report.served_ms,
-            "eager": report.eager,
-            "restore": report.restore,
-        }));
+        *last = Some(value);
     }
+}
+
+fn paste_inject_text(text: &str, suppress: &ClipboardSuppressList, remote_app: Option<&str>) -> Result<(), String> {
+    suppress_clipboard_broadcast(suppress, text);
+    let report = lazy_paste::paste_text(
+        text,
+        remote_app.is_some(),
+        |prev| suppress_clipboard_broadcast(suppress, prev),
+        send_cmd_v_event,
+    )?;
+    set_paste_report(serde_json::json!({
+        "prev": report.prev,
+        "served_ms": report.served_ms,
+        "eager": report.eager,
+        "restore": report.restore,
+        "remote_app": remote_app,
+        "remote_read_ms": report.remote_read_ms,
+    }));
     Ok(())
 }
 
-fn inject_text(text: &str, suppress: &ClipboardSuppressList) -> Result<(), String> {
-    paste_inject_text(text, suppress)
+enum Delivered {
+    Local,
+    Relayed,
+}
+
+// 远程控制转发(1.6.2,细节见 remote_relay.rs):最前面是 UU远程等远控工具时,字直接交给被控电脑的 VibeDrop 本机输入;
+// 没配置或连不上就本机粘贴,但走 lazy_paste 的远程模式(等远控工具把剪贴板同步过去再按 ⌘V)。
+// action:type / type_enter / type_cmd_enter;转发成功时回车由被控电脑那边按,本机不再按。
+async fn deliver_text(
+    text: &str,
+    action: &str,
+    suppress: &ClipboardSuppressList,
+    relay_device_id: &str,
+    relay_device_name: &str,
+) -> Result<Delivered, String> {
+    let bundle = remote_relay::front_bundle_id();
+    if !remote_relay::is_remote_desktop(&bundle) {
+        paste_inject_text(text, suppress, None)?;
+        return Ok(Delivered::Local);
+    }
+    let mut relay_error: Option<String> = None;
+    if let Some(cfg) = remote_relay::load() {
+        let started = std::time::Instant::now();
+        match remote_relay::relay_text(&cfg, action, text, relay_device_id, relay_device_name).await {
+            Ok(host) => {
+                set_paste_report(serde_json::json!({
+                    "relay": "ok",
+                    "relay_host": host,
+                    "relay_ms": started.elapsed().as_millis(),
+                    "remote_app": bundle,
+                }));
+                return Ok(Delivered::Relayed);
+            }
+            Err(remote_relay::RelayError::AfterSend(error)) => {
+                set_paste_report(serde_json::json!({
+                    "relay": "after-send-error",
+                    "relay_error": error,
+                    "remote_app": bundle,
+                }));
+                return Err(format!("已转给被控电脑，但没等到结果：{error}"));
+            }
+            Err(remote_relay::RelayError::BeforeSend(error)) => relay_error = Some(error),
+        }
+    }
+    paste_inject_text(text, suppress, Some(&bundle))?;
+    if let Some(error) = relay_error {
+        if let Ok(mut last) = LAST_PASTE_REPORT.lock() {
+            if let Some(serde_json::Value::Object(map)) = last.as_mut() {
+                map.insert("relay".into(), "fallback".into());
+                map.insert("relay_error".into(), error.into());
+            }
+        }
+    }
+    Ok(Delivered::Local)
+}
+
+#[tauri::command]
+fn get_remote_relay() -> remote_relay::RelayConfig {
+    remote_relay::load().unwrap_or_default()
+}
+
+// 设置页「远程控制转发」:保存并测一次连接(只认证),返回对方主机名;地址清空 = 关掉转发
+#[tauri::command]
+async fn set_remote_relay(url: String, pin: String) -> Result<String, String> {
+    let cfg = remote_relay::RelayConfig { url: remote_relay::normalize_url(&url), pin: pin.trim().to_string() };
+    remote_relay::save(&cfg)?;
+    if cfg.url.is_empty() {
+        return Ok(String::new());
+    }
+    remote_relay::check(&cfg, "relay-check", "VibeDrop 转发测试").await
 }
 
 // 每次往前台 App 注入文字后记一行到 ~/.vibedrop/debug.log(scope=input):当时最前面是哪个 App、
@@ -1814,6 +1894,9 @@ fn main() {
     // 注入文本时抑制剪贴板监听误广播（enigo 线程写入、监听线程读取）
     let clipboard_suppress: ClipboardSuppressList = Arc::new(Mutex::new(Vec::new()));
     let clipboard_suppress_for_input = Arc::clone(&clipboard_suppress);
+    // 转发给被控电脑时用的身份(1.6.2)
+    let relay_device_id = format!("relay-{}", server_id);
+    let relay_device_name = format!("{} 转发", hostname);
 
     std::thread::spawn(move || {
         let mut enigo = Enigo::new(&Settings::default())
@@ -1828,19 +1911,25 @@ fn main() {
         rt.block_on(async {
             while let Some(req) = input_rx.recv().await {
                 let reply = match req.action {
-                    InputAction::TypeText(text) => inject_text(&text, &suppress),
+                    InputAction::TypeText(text) => {
+                        deliver_text(&text, "type", &suppress, &relay_device_id, &relay_device_name)
+                            .await
+                            .map(|_| ())
+                    }
                     InputAction::TypeTextAndEnter(text) => {
-                        match inject_text(&text, &suppress) {
-                            Ok(()) => enigo
+                        match deliver_text(&text, "type_enter", &suppress, &relay_device_id, &relay_device_name).await {
+                            Ok(Delivered::Local) => enigo
                                 .key(Key::Return, Direction::Click)
                                 .map_err(|e| format!("文字已发送，但回车失败: {:?}", e)),
+                            Ok(Delivered::Relayed) => Ok(()),
                             Err(e) => Err(e),
                         }
                     }
                     InputAction::TypeTextAndCmdEnter(text) => {
-                        match inject_text(&text, &suppress) {
-                            Ok(()) => send_cmd_return_event()
+                        match deliver_text(&text, "type_cmd_enter", &suppress, &relay_device_id, &relay_device_name).await {
+                            Ok(Delivered::Local) => send_cmd_return_event()
                                 .map_err(|e| format!("文字已发送，但 ⌘回车失败: {}", e)),
+                            Ok(Delivered::Relayed) => Ok(()),
                             Err(e) => Err(e),
                         }
                     }
@@ -2051,7 +2140,9 @@ fn main() {
             approve_pair_request,
             reject_pair_request,
             set_preferred_share_client,
-            send_dropped_paths
+            send_dropped_paths,
+            get_remote_relay,
+            set_remote_relay
         ])
         .setup(move |app| {
             if let Some(window_config) = app.config().app.windows.first().cloned() {

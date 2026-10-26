@@ -319,6 +319,13 @@
                                     <input id="vault-url-input" class="vault-url-input" type="url" autocomplete="off" spellcheck="false" placeholder="留空 = 自动发现" data-i18n-placeholder>
                                     <p class="host-card-caption" id="vault-route-info"></p>
                                 </section>
+                                <section class="info-card">
+                                    <h2 data-i18n>远程控制转发</h2>
+                                    <p class="host-card-caption" data-i18n>用 UU远程等工具控制另一台电脑时，文字直接交给那台电脑上的 VibeDrop 在它本机输入，不经远控工具的剪贴板同步。填那台电脑的地址和 PIN；不填则改为等远控工具同步完再粘贴。</p>
+                                    <input id="relay-url-input" class="vault-url-input" type="text" autocomplete="off" spellcheck="false" placeholder="被控电脑地址，如 100.x.x.x:9001" data-i18n-placeholder>
+                                    <input id="relay-pin-input" class="vault-url-input" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="被控电脑的 PIN" data-i18n-placeholder>
+                                    <p class="host-card-caption" id="relay-status"></p>
+                                </section>
                             </div>
                             <div class="overview-right-column">
                                 <section class="info-card">
