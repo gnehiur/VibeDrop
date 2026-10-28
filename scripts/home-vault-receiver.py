@@ -238,22 +238,57 @@ def compact_device_deltas(vault_root: pathlib.Path, device_id: str, device_name:
     (device_dir_for(vault_root, device_id) / DELTA_FILE_NAME).unlink(missing_ok=True)
 
 
+# 设备目录 → (目录里各文件的名字/修改时间/大小, 合并结果)。Ace 5 一台的快照就 84MB,每次请求都重读要好几秒
+device_payload_cache: "dict[str, tuple[tuple, dict[str, Any] | None]]" = {}
+device_payload_cache_lock = threading.Lock()
+
+
+def device_dir_signature(device_dir: pathlib.Path) -> tuple:
+    items = []
+    for path in device_dir.iterdir():
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        items.append((path.name, st.st_mtime_ns, st.st_size))
+    return tuple(sorted(items))
+
+
 def load_device_payload(vault_root: pathlib.Path, device_dir: pathlib.Path) -> dict[str, Any] | None:
-    """一台设备的完整历史 = 最新快照 + 之后追加的增量,按 id 去重。"""
+    """一台设备的完整历史 = 所有快照 + 增量,按 id 去重(文件没变走缓存)。返回的 dict 和 history 列表是新的,可以改。"""
+    signature = device_dir_signature(device_dir)
+    cache_key = str(device_dir)
+    with device_payload_cache_lock:
+        cached = device_payload_cache.get(cache_key)
+    if cached is None or cached[0] != signature:
+        cached = (signature, read_device_payload(device_dir))
+        with device_payload_cache_lock:
+            device_payload_cache[cache_key] = cached
+    payload = cached[1]
+    if payload is None:
+        return None
+    return {**payload, "history": list(payload.get("history") or [])}
+
+
+def read_device_payload(device_dir: pathlib.Path) -> dict[str, Any] | None:
     snapshots = [
         path
         for path in device_dir.glob("*.json")
         if path.name != DEVICE_META_NAME
     ]
+    # 1.9.3:所有快照都读,不再只认最新一份。手机升级 / 重装后推上来的「全量」可能不全,
+    # 只认最新那份会把之前的记录从合并视图里藏掉(文件都还在)。金库没有删除功能,并起来不会让删掉的复活
     payload: dict[str, Any] | None = None
-    if snapshots:
-        snapshots.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
-        for path in snapshots:
-            try:
-                payload = normalize_payload(load_json_file(path))
-                break
-            except Exception:
-                continue
+    snapshot_histories: list[list[Any]] = []
+    snapshots.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
+    for path in snapshots:
+        try:
+            loaded = normalize_payload(load_json_file(path))
+        except Exception:
+            continue
+        if payload is None:
+            payload = loaded  # 设备名、导出时间等以最新一份为准
+        snapshot_histories.append(list(loaded.get("history") or []))
 
     delta_entries: list[Any] = []
     delta_path = device_dir / DELTA_FILE_NAME
@@ -288,8 +323,11 @@ def load_device_payload(vault_root: pathlib.Path, device_dir: pathlib.Path) -> d
 
     seen_ids: set[str] = set()
     combined: list[Any] = []
-    # 同一条可能推过多次(先「发送中」后「已送达」):增量倒序,后推的版本优先
-    for entry in list(reversed(delta_entries)) + list(payload.get("history") or []):
+    # 同一条可能推过多次(先「发送中」后「已送达」):增量倒序,后推的版本优先;再按快照新到旧
+    ordered: list[Any] = list(reversed(delta_entries))
+    for history in snapshot_histories:
+        ordered.extend(history)
+    for entry in ordered:
         key = str(entry.get("id") or "") if isinstance(entry, dict) else ""
         if key:
             if key in seen_ids:
@@ -301,7 +339,7 @@ def load_device_payload(vault_root: pathlib.Path, device_dir: pathlib.Path) -> d
 
 
 def collect_latest_payload_per_device(vault_root: pathlib.Path) -> list[dict[str, Any]]:
-    """遍历各设备目录,每台设备取"最新快照 + 增量"的合并结果。"""
+    """遍历各设备目录,每台设备取"所有快照 + 增量"的合并结果。"""
     android_inbox = vault_root / "inbox" / "android"
     if not android_inbox.exists():
         return []
