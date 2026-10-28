@@ -313,6 +313,36 @@ def collect_latest_payload_per_device(vault_root: pathlib.Path) -> list[dict[str
     return payloads
 
 
+# ---- 合并历史增量(1.9.1)----
+# 金库不记每条的入库时间,没法按「某时刻之后」取;改为记住最近几个版本里每条的指纹(内存里,重启就忘,忘了就回全量)。
+# 客户端带旧版本号 + delta=1 来:对比出新增/变化的条目(upserts)和掉出最近 N 条窗口的 key(removed),只回这些。
+# key 跟桌面端 convertVaultEntry 的 vault_key 同一个算法:来源设备:条目 id(没 id 用时间戳)。
+MERGED_SNAPSHOT_KEEP = 32
+merged_snapshots: "dict[tuple, dict[str, str]]" = {}
+merged_snapshots_lock = threading.Lock()
+
+
+def merged_entry_key(entry: dict[str, Any]) -> str:
+    return f"{entry.get('sourceDeviceId') or ''}:{entry.get('id') or entry.get('timestamp') or ''}"
+
+
+def merged_entry_fingerprint(entry: dict[str, Any]) -> str:
+    return hashlib.sha1(json.dumps(entry, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def remember_merged_snapshot(key: tuple, fingerprints: dict[str, str]) -> None:
+    with merged_snapshots_lock:
+        merged_snapshots.pop(key, None)
+        merged_snapshots[key] = fingerprints  # dict 按插入顺序,最旧的在前
+        while len(merged_snapshots) > MERGED_SNAPSHOT_KEEP:
+            merged_snapshots.pop(next(iter(merged_snapshots)))
+
+
+def recall_merged_snapshot(key: tuple) -> "dict[str, str] | None":
+    with merged_snapshots_lock:
+        return merged_snapshots.get(key)
+
+
 def build_merged_history(vault_root: pathlib.Path, mode: str, limit: int) -> dict[str, Any]:
     payloads = collect_latest_payload_per_device(vault_root)
     merged: list[dict[str, Any]] = []
@@ -986,9 +1016,32 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                     # 跟 /api/voice/index 同一套。以前桌面端每 5 分钟全量拉 8.3MB,出差走 Tailscale 中转很浪费(26-10-28)
                     digest_src = {k: v for k, v in merged.items() if k != "generatedAt"}
                     version = hashlib.sha1(json.dumps(digest_src, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-                    if (query.get("v") or [""])[0] == version:
+                    client_version = (query.get("v") or [""])[0]
+                    history = merged.get("history") or []
+                    fingerprints = {merged_entry_key(entry): merged_entry_fingerprint(entry) for entry in history}
+                    delta_ok = len(fingerprints) == len(history)  # key 有重复就不做增量,老老实实回全量
+                    if delta_ok:
+                        # 先记下当前版本的指纹(哪怕下面回 unchanged):金库刚重启时也能给之后的增量当底
+                        remember_merged_snapshot((mode, limit, version), fingerprints)
+                    if client_version == version:
                         self.send_json(200, {"ok": True, "version": version, "unchanged": True})
                         return
+                    if delta_ok:
+                        old = recall_merged_snapshot((mode, limit, client_version)) if client_version else None
+                        if old is not None and (query.get("delta") or [""])[0] == "1":
+                            upserts = [entry for entry in history if old.get(merged_entry_key(entry)) != fingerprints[merged_entry_key(entry)]]
+                            removed = [key for key in old if key not in fingerprints]
+                            if len(upserts) <= max(200, limit // 5):  # 变动太多(比如换了设备批量导入)不如直接全量
+                                self.send_json(200, {
+                                    "ok": True,
+                                    "version": version,
+                                    "delta": True,
+                                    "devices": merged.get("devices") or [],
+                                    "mergedCount": merged.get("mergedCount") or len(history),
+                                    "upserts": upserts,
+                                    "removed": removed,
+                                })
+                                return
                     merged["version"] = version
                     self.send_json(200, merged)
                 except Exception as exc:

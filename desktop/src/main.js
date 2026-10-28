@@ -2384,10 +2384,24 @@ async function refreshVaultRemoteEntries() {
     try {
         const url = new URL(`${VAULT_ENDPOINT}/api/history/merged`);
         url.searchParams.set('limit', '10000');
-        if (vaultMergedVersion && vaultRemoteEntries.length) url.searchParams.set('v', vaultMergedVersion);
+        if (vaultMergedVersion && vaultRemoteEntries.length) {
+            url.searchParams.set('v', vaultMergedVersion);
+            url.searchParams.set('delta', '1'); // 1.9.1:变了也只要新增/变化的条目
+        }
         const response = await fetch(url.toString());
         const data = await response.json();
         if (data?.ok && data.unchanged) return;
+        if (data?.ok && data.delta) {
+            const removed = new Set(Array.isArray(data.removed) ? data.removed : []);
+            if (removed.size) vaultRemoteEntries = vaultRemoteEntries.filter((entry) => !removed.has(entry.vault_key));
+            if (Array.isArray(data.upserts) && data.upserts.length) dvUpsertRemote(data.upserts);
+            else if (removed.size) {
+                markLogModelDirty();
+                scheduleLogRerenderIfVisible();
+            }
+            vaultMergedVersion = String(data.version || '');
+            return;
+        }
         if (!data?.ok || !Array.isArray(data.history)) return;
         vaultMergedVersion = String(data.version || '');
         vaultRemoteEntries = data.history.map(convertVaultEntry);
