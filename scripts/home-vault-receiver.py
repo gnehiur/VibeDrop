@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gzip
 import hashlib
 import json
 import os
@@ -783,8 +784,15 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
 
         def send_json(self, status: int, payload: dict[str, Any]) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            # 1.8.3:客户端声明收 gzip 且内容不小就压缩(合并历史 8.3MB → 约 2.5MB;缩略图是 base64 图片,压不太动)
+            gzipped = len(body) > 2048 and "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+            if gzipped:
+                body = gzip.compress(body, compresslevel=5)
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            if gzipped:
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Vary", "Accept-Encoding")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -973,7 +981,16 @@ def make_handler(config: argparse.Namespace) -> type[BaseHTTPRequestHandler]:
                     if mode not in {"compact", "full"}:
                         raise ValueError("mode 只能是 compact 或 full")
                     limit = clamp_limit((query.get("limit") or ["500"])[0], 500, 10000)
-                    self.send_json(200, build_merged_history(vault_root, mode, limit))
+                    merged = build_merged_history(vault_root, mode, limit)
+                    # 1.8.3:版本号 = 内容摘要(不含每秒都变的 generatedAt)。客户端带 ?v=上次的版本号来,没变就只回一行,
+                    # 跟 /api/voice/index 同一套。以前桌面端每 5 分钟全量拉 8.3MB,出差走 Tailscale 中转很浪费(26-10-28)
+                    digest_src = {k: v for k, v in merged.items() if k != "generatedAt"}
+                    version = hashlib.sha1(json.dumps(digest_src, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+                    if (query.get("v") or [""])[0] == version:
+                        self.send_json(200, {"ok": True, "version": version, "unchanged": True})
+                        return
+                    merged["version"] = version
+                    self.send_json(200, merged)
                 except Exception as exc:
                     self.send_json(500, {"ok": False, "error": str(exc)})
                 return

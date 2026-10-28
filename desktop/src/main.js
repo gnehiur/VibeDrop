@@ -2370,11 +2370,19 @@ function convertVaultEntry(entry) {
     };
 }
 
+// 1.8.3:带上次的版本号(v)去问,金库内容没变只回一行 {unchanged:true}(跟 /api/voice/index 同一套)。
+// 以前每 5 分钟全量拉 8.3MB,出差时走 Tailscale 中转很浪费;新条目平时靠实时通道(SSE)直接推过来。
+let vaultMergedVersion = '';
 async function refreshVaultRemoteEntries() {
     try {
-        const response = await fetch(`${VAULT_ENDPOINT}/api/history/merged?limit=10000`);
+        const url = new URL(`${VAULT_ENDPOINT}/api/history/merged`);
+        url.searchParams.set('limit', '10000');
+        if (vaultMergedVersion && vaultRemoteEntries.length) url.searchParams.set('v', vaultMergedVersion);
+        const response = await fetch(url.toString());
         const data = await response.json();
+        if (data?.ok && data.unchanged) return;
         if (!data?.ok || !Array.isArray(data.history)) return;
+        vaultMergedVersion = String(data.version || '');
         vaultRemoteEntries = data.history.map(convertVaultEntry);
         markLogModelDirty();
         if (isHistoryTabVisible()) {
