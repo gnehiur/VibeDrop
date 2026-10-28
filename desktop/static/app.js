@@ -60,7 +60,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v42-desktop-shares-vault-20261028';
+window.__vdBuild = 'ui-v43-mobile-history-delta-20261028';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -9810,11 +9810,31 @@ async function refreshVaultMergedHistory({ deep = false } = {}) {
         const limit = deep ? 10000 : 2000;
         const url = new URL(`${endpoint}/api/history/merged`);
         url.searchParams.set('limit', String(limit));
-        if (vaultMergedVersions[limit]) url.searchParams.set('v', vaultMergedVersions[limit]);
+        if (vaultMergedVersions[limit]) {
+            url.searchParams.set('v', vaultMergedVersions[limit]);
+            url.searchParams.set('delta', '1'); // 1.9.2:变了也只要新增/变化的条目
+        }
         const response = await fetch(url.toString());
         const data = await response.json();
         if (data?.ok && data.unchanged) {
             if (deep) vaultMergedDeepFetchDone = true;
+            return;
+        }
+        if (data?.ok && data.delta && Array.isArray(data.upserts)) {
+            // removed(掉出最近 N 条窗口的)不删:手机合并缓存本来就是轻量档 + 深拉叠起来的,全量回来时也只增不删
+            vaultMergedVersions[limit] = String(data.version || '');
+            const localId = getLocalSourceId();
+            harvestVaultMediaStamps(data.upserts);
+            if (Array.isArray(data.devices)) {
+                vaultMergedDevices = data.devices.filter((device) => String(device.deviceId) !== localId);
+            }
+            upsertVaultMergedEntries(data.upserts.filter((entry) => {
+                const src = String(entry?.sourceDeviceId || '');
+                return src && src !== localId;
+            }));
+            if (deep) vaultMergedDeepFetchDone = true;
+            renderHistorySourceFilters();
+            scheduleHistoryRender();
             return;
         }
         if (!data?.ok || !Array.isArray(data.history)) return;
