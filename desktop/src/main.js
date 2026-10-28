@@ -2210,7 +2210,13 @@ function learnVaultEndpoints(list) {
         .slice(0, 8);
     if (!clean.length || JSON.stringify(clean) === JSON.stringify(readLearnedVaultEndpoints())) return;
     localStorage.setItem(VAULT_ENDPOINTS_KEY, JSON.stringify(clean));
+    syncVaultEndpointsToBackend();
     renderVaultSettingsInfo();
+}
+
+// 1.9.0:把记住的金库地址交给后台,手机认证成功时随回复带过去(电脑转告手机金库地址)
+function syncVaultEndpointsToBackend() {
+    invoke('set_vault_endpoints', { endpoints: readLearnedVaultEndpoints() }).catch(() => {});
 }
 
 function isLocalVaultUrl(url) {
@@ -2327,6 +2333,7 @@ function initRelaySettings() {
 }
 
 function initVaultSettings() {
+    syncVaultEndpointsToBackend();
     const input = document.getElementById('vault-url-input');
     if (!input) return;
     input.value = localStorage.getItem(VAULT_MANUAL_KEY) || '';

@@ -1726,6 +1726,24 @@ async fn deliver_text(
     Ok(Delivered::Local)
 }
 
+// 1.9.0:桌面端前端记住的金库地址(金库 /health 自报 / 手机转告),手机认证成功时随回复带给它。
+// 没连上过金库的手机(新装、老版本升上来、人不在家)靠这个自己找到金库,不用手填地址。
+static DESKTOP_VAULT_ENDPOINTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+#[tauri::command]
+fn set_vault_endpoints(endpoints: Vec<String>) {
+    let clean: Vec<String> = endpoints
+        .into_iter()
+        .map(|url| url.trim().trim_end_matches('/').to_string())
+        .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
+        .filter(|url| !url.contains("://127.0.0.1") && !url.contains("://localhost")) // 本机回环对手机没意义
+        .take(8)
+        .collect();
+    if let Ok(mut list) = DESKTOP_VAULT_ENDPOINTS.lock() {
+        *list = clean;
+    }
+}
+
 #[tauri::command]
 fn get_remote_relay() -> remote_relay::RelayConfig {
     remote_relay::load().unwrap_or_default()
@@ -2146,7 +2164,8 @@ fn main() {
             set_preferred_share_client,
             send_dropped_paths,
             get_remote_relay,
-            set_remote_relay
+            set_remote_relay,
+            set_vault_endpoints
         ])
         .setup(move |app| {
             if let Some(window_config) = app.config().app.windows.first().cloned() {
@@ -2392,10 +2411,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                                                 "receives_clipboard": receives_clipboard,
                                             }),
                                         );
+                                        let vault_endpoints = DESKTOP_VAULT_ENDPOINTS.lock().map(|list| list.clone()).unwrap_or_default();
                                         let reply = serde_json::json!({
                                             "status": "ok",
                                             "hostname": state.hostname.clone(),
                                             "server_id": state.server_id.clone(),
+                                            // 1.9.0:转告手机金库地址(老版本手机不认这个字段,忽略)
+                                            "vault_endpoints": vault_endpoints,
                                         });
                                         let _ = ws_sender.send(Message::Text(reply.to_string().into())).await;
                                     } else {

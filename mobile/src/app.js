@@ -60,7 +60,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v41-merged-history-version-20261028';
+window.__vdBuild = 'ui-v42-desktop-shares-vault-20261028';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -6878,6 +6878,7 @@ function connectDevice(deviceId, ip, port, pin, force = false) {
                 updateDeviceUI(deviceId, 'connected', data.hostname);
                 startHeartbeat(deviceId, conn.ip, conn.port, conn.pin);
                 shareVaultEndpointsWithDesktops(deviceId); // 电脑端靠手机转告才知道金库在哪(1.6.0)
+                void adoptDesktopVaultEndpoints(data.vault_endpoints); // 反过来:手机不知道时听电脑的(1.9.0)
             } else {
                 debugLog('connect:auth_fail', { deviceId, error: data.error || 'PIN 错误' });
                 updateDeviceUI(deviceId, 'error', data.error || t('PIN 错误'));
@@ -9365,6 +9366,31 @@ function shareVaultEndpointsWithDesktops(deviceId = '') {
             try { conn.ws.send(message); } catch (_) { /* 下次连上再转告 */ }
         }
     });
+}
+
+// 1.9.0:电脑认证回复里带着它知道的金库地址(vault_endpoints)。手机自己一个地址都不知道时才用
+// (新装、从老版本升上来、人又不在家:只会一直试家里地址)。不直接信:挨个探 /health,确认是金库才算,
+// 探通时 probeHomeVaultUrl 会按金库自报的地址表记下,然后重新选路。只收已用 PIN 配对的电脑发来的。
+let homeVaultAdoptInFlight = false;
+async function adoptDesktopVaultEndpoints(list) {
+    if (homeVaultAdoptInFlight || readLearnedVaultEndpoints().length) return;
+    const urls = (Array.isArray(list) ? list : [])
+        .map((url) => String(url || '').trim().replace(/\/+$/, ''))
+        .filter((url, i, all) => /^https?:\/\//.test(url) && all.indexOf(url) === i)
+        .slice(0, 8);
+    if (!urls.length) return;
+    homeVaultAdoptInFlight = true;
+    try {
+        for (const url of urls) {
+            if (await probeHomeVaultUrl(url, isLocalVaultUrl(url) ? 1500 : 8000)) {
+                probe('vault-adopt-from-desktop', vaultHostOf(url));
+                await pickHomeVaultRoute();
+                break;
+            }
+        }
+    } finally {
+        homeVaultAdoptInFlight = false;
+    }
 }
 
 function isLocalVaultUrl(url) {
