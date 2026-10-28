@@ -60,7 +60,7 @@ probe('script-start');
 // 每次值得追查的前端改动都换水印:装机后看 vault 启动探针即可确认真跑的是哪版 JS。
 // __vdBuild 是同一枚指纹的全局出口,iOS 原生启动后核对它与二进制内嵌资产是否同版,
 // 不同版=WKWebView 在吃陈年磁盘缓存(2026-08-25 实锤:四连装全被缓存吞掉)→清缓存重载。
-window.__vdBuild = 'ui-v40-desktop-clipboard-toggle-20261026';
+window.__vdBuild = 'ui-v41-merged-history-version-20261028';
 // 键盘链路黑匣子:原生(键盘通知/改窗口)与JS(resize/滚动决策)每一拍都打点,
 // 几秒内自动上传 vault——复现一次奇怪体验,时间线直接可读,不再靠猜(用户点名的debug方式)
 window.__vdKbProbe = (stage, val) => {
@@ -9771,6 +9771,9 @@ function upsertVaultMergedEntries(entries) {
     });
 }
 
+// 1.8.4:带上次的版本号(v)去问,金库内容没变只回一行 {unchanged:true}。轻量档和深拉条数不同、内容不同,版本号各记各的;
+// 只存在内存里:App 重开后第一次照常拉全量(那时本地合并缓存也是空的)。出门走流量时省掉每次打开都深拉 10000 条(金库已 gzip,约 2.5MB)
+const vaultMergedVersions = { 2000: '', 10000: '' };
 async function refreshVaultMergedHistory({ deep = false } = {}) {
     refreshVoiceIndex();
     if (vaultMergedFetchInFlight) return;
@@ -9778,11 +9781,18 @@ async function refreshVaultMergedHistory({ deep = false } = {}) {
     try {
         const endpoint = getHomeVaultSettings().url;
         if (!endpoint) return;
+        const limit = deep ? 10000 : 2000;
         const url = new URL(`${endpoint}/api/history/merged`);
-        url.searchParams.set('limit', deep ? '10000' : '2000');
+        url.searchParams.set('limit', String(limit));
+        if (vaultMergedVersions[limit]) url.searchParams.set('v', vaultMergedVersions[limit]);
         const response = await fetch(url.toString());
         const data = await response.json();
+        if (data?.ok && data.unchanged) {
+            if (deep) vaultMergedDeepFetchDone = true;
+            return;
+        }
         if (!data?.ok || !Array.isArray(data.history)) return;
+        vaultMergedVersions[limit] = String(data.version || '');
         const localId = getLocalSourceId();
         harvestVaultMediaStamps(data.history || []);
         vaultMergedDevices = (data.devices || []).filter((device) => String(device.deviceId) !== localId);
